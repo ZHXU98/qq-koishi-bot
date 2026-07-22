@@ -32,10 +32,12 @@ plugins:
       path: data/koishi.db
 
   # ── QQ 适配器（OneBot v11 WebSocket）────────────────────
-  group:adapter:
-    adapter-onebot:
-      protocol: ws
-      endpoint: ws://napcat:3001
+  # adapter-onebot 通过控制台插件市场安装，避免版本冲突
+  # group:adapter:
+  #   adapter-onebot:
+  #     protocol: ws
+  #     endpoint: ws://napcat:3001
+  #     selfId: "${QQ_ACCOUNT}"
 
   # ── RSS 订阅 ─────────────────────────────────────────────
   group:rss:
