@@ -1,5 +1,6 @@
 # QQ 登录态（包含敏感 session，勿提交）
 napcat/QQ/
+napcat/QQ_config/
 
 # Koishi 运行数据（数据库、插件缓存）
 koishi/data/
