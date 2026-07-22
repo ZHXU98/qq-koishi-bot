@@ -150,48 +150,44 @@ rss.check           立即检查一次更新
 
 同花顺没有原生 RSS，需要通过内置的 **RSSHub**（`http://rsshub:1200`）转换。
 
-### 可用订阅源（复制命令直接发给机器人）
+### ✅ 全量订阅（推荐，一条命令）
 
 ```
-# 同花顺 - 财经直播（全市场资讯，更新最频繁，推荐）
-rss.add http://rsshub:1200/10jqka/realtimenews
-
-# 同花顺 - A股快讯
-rss.add http://rsshub:1200/10jqka/realtimenews/a
-
-# 同花顺 - 港股快讯
-rss.add http://rsshub:1200/10jqka/realtimenews/hk
-
-# 同花顺 - 美股快讯
-rss.add http://rsshub:1200/10jqka/realtimenews/us
-
-# 同花顺 - 期货快讯
-rss.add http://rsshub:1200/10jqka/realtimenews/qh
+rss.add http://rsshub:1200/10jqka/realtimenews?limit=50
 ```
 
-> **注意**：RSSHub 路由使用内网地址 `rsshub:1200`（容器间通信），不是 `localhost:1200`。
+这是同花顺「7×24小时要闻直播」的**全量流**，包含以下所有分类，**每次刷新返回最新 50 条**：
 
-### 推荐的财经 RSS 组合
+| 分类 | 内容 |
+|------|------|
+| 重要 | 宏观政策、战争、石油、汇率、央行动向等重大事件 |
+| 异动 | 个股涨跌停、盘中异动、大宗交易 |
+| A股 | A股市场资讯 |
+| 港股 | 港股市场资讯 |
+| 美股 | 美股市场资讯 |
+| 机会 | 机构评级、投资机会提示 |
+| 公告 | 上市公司公告 |
+
+> 默认每次只拉 20 条，加 `?limit=50` 确保高峰期不漏消息。
+
+---
+
+### 按分类单独订阅（可选）
+
+如果只想订阅特定类别，可以单独添加：
 
 ```
-# 同花顺财经直播（高频推送，每天数十条）
-rss.add http://rsshub:1200/10jqka/realtimenews
+# 只看重要（宏观/战争/石油等大事）
+rss.add http://rsshub:1200/10jqka/realtimenews/重要?limit=50
 
-# 东方财富 - 财经头条
-rss.add http://rsshub:1200/eastmoney/news/kuaixun
+# 只看异动（个股涨跌停/盘中异动）
+rss.add http://rsshub:1200/10jqka/realtimenews/异动?limit=50
 
-# 雪球 - 市场动态
-rss.add http://rsshub:1200/xueqiu/hot_stock_news
-
-# 新浪财经 - 头条
-rss.add https://feed.sina.com.cn/news/finance/mix.xml
+# 组合订阅：重要 + 异动
+rss.add http://rsshub:1200/10jqka/realtimenews/重要,异动?limit=50
 ```
 
-### 关于 RSSHub
-
-本方案已内置自托管 RSSHub 服务（`http://localhost:1200`），可以将各大平台转换为 RSS。
-
-完整路由文档：https://docs.rsshub.app/zh/
+> **注意**：地址用 `rsshub:1200`（容器内网），不是 `localhost:1200`。
 
 ---
 
