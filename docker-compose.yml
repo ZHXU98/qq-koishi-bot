@@ -42,6 +42,7 @@ services:
       - botnet
     environment:
       - TZ=Asia/Shanghai
+      - KOISHI_SERVER_HOST=0.0.0.0
 
   # ============================================================
   # RSSHub - 将各大平台（同花顺、微博、B站等）转为标准 RSS
