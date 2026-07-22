@@ -68,12 +68,13 @@ plugins:
       userAgent: "Mozilla/5.0 (compatible; Koishi RSS Bot)"
     # 推送设置
     refreshInterval: 300000    # 刷新间隔，默认 5 分钟（毫秒）
-    # 权限要求：authority >= 2 才能订阅 RSS（防止普通用户滥用）
-    # 命令:
-    #   rss.add <url>     添加订阅
-    #   rss.remove <url>  取消订阅
-    #   rss.list          查看订阅列表
-    #   rss.check         立即检查更新
+    # 权限控制：authority 3（管理员）及以上才能添加/删除订阅
+    # authority 1（普通用户）可以查看列表和手动检查
+    authority:
+      add: 3       # 添加订阅 - 需要管理员（群主/管理员可提升用户到 authority 3）
+      remove: 3    # 删除订阅 - 需要管理员
+      list: 1      # 查看列表 - 所有人可用
+      check: 1     # 手动检查 - 所有人可用
 
   # ----------------------------------------------------------
   # 指令权限精细控制（可选，推荐）
@@ -94,7 +95,7 @@ plugins:
 # ============================================================
 # 超级用户列表（填写 QQ 号，拥有最高权限）
 superusers:
-  - "你的QQ号"   # ← 修改为你自己的 QQ 号
+  - "1547450303"   # ← 修改为你自己的 QQ 号
 
 # 默认 locale
 locale: zh-CN
