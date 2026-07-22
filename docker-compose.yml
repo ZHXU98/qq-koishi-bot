@@ -16,12 +16,12 @@ services:
       - ./napcat/QQ_config/QQ:/app/.config/QQ       # QQ 登录态（重要！务必备份）
     ports:
       - "6099:6099"     # NapCat WebUI（首次登录用）
-      - "3001:3001"     # OneBot WS 服务端（供 Koishi adapter-onebot 连接）
     networks:
       - botnet
 
   # ============================================================
   # Koishi.js - QQ 机器人主框架
+  # 共享 napcat 网络命名空间，可直连 127.0.0.1:3001
   # koishi.yml 已打包进镜像，通过 docker compose build 更新配置
   # ============================================================
   koishi:
@@ -38,8 +38,7 @@ services:
       - ./koishi/assets:/koishi/assets        # 图片、附件等静态资源
     ports:
       - "5140:5140"     # Koishi Web 控制台
-    networks:
-      - botnet
+    network_mode: "service:napcat"            # 共享 napcat 网络，127.0.0.1:3001 互通
     environment:
       - TZ=Asia/Shanghai
 

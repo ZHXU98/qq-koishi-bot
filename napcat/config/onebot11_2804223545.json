@@ -9,12 +9,12 @@
                 "name": "Koishi",
                 "host": "0.0.0.0",
                 "port": 3001,
-                "messagePostFormat": "array",
+                "reportSelfMessage": false,
+                "enableForcePushEvent": true,
+                "messagePostFormat": "string",
                 "token": "",
                 "debug": false,
-                "reportSelfMessage": false,
-                "enableCors": true,
-                "enableWebsocket": true
+                "heartInterval": 30000
             }
         ],
         "websocketClients": [],

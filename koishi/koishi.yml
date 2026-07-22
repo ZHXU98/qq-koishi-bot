@@ -28,11 +28,13 @@ plugins:
     database-sqlite:
       path: data/koishi.db
 
-  # ── QQ 适配器（OneBot 11 WebSocket，NapCat 服务端 port 3001）──
+  # ── QQ 适配器（OneBot 11 WebSocket）──
+  # koishi 共享 napcat 网络命名空间（network_mode: service:napcat）
+  # NapCat 绑定 127.0.0.1:3001，koishi 直连
   group:adapter:
     adapter-onebot:
       protocol: ws
-      endpoint: ws://napcat:3001
+      endpoint: ws://127.0.0.1:3001
       selfId: "2804223545"
 
   # ── RSS 订阅 ─────────────────────────────────────────────
