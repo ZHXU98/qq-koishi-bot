@@ -12,8 +12,8 @@ services:
       - NAPCAT_UID=0
       - ACCOUNT=${QQ_ACCOUNT}
     volumes:
-      - ./napcat/config:/app/napcat/config    # NapCat 配置
-      - ./napcat/QQ:/app/QQ                   # QQ 登录态（重要！务必备份）
+      - ./napcat/config:/app/napcat/config          # NapCat 配置（网络设置等）
+      - ./napcat/QQ_config/QQ:/app/.config/QQ       # QQ 登录态（重要！务必备份）
     ports:
       - "6099:6099"     # NapCat WebUI（首次登录用）
       - "2531:2531"     # Satori HTTP 服务（官方推荐，供 Koishi adapter-satori 连接）
