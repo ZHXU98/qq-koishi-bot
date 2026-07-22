@@ -12,7 +12,11 @@ plugins:
 
   # ── 控制台 ──────────────────────────────────────────────
   group:console:
-    auth: {}
+    auth:
+      admin:
+        enabled: true
+        username: admin
+        password: "admin123"   # 控制台登录密码，建议改掉
     config: {}
     console:
       open: false       # 不自动打开浏览器（容器内无浏览器）
