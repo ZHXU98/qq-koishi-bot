@@ -1,33 +1,33 @@
 {
-    "network": {
-        "httpServers": [],
-        "httpSseServers": [
-            {
-                "enable": true,
-                "name": "Satori",
-                "host": "0.0.0.0",
-                "port": 2531,
-                "enableCors": true,
-                "enableWebsocket": true,
-                "messagePostFormat": "string",
-                "token": "",
-                "debug": false,
-                "reportSelfMessage": false
-            }
-        ],
-        "httpClients": [],
-        "websocketServers": [],
-        "websocketClients": [],
-        "plugins": []
-    },
-    "musicSignUrl": "",
-    "enableLocalFile2Url": false,
-    "parseMultMsg": false,
-    "imageDownloadProxy": "",
-    "timeout": {
-        "baseTimeout": 10000,
-        "uploadSpeedKBps": 256,
-        "downloadSpeedKBps": 256,
-        "maxTimeout": 1800000
-    }
+  "network": {
+    "httpServers": [],
+    "httpSseServers": [
+      {
+        "enable": true,
+        "name": "Satori",
+        "host": "0.0.0.0",
+        "port": 2531,
+        "enableCors": true,
+        "enableWebsocket": true,
+        "messagePostFormat": "string",
+        "token": "",
+        "debug": false,
+        "reportSelfMessage": false
+      }
+    ],
+    "httpClients": [],
+    "websocketServers": [],
+    "websocketClients": [],
+    "plugins": []
+  },
+  "musicSignUrl": "",
+  "enableLocalFile2Url": false,
+  "parseMultMsg": false,
+  "imageDownloadProxy": "",
+  "timeout": {
+    "baseTimeout": 10000,
+    "uploadSpeedKBps": 256,
+    "downloadSpeedKBps": 256,
+    "maxTimeout": 1800000
+  }
 }

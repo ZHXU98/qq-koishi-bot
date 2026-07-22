@@ -28,8 +28,7 @@ plugins:
     database-sqlite:
       path: data/koishi.db
 
-  # ── QQ 适配器（Satori 协议，官方推荐方式）───────────────
-  # NapCat 需要在 WebUI (http://localhost:6099) 里开启 Satori HTTP 服务（端口 2531）
+  # ── QQ 适配器（NapCat HTTP SSE + WebSocket on 2531，adapter-satori 接入）──
   group:adapter:
     adapter-satori:
       endpoint: http://napcat:2531
