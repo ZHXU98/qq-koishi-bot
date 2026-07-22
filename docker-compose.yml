@@ -16,7 +16,7 @@ services:
       - ./napcat/QQ:/app/QQ                   # QQ 登录态（重要！务必备份）
     ports:
       - "6099:6099"     # NapCat WebUI（首次登录用）
-      - "3001:3001"     # OneBot WS（供 Koishi 连接）
+      - "2531:2531"     # Satori HTTP 服务（官方推荐，供 Koishi adapter-satori 连接）
     networks:
       - botnet
 
@@ -42,7 +42,6 @@ services:
       - botnet
     environment:
       - TZ=Asia/Shanghai
-      - KOISHI_SERVER_HOST=0.0.0.0
 
   # ============================================================
   # RSSHub - 将各大平台（同花顺、微博、B站等）转为标准 RSS

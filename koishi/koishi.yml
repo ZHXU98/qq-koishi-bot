@@ -16,28 +16,23 @@ plugins:
       admin:
         enabled: true
         username: admin
-        password: "admin123"   # 控制台登录密码，建议改掉
+        password: "admin123"
     config: {}
     console:
-      open: false       # 不自动打开浏览器（容器内无浏览器）
+      open: false
     explorer: {}
     logger: {}
-    market:
-      search:
-        endpoint: https://registry.koishi.chat/index.json
 
   # ── 存储 ────────────────────────────────────────────────
   group:storage:
     database-sqlite:
       path: data/koishi.db
 
-  # ── QQ 适配器（OneBot v11 WebSocket）────────────────────
-  # adapter-onebot 通过控制台插件市场安装，避免版本冲突
-  # group:adapter:
-  #   adapter-onebot:
-  #     protocol: ws
-  #     endpoint: ws://napcat:3001
-  #     selfId: "${QQ_ACCOUNT}"
+  # ── QQ 适配器（Satori 协议，官方推荐方式）───────────────
+  # NapCat 需要在 WebUI (http://localhost:6099) 里开启 Satori HTTP 服务（端口 2531）
+  group:adapter:
+    adapter-satori:
+      endpoint: http://napcat:2531
 
   # ── RSS 订阅 ─────────────────────────────────────────────
   group:rss:
@@ -45,9 +40,9 @@ plugins:
       request:
         timeout: 10000
         userAgent: "Mozilla/5.0 (compatible; Koishi RSS Bot)"
-      refreshInterval: 300000     # 每 5 分钟检查一次
+      refreshInterval: 300000
       authority:
-        add: 3        # 需要 admin 才能订阅
-        remove: 3     # 需要 admin 才能取消订阅
-        list: 1       # 所有人可以查看订阅列表
-        check: 1      # 所有人可以手动检查更新
+        add: 3
+        remove: 3
+        list: 1
+        check: 1
