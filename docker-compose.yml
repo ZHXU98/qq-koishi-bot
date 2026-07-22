@@ -16,7 +16,7 @@ services:
       - ./napcat/QQ_config/QQ:/app/.config/QQ       # QQ 登录态（重要！务必备份）
     ports:
       - "6099:6099"     # NapCat WebUI（首次登录用）
-      - "2531:2531"     # Satori HTTP 服务（官方推荐，供 Koishi adapter-satori 连接）
+      - "3001:3001"     # OneBot WS 服务端（供 Koishi adapter-onebot 连接）
     networks:
       - botnet
 

@@ -11,10 +11,17 @@ WORKDIR /koishi
 COPY package.json ./
 
 # 删除旧 lockfile，用 yarn 重新安装所有依赖（含额外插件）
-# --no-immutable 允许更新 lockfile
 RUN rm -f yarn.lock && \
     yarn config set npmRegistryServer https://registry.npmmirror.com && \
     yarn install --no-immutable
+
+# 创建 @satorijs/satori shim：adapter-onebot 6.x 依赖此包，
+# koishi 4.18.x 将其内容集成进了 @satorijs/core，故直接重导出
+RUN mkdir -p node_modules/@satorijs/satori && \
+    echo '{"name":"@satorijs/satori","version":"3.7.0","main":"index.js"}' \
+      > node_modules/@satorijs/satori/package.json && \
+    echo 'module.exports = require("@satorijs/core");' \
+      > node_modules/@satorijs/satori/index.js
 
 # 复制我们自定义的 koishi.yml（覆盖 boilerplate 默认的）
 COPY koishi.yml ./

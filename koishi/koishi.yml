@@ -28,10 +28,12 @@ plugins:
     database-sqlite:
       path: data/koishi.db
 
-  # ── QQ 适配器（NapCat HTTP SSE + WebSocket on 2531，adapter-satori 接入）──
+  # ── QQ 适配器（OneBot 11 WebSocket，NapCat 服务端 port 3001）──
   group:adapter:
-    adapter-satori:
-      endpoint: http://napcat:2531
+    adapter-onebot:
+      protocol: ws
+      endpoint: ws://napcat:3001
+      selfId: "2804223545"
 
   # ── RSS 订阅 ─────────────────────────────────────────────
   group:rss:
