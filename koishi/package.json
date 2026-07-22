@@ -1,0 +1,15 @@
+{
+  "name": "koishi-app",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "koishi": "^4",
+    "@koishijs/plugin-adapter-onebot": "^2",
+    "@koishijs/plugin-console": "^5",
+    "@koishijs/plugin-auth": "^3",
+    "@koishijs/plugin-logger": "^3",
+    "@koishijs/plugin-database-sqlite": "^3",
+    "koishi-plugin-rss": "^3",
+    "@koishijs/plugin-admin": "^3"
+  }
+}

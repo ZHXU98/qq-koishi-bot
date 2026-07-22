@@ -1,0 +1,67 @@
+version: "3.8"
+
+services:
+  # ============================================================
+  # NapCatQQ - QQ 协议适配器（QQNT协议）
+  # ============================================================
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: napcat
+    restart: unless-stopped
+    environment:
+      - NAPCAT_UID=0
+      - ACCOUNT=${QQ_ACCOUNT}
+    volumes:
+      - ./napcat/config:/app/napcat/config    # NapCat 配置
+      - ./napcat/QQ:/app/QQ                   # QQ 登录态（重要！务必备份）
+    ports:
+      - "6099:6099"     # NapCat WebUI（首次登录用）
+      - "3001:3001"     # OneBot WS（供 Koishi 连接）
+    networks:
+      - botnet
+
+  # ============================================================
+  # Koishi.js - QQ 机器人主框架
+  # 自定义构建：预装 RSS 插件 + 权限管理等插件
+  # ============================================================
+  koishi:
+    build:
+      context: ./koishi
+      dockerfile: Dockerfile
+    image: koishi-custom:latest
+    container_name: koishi
+    restart: unless-stopped
+    depends_on:
+      - napcat
+    volumes:
+      - ./koishi/koishi.yml:/koishi/koishi.yml    # 主配置文件
+      - ./koishi/data:/koishi/data                # 数据库、缓存（本地目录，方便备份）
+      - ./koishi/assets:/koishi/assets            # 图片、附件等静态资源
+    ports:
+      - "5140:5140"     # Koishi Web 控制台
+    networks:
+      - botnet
+    environment:
+      - TZ=Asia/Shanghai
+
+  # ============================================================
+  # RSSHub - 将各大平台（同花顺、微博、B站等）转为标准 RSS
+  # ⚠️ 订阅同花顺等无原生 RSS 的平台必须依赖此服务
+  # 访问：http://localhost:1200
+  # ============================================================
+  rsshub:
+    image: diygod/rsshub:latest
+    container_name: rsshub
+    restart: unless-stopped
+    ports:
+      - "1200:1200"
+    environment:
+      - NODE_ENV=production
+      - CACHE_EXPIRE=600          # 通用缓存 10 分钟
+      - CACHE_CONTENT_EXPIRE=3600 # 内容缓存 1 小时
+    networks:
+      - botnet
+
+networks:
+  botnet:
+    driver: bridge
