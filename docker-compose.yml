@@ -22,7 +22,7 @@ services:
 
   # ============================================================
   # Koishi.js - QQ 机器人主框架
-  # 自定义构建：预装 RSS 插件 + 权限管理等插件
+  # koishi.yml 已打包进镜像，通过 docker compose build 更新配置
   # ============================================================
   koishi:
     build:
@@ -34,9 +34,8 @@ services:
     depends_on:
       - napcat
     volumes:
-      - ./koishi/koishi.yml:/koishi/koishi.yml    # 主配置文件
-      - ./koishi/data:/koishi/data                # 数据库、缓存（本地目录，方便备份）
-      - ./koishi/assets:/koishi/assets            # 图片、附件等静态资源
+      - ./koishi/data:/koishi/data            # 数据库、缓存（本地目录，方便备份）
+      - ./koishi/assets:/koishi/assets        # 图片、附件等静态资源
     ports:
       - "5140:5140"     # Koishi Web 控制台
     networks:

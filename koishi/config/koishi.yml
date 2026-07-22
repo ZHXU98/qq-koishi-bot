@@ -1,0 +1,47 @@
+plugins:
+  # ── 服务器 ──────────────────────────────────────────────
+  group:server:
+    server:
+      port: 5140
+      host: 0.0.0.0
+
+  # ── 基础 ────────────────────────────────────────────────
+  group:basic:
+    admin: {}
+    http: {}
+
+  # ── 控制台 ──────────────────────────────────────────────
+  group:console:
+    auth: {}
+    config: {}
+    console:
+      open: false       # 不自动打开浏览器（容器内无浏览器）
+    explorer: {}
+    logger: {}
+    market:
+      search:
+        endpoint: https://registry.koishi.chat/index.json
+
+  # ── 存储 ────────────────────────────────────────────────
+  group:storage:
+    database-sqlite:
+      path: data/koishi.db
+
+  # ── QQ 适配器（OneBot v11 WebSocket）────────────────────
+  group:adapter:
+    adapter-onebot:
+      protocol: ws
+      endpoint: ws://napcat:3001
+
+  # ── RSS 订阅 ─────────────────────────────────────────────
+  group:rss:
+    "koishi-plugin-rss":
+      request:
+        timeout: 10000
+        userAgent: "Mozilla/5.0 (compatible; Koishi RSS Bot)"
+      refreshInterval: 300000     # 每 5 分钟检查一次
+      authority:
+        add: 3        # 需要 admin 才能订阅
+        remove: 3     # 需要 admin 才能取消订阅
+        list: 1       # 所有人可以查看订阅列表
+        check: 1      # 所有人可以手动检查更新

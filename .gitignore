@@ -7,6 +7,9 @@ koishi/data/
 # 资源文件（图片、附件等，体积大）
 koishi/assets/
 
+# 预装插件目录（体积大，通过 docker cp 或 docker compose run 初始化）
+koishi/node_modules/
+
 # 环境变量（包含 QQ 账号）
 .env
 

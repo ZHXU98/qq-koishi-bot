@@ -1,15 +1,19 @@
 {
-  "name": "koishi-app",
+  "name": "@koishijs/boilerplate",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.16.0",
+  "packageManager": "yarn@4.12.0",
+  "scripts": {
+    "start": "koishi start"
+  },
   "dependencies": {
-    "koishi": "^4",
-    "@koishijs/plugin-adapter-onebot": "^2",
-    "@koishijs/plugin-console": "^5",
-    "@koishijs/plugin-auth": "^3",
-    "@koishijs/plugin-logger": "^3",
-    "@koishijs/plugin-database-sqlite": "^3",
-    "koishi-plugin-rss": "^3",
-    "@koishijs/plugin-admin": "^3"
+    "koishi": "latest",
+    "@koishijs/plugin-adapter-onebot": "latest",
+    "@koishijs/plugin-console": "latest",
+    "@koishijs/plugin-auth": "latest",
+    "@koishijs/plugin-logger": "latest",
+    "@koishijs/plugin-database-sqlite": "latest",
+    "koishi-plugin-rss": "latest",
+    "@koishijs/plugin-admin": "latest"
   }
 }
