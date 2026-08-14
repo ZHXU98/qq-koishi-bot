@@ -1,0 +1,4 @@
+# 此目录用于放置中文字体，但字体文件（.ttc/.ttf/.otf）不入库（体积大且有授权问题）。
+# 请运行 setup_fonts.sh 自动从本机系统字体复制一款 CJK 字体到 cjk.ttc；
+# 或手动放置任意中文字体并命名为 cjk.ttc。
+# 容器通过 bind mount 将本目录挂载为 /app/fonts，脚本 FONT_PATH 默认指向 /app/fonts/cjk.ttc。

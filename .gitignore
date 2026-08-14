@@ -12,3 +12,31 @@ koishi/assets/
 .env
 
 .codeflicker
+
+# ===== ths-news 服务 =====
+# 中文字体（22MB+ 且涉及字体授权，不入库；用 setup_fonts.sh 从本机系统复制）
+ths-news/fonts/*.ttc
+ths-news/fonts/*.ttf
+ths-news/fonts/*.otf
+# 真实推送目标（含真实 QQ 号，勿提交；用 .example 模板）
+ths-news/ths_news_targets.json
+# 运行日志
+ths-news/*.log
+*.log
+
+# NapCat 配置（含 OneBot token / 登录票据，敏感，勿提交）
+napcat/config/
+
+# macOS 垃圾文件
+.DS_Store
+**/.DS_Store
+
+# 备份文件（如 docker-compose.yml.bak）
+*.bak
+
+# ===== A股 复盘推送（宿主运行，非容器） =====
+# 真实推送目标（含真实 QQ 号，勿提交；用 push_targets.json.example 模板）
+a-share-report/push_targets.json
+# 渲染产物与本地日志
+a-share-report/*.png
+a-share-report/*.log

@@ -1,9 +1,6 @@
 version: "3.8"
 
 services:
-  # ============================================================
-  # NapCatQQ - QQ 协议适配器（QQNT协议）
-  # ============================================================
   napcat:
     image: mlikiowa/napcat-docker:latest
     container_name: napcat
@@ -11,55 +8,69 @@ services:
     environment:
       - NAPCAT_UID=0
       - ACCOUNT=${QQ_ACCOUNT}
+      # 自动复用已保存的"快速登录"票据：容器每次重启会自动用本地存储的登录态登录，
+      # 不再需要重新扫码（除非 QQ 服务端主动让票据失效，那种情况才需重扫一次）
+      - NAPCAT_QUICK_ACCOUNT=${QQ_ACCOUNT}
     volumes:
-      - ./napcat/config:/app/napcat/config          # NapCat 配置（网络设置等）
-      - ./napcat/QQ_config/QQ:/app/.config/QQ       # QQ 登录态（重要！务必备份）
+      - ./napcat/config:/app/napcat/config
+      - ./napcat/QQ:/app/.config/QQ
     ports:
-      - "6099:6099"     # NapCat WebUI（首次登录用）
+      - "6099:6099"
+      - "5140:5140"
+      - "3000:3000"
     networks:
       - botnet
 
-  # ============================================================
-  # Koishi.js - QQ 机器人主框架
-  # 共享 napcat 网络命名空间，可直连 127.0.0.1:3001
-  # koishi.yml 已打包进镜像，通过 docker compose build 更新配置
-  # ============================================================
-  koishi:
-    build:
-      context: ./koishi
-      dockerfile: Dockerfile
-    image: koishi-custom:latest
-    container_name: koishi
+  ths-news:
+    image: node:22-alpine
+    container_name: ths-news
     restart: unless-stopped
+    working_dir: /app
     depends_on:
       - napcat
     volumes:
-      - ./koishi/data:/koishi/data            # 数据库、缓存（本地目录，方便备份）
-      - ./koishi/assets:/koishi/assets        # 图片、附件等静态资源
-    ports:
-      - "5140:5140"     # Koishi Web 控制台
-    network_mode: "service:napcat"            # 共享 napcat 网络，127.0.0.1:3001 互通
+      - ./ths-news/fetch_ths_news.js:/app/fetch_ths_news.js:ro
+      - ./ths-news/ths_news_targets.json:/app/ths_news_targets.json:ro
+      - ./ths-news/start_news_cron.sh:/app/start_news_cron.sh:ro
+      - ./ths-news/fonts:/app/fonts:ro
+      - ths-news-state:/app/state
+      - ths-news-modules:/app/node_modules
     environment:
+      - NAPCAT_URL=http://napcat:3000
       - TZ=Asia/Shanghai
-
-  # ============================================================
-  # RSSHub - 将各大平台（同花顺、微博、B站等）转为标准 RSS
-  # ⚠️ 订阅同花顺等无原生 RSS 的平台必须依赖此服务
-  # 访问：http://localhost:1200
-  # ============================================================
-  rsshub:
-    image: diygod/rsshub:latest
-    container_name: rsshub
-    restart: unless-stopped
-    ports:
-      - "1200:1200"
-    environment:
-      - NODE_ENV=production
-      - CACHE_EXPIRE=600          # 通用缓存 10 分钟
-      - CACHE_CONTENT_EXPIRE=3600 # 内容缓存 1 小时
+      - NEWS_INTERVAL=600
+      - THS_STATE=/app/state/ths_news_state.json
     networks:
       - botnet
+    command: ["sh", "-c", "sh /app/start_news_cron.sh"]
+
+  # koishi:
+  #   image: koishijs/koishi:latest
+  #   container_name: koishi
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - napcat
+  #   volumes:
+  #     - ./koishi/data:/koishi/data
+  #   network_mode: "service:napcat"
+  #   environment:
+  #     - TZ=Asia/Shanghai
+
+  # rsshub:
+    # image: diygod/rsshub:latest
+    # container_name: rsshub
+    # restart: unless-stopped
+    # ports:
+    #   - "1200:1200"
+    # environment:
+    #   - NODE_ENV=production
+    # networks:
+    #   - botnet
 
 networks:
   botnet:
     driver: bridge
+
+volumes:
+  ths-news-state:
+  ths-news-modules:

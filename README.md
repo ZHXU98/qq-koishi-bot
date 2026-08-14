@@ -244,3 +244,46 @@ docker compose up -d
 2. **登录态保密**：`napcat/QQ/` 目录包含 QQ session，不要上传到公开 Git 仓库
 3. **RSS 频率**：默认 5 分钟刷新一次，不要设太短，避免 IP 被 RSS 源封禁
 4. **控制台安全**：已开启登录验证，请设置强密码；如部署在公网需配置防火墙
+
+---
+
+## A股 每日复盘推送（宿主脚本）— `a-share-report/`
+
+把 WorkBuddy 自动化生成的 A股 复盘 HTML 渲染成图片并推送到 QQ。**这套脚本跑在宿主机（非 Docker 容器）**，依赖本机 Chrome + `puppeteer-core`（与 ths-news 的纯 resvg 路线不同）。
+
+### 前置（宿主机）
+- Node.js（建议 ≥ 18）
+- 一款 Chrome / Chromium（macOS 默认 `/Applications/Google Chrome.app/...`，其它平台用 `CHROME_PATH` 覆盖）
+- `puppeteer-core`（放在可被 `NODE_PATH` 找到的 node_modules 下）
+
+### 文件
+```
+a-share-report/
+├── push_report.js              # 主脚本：登录健康检查 → 渲染 → 推送 QQ
+├── render_report.js            # 仅渲染不推送（手动预览用）
+├── push_targets.json.example   # 推送目标模板
+└── push_targets.json           # 真实目标（.gitignore 已忽略，勿提交）
+```
+
+### 用法
+```bash
+# 自动推送（报告路径由 WorkBuddy 自动化传入；目标/尺寸读 push_targets.json）
+NODE_PATH=<ws>/node_modules node a-share-report/push_report.js /path/to/A股-YYYY-MM-DD-复盘.html
+
+# 仅渲染成 PNG 预览（不推送）
+NODE_PATH=<ws>/node_modules node a-share-report/render_report.js /path/to/report.html /tmp/preview.png
+```
+
+### 环境变量（均可覆盖默认值）
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `CHROME_PATH` | macOS Chrome 路径 | Chrome 可执行文件，换平台/电脑时必设 |
+| `REPORT_DIR` | 本机复盘目录 | 不传报告路径时按当天日期自动查找 |
+| `PUSH_TARGETS` | 脚本同目录 `push_targets.json` | 推送目标配置文件路径 |
+| `NAPCAT_URL` | `http://127.0.0.1:3000` | NapCat OneBot 地址（宿主直连） |
+| `NAPCAT_TOKEN` | 空 | NapCat access token |
+| `QQ_PRIVATE_IDS` / `QQ_GROUP_IDS` | 读配置文件 | 临时覆盖推送目标（逗号分隔多个） |
+| `REPORT_CAPTION` | 读配置文件 | 图片前的文字说明 |
+| `IMAGE_WIDTH` / `IMAGE_SCALE` | 600 / 2 | 输出图片宽度与倍率 |
+
+> 迁移到其它电脑：克隆仓库后 `cp a-share-report/push_targets.json.example a-share-report/push_targets.json` 填入你的 QQ，并设置 `CHROME_PATH` 与 `NODE_PATH` 即可。脚本本身不依赖容器，故无需 Docker。
