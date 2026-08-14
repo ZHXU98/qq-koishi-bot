@@ -2,12 +2,6 @@
 napcat/QQ/
 napcat/QQ_config/
 
-# Koishi 运行数据（数据库、插件缓存）
-koishi/data/
-
-# 资源文件（图片、附件等，体积大）
-koishi/assets/
-
 # 环境变量（包含 QQ 账号）
 .env
 

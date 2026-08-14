@@ -46,7 +46,7 @@ visibility: "public"
 ## 部署流程（新机器 / 首次）
 
 ```bash
-git clone <repo> && cd qq-koishi-bot
+git clone https://github.com/ZHXU98/qq-koishi-bot.git && cd qq-koishi-bot
 cp .env.example .env          # 填 QQ_ACCOUNT=你的QQ号
 cp ths-news/ths_news_targets.json.example ths-news/ths_news_targets.json  # 填 private(你的QQ)/groups
 bash ths-news/setup_fonts.sh  # 从系统字体复制 CJK 到 ths-news/fonts/cjk.ttc
@@ -92,3 +92,15 @@ docker logs ths-news                               # 看循环日志（start_new
 - **格式细节**（buildCardSvg）：条目间 `#f0f0f0` 分隔线、标题↔摘要间距 10px、超 3 行末行加 `…`、行尾标点（。，！？；：、）强制贴当前行末尾（防孤立标点）。
 - **不提交到 Git**：字体（`.ttc/.ttf/.otf`）、真实配置 `ths_news_targets.json`、`.env`、`napcat/config/` 均已 `.gitignore`；用 `.example` 模板 + `setup_fonts.sh`。
 - **GitHub 可移植**：克隆→填 `.env`+配置→`setup_fonts.sh`→`docker compose up -d`，无需配 Node/Chrome/字体授权。
+
+## 相关 Skill（协作链路）
+
+本 skill 是「A股复盘推送」三件套之一，三者互相配合：
+
+| Skill | 职责 | 在链路中的位置 |
+|-------|------|----------------|
+| [`a-share-daily-review`](../a-share-daily-review/SKILL.md) | 生成 A股 复盘 HTML 报告（含 ECharts） | 第 1 步：产出 HTML |
+| [`a-share-report-push`](../a-share-report-push/SKILL.md) | 渲染 HTML 成图并推到 QQ | 第 2 步：把报告送达 |
+| **`ths-news-forwarder`（本 skill）** | 同花顺官方「重要」快讯 → 中文图片卡片 → QQ | 并行/独立：资讯转发渠道 |
+
+典型闭环：`a-share-daily-review` 生成报告 → `a-share-report-push` 推送到 QQ；本 skill 另起一条 10 分钟循环的资讯转发。三者共用同一个 NapCat 机器人。
