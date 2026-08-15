@@ -121,7 +121,7 @@ function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&
 function fmtTime(ts) {
   const d = new Date(ts);
   const p = n => String(n).padStart(2, '0');
-  return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 function startOfToday() {
   const d = new Date();
@@ -193,11 +193,11 @@ function renderCard(dateStr, items) {
 
 function buildCardSvg(dateStr, items) {
   const PAD = 36, INNER = CARD_W - PAD * 2;
-  // 半角字符（含数字/英文/常见标点/省略号）按 0.5em 估算宽度，全角按 1em
+  // 半角字符（含数字/英文/常见标点/省略号）按 0.56em 估算宽度（留出 resvg 实际渲染余量，避免右侧截断），全角按 1em
   const isHalf = ch => /[A-Za-z0-9 .,:%‘’“”\-/…]/.test(ch);
   // 行尾标点：避免换行后单独成行（孤立标点）
   const isTrailPunct = ch => /[。，！？；：、]/.test(ch);
-  const cwOf = (ch, fs) => isHalf(ch) ? fs * 0.5 : fs;
+  const cwOf = (ch, fs) => isHalf(ch) ? fs * 0.56 : fs;
   const lineW = (line, fs) => { let w = 0; for (const c of line) w += cwOf(c, fs); return w; };
   const wrap = (text, fs, maxW) => {
     const lines = []; let line = '', w = 0;
@@ -241,7 +241,7 @@ function buildCardSvg(dateStr, items) {
       blocks.push(`<line x1="${PAD}" y1="${y}" x2="${CARD_W - PAD}" y2="${y}" stroke="#f0f0f0" stroke-width="1"/>`);
       y += 16;
     }
-    const titleLines = wrap('【' + it.time + '】' + it.title, 25, INNER);
+    const titleLines = wrap('【' + fmtTime(it.time) + '】' + it.title, 25, INNER);
     for (const ln of titleLines) { blocks.push(`<text x="${PAD}" y="${y + 22}" font-family="CJK" font-size="25" font-weight="700" fill="#222222">${x(ln)}</text>`); y += 30; }
     y += 10; // 标题↔摘要呼吸
     const { lines: descLines } = clipDesc(it.desc || '');
