@@ -13,6 +13,10 @@
 //
 // 用法: NODE_PATH=<ws>/node_modules node push_report.js [报告html路径]
 //
+// 重试配置（应对 NapCat 重启后图片通道热身延迟 / 瞬时网络抖动）：
+//   SEND_RETRIES=2      单次发送失败后最多重试次数（默认 2）
+//   SEND_RETRY_DELAY=3000  每次重试间隔(ms，默认 3000)
+//
 // array vs string 说明：
 //   array  -> [{type:'image',data:{file:'base64://...'}}]  结构化，官方推荐，免转义，易组合多段
 //   string -> "[CQ:image,file=base64://...]"               旧式 CQ 码，直观但长串需转义
@@ -100,6 +104,38 @@ function buildMessage(b64) {
   return segs;
 }
 
+// ---------- 发送（带重试，应对 NapCat 重启后图片通道热身延迟 / 瞬时网络抖动） ----------
+const SEND_RETRIES = (() => { const n = Number(process.env.SEND_RETRIES); return Number.isFinite(n) && n >= 0 ? n : 2; })();
+const SEND_RETRY_DELAY = (() => { const n = Number(process.env.SEND_RETRY_DELAY); return Number.isFinite(n) && n >= 0 ? n : 3000; })();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// 单次发送并解析真实成败（HTTP 200 + body.status=ok + retcode=0 才算成功）
+async function sendOnce(ep, body, headers) {
+  const r = await fetch(NAPCAT_URL + ep, { method: 'POST', headers, body: JSON.stringify(body) });
+  const t = await r.text();
+  let bodyOk = r.ok;
+  try {
+    const j = JSON.parse(t);
+    if (!j || j.status !== 'ok' || (j.retcode != null && j.retcode !== 0)) bodyOk = false;
+  } catch (_) { /* 响应体非 JSON 时信任 HTTP 状态 */ }
+  return { ok: bodyOk, text: t };
+}
+
+// 带重试的发送：最多 1 + SEND_RETRIES 次；任一成功即返回 ok；全部失败返回最后一次响应
+async function sendWithRetry(ep, body, headers, label) {
+  let last = { ok: false, text: '' };
+  for (let attempt = 1; attempt <= SEND_RETRIES + 1; attempt++) {
+    const res = await sendOnce(ep, body, headers);
+    if (res.ok) return res;
+    last = res;
+    if (attempt <= SEND_RETRIES) {
+      console.log(`  ↻ ${label} 第${attempt}次失败，${SEND_RETRY_DELAY}ms 后重试(${attempt}/${SEND_RETRIES})：${res.text.slice(0, 100)}`);
+      await sleep(SEND_RETRY_DELAY);
+    }
+  }
+  return last;
+}
+
 (async () => {
   // 1) 登录健康检查（掉线就先告警退出，不浪费后续渲染）
   if (!(await checkLogin())) process.exit(4);
@@ -135,19 +171,14 @@ function buildMessage(b64) {
   if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
 
   let ok = 0, fail = 0;
-  for (const uid of PRIVATE_IDS) {
-    const body = { user_id: Number(uid), message };
-    const r = await fetch(NAPCAT_URL + '/send_private_msg', { method: 'POST', headers, body: JSON.stringify(body) });
-    const t = await r.text();
-    console.log(`私聊 ${uid} -> HTTP ${r.status}`, t.slice(0, 120));
-    r.ok ? ok++ : fail++;
-  }
-  for (const gid of GROUP_IDS) {
-    const body = { group_id: Number(gid), message };
-    const r = await fetch(NAPCAT_URL + '/send_group_msg', { method: 'POST', headers, body: JSON.stringify(body) });
-    const t = await r.text();
-    console.log(`群 ${gid} -> HTTP ${r.status}`, t.slice(0, 120));
-    r.ok ? ok++ : fail++;
+  const targets = [
+    ...PRIVATE_IDS.map(u => ({ kind: '私聊', id: u, ep: '/send_private_msg', body: { user_id: Number(u) } })),
+    ...GROUP_IDS.map(g => ({ kind: '群', id: g, ep: '/send_group_msg', body: { group_id: Number(g) } })),
+  ];
+  for (const tg of targets) {
+    const res = await sendWithRetry(tg.ep, { ...tg.body, message }, headers, `${tg.kind} ${tg.id}`);
+    console.log(`${tg.kind} ${tg.id} -> ${res.ok ? '✅成功' : '❌失败(已重试' + SEND_RETRIES + '次)'}`, res.text.slice(0, 140));
+    res.ok ? ok++ : fail++;
   }
   console.log(`完成：成功 ${ok} 个，失败 ${fail} 个`);
   if (fail > 0) process.exit(1);

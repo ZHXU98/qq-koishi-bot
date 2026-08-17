@@ -1,8 +1,9 @@
 #!/bin/sh
-# 容器内启动脚本：周期性运行 fetch_ths_news.js 推送同花顺重要资讯
-# 用法：作为容器 command / entrypoint，或手动执行
-# 依赖：容器内仅需 node（无需 Chrome / puppeteer）
-set -e
+# 容器内启动脚本：运行 fetch_ths_news.js 推送同花顺重要资讯
+# 注意：不要使用 set -e —— 一旦循环内某命令返回非 0，整个转发器会永久停摆。
+# 实际的周期调度已改由 node 内部 setInterval 自调度（见 fetch_ths_news.js），
+# 本脚本只负责启动 node；若 node 意外退出，while 循环会把它重新拉起。
+set +e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 [ -z "$SCRIPT_DIR" ] && SCRIPT_DIR="/app"

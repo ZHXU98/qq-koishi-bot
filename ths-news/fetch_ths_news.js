@@ -143,32 +143,64 @@ async function checkLogin() {
   } catch (e) { console.error('❌ 无法连接 NapCat：', e.message); return false; }
 }
 
+// ---------- 发送（带重试，应对 NapCat 重启后图片通道热身延迟 / 瞬时网络抖动） ----------
+// SEND_RETRIES：发送失败后最多重试次数（默认 2）；SEND_RETRY_DELAY：每次重试间隔(ms，默认 3000)
+const SEND_RETRIES = (() => { const n = Number(process.env.SEND_RETRIES); return Number.isFinite(n) && n >= 0 ? n : 2; })();
+const SEND_RETRY_DELAY = (() => { const n = Number(process.env.SEND_RETRY_DELAY); return Number.isFinite(n) && n >= 0 ? n : 3000; })();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// 单次发送并解析真实成败（HTTP 200 + body.status=ok + retcode=0 才算成功）
+async function sendOnce(ep, body, headers) {
+  const r = await fetch(NAPCAT_URL + ep, { method: 'POST', headers, body: JSON.stringify(body) });
+  const t = await r.text();
+  let bodyOk = r.ok;
+  try {
+    const j = JSON.parse(t);
+    if (!j || j.status !== 'ok' || (j.retcode != null && j.retcode !== 0)) bodyOk = false;
+  } catch (_) { /* 响应体非 JSON 时信任 HTTP 状态 */ }
+  return { ok: bodyOk, text: t };
+}
+
+// 带重试的发送：最多 1 + SEND_RETRIES 次；任一成功即返回 ok；全部失败返回最后一次响应
+async function sendWithRetry(ep, body, headers, label) {
+  let last = { ok: false, text: '' };
+  for (let attempt = 1; attempt <= SEND_RETRIES + 1; attempt++) {
+    const res = await sendOnce(ep, body, headers);
+    if (res.ok) return res;
+    last = res;
+    if (attempt <= SEND_RETRIES) {
+      console.log(`  ↻ ${label} 第${attempt}次失败，${SEND_RETRY_DELAY}ms 后重试(${attempt}/${SEND_RETRIES})：${res.text.slice(0, 100)}`);
+      await sleep(SEND_RETRY_DELAY);
+    }
+  }
+  return last;
+}
+
 // ---------- 推送（图片卡片，渲染失败回退纯文字） ----------
+// 返回 { ok, fail, privateFail }。注意 NapCat 业务失败也返回 HTTP 200 + body.status="failed"，
+// 因此必须解析响应体判断真实成败，不能只看 HTTP 状态码（否则会「以为发了其实没发」）。
 async function pushToTargets(items, dateStr) {
   const headers = { 'Content-Type': 'application/json' };
   if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
   // 按 MAX_PUSH 拆批，每批渲染成一张图片卡片（不丢弃任何一条）
   const batches = [];
   for (let i = 0; i < items.length; i += MAX_PUSH) batches.push(items.slice(i, i + MAX_PUSH));
-  let ok = 0, fail = 0, sent = 0;
+  let ok = 0, fail = 0, privateFail = 0;
+  const targets = [
+    ...PRIVATE_IDS.map(u => ({ kind: '私聊', id: u, ep: '/send_private_msg', body: { user_id: Number(u) } })),
+    ...GROUP_IDS.map(g => ({ kind: '群', id: g, ep: '/send_group_msg', body: { group_id: Number(g) } })),
+  ];
   for (const batch of batches) {
     const segs = await buildMessageSegs(batch, dateStr);
-    for (const uid of PRIVATE_IDS) {
-      const r = await fetch(NAPCAT_URL + '/send_private_msg', { method: 'POST', headers, body: JSON.stringify({ user_id: Number(uid), message: segs }) });
-      const t = await r.text();
-      console.log(`私聊 ${uid} -> HTTP ${r.status}`, t.slice(0, 100));
-      r.ok ? ok++ : fail++;
+    for (const tg of targets) {
+      const res = await sendWithRetry(tg.ep, { ...tg.body, message: segs }, headers, `${tg.kind} ${tg.id}`);
+      console.log(`${tg.kind} ${tg.id} -> ${res.ok ? '✅成功' : '❌失败(已重试' + SEND_RETRIES + '次)'}`, res.text.slice(0, 140));
+      res.ok ? ok++ : fail++;
+      if (!res.ok && tg.kind === '私聊') privateFail++;
     }
-    for (const gid of GROUP_IDS) {
-      const r = await fetch(NAPCAT_URL + '/send_group_msg', { method: 'POST', headers, body: JSON.stringify({ group_id: Number(gid), message: segs }) });
-      const t = await r.text();
-      console.log(`群 ${gid} -> HTTP ${r.status}`, t.slice(0, 100));
-      r.ok ? ok++ : fail++;
-    }
-    sent += batch.length;
   }
   console.log(`完成：成功 ${ok} 个，失败 ${fail} 个（共 ${items.length} 条，分 ${batches.length} 图）`);
-  return fail === 0;
+  return { ok, fail, privateFail };
 }
 
 // 优先渲染图片卡片；渲染异常则回退纯文字，保证不丢
@@ -290,10 +322,11 @@ async function main() {
   // --force：立即推送本轮全部候选（用于测试验证）
   if (FORCE) {
     if (candidates.length === 0) { console.log('无可推送候选'); return; }
-    if (!(await checkLogin())) { console.error('登录态异常，退出'); process.exit(4); }
-    await pushToTargets(candidates, dateStr);
+    if (!(await checkLogin())) { console.error('登录态异常，退出'); return; }
+    const fres = await pushToTargets(candidates, dateStr);
     for (const c of candidates) seenSet.add(c.link);
     st.seen = Array.from(seenSet).slice(-SEEN_KEEP);
+    if (fres.privateFail > 0) console.error(`⚠️ force：私聊推送失败 ${fres.privateFail} 个`);
     st.lastPush = Date.now();
     saveState(st);
     console.log('force 推送完成');
@@ -306,11 +339,21 @@ async function main() {
     console.log('本轮无新重要资讯');
     return;
   }
+
+  // 登录态异常（多为 NapCat 瞬时不可达）不要自杀退出：本轮跳过、不标记已推送，下轮自动重试，
+  // 避免整个转发循环被一次网络抖动打挂而永久停摆
+  if (!(await checkLogin())) { console.error('登录态异常，暂不推送，下轮重试'); return; }
   for (const c of candidates) seenSet.add(c.link);
   st.seen = Array.from(seenSet).slice(-SEEN_KEEP);
-
-  if (!(await checkLogin())) { console.error('登录态异常，暂不推送'); saveState(st); process.exit(4); }
-  await pushToTargets(candidates, dateStr);
+  const res = await pushToTargets(candidates, dateStr);
+  // 私聊（主目标）未送达：回滚 seen 标记，下轮自动重试，避免「以为发了其实没发」且永久丢失
+  if (res.privateFail > 0) {
+    for (const c of candidates) seenSet.delete(c.link);
+    st.seen = Array.from(seenSet).slice(-SEEN_KEEP);
+    console.error(`⚠️ 私聊推送失败 ${res.privateFail} 个，已回滚 seen 标记，下轮自动重试`);
+  } else if (res.fail > res.privateFail) {
+    console.error(`⚠️ 群推送失败 ${res.fail - res.privateFail} 个（私聊已送达，群权限需用户侧修复）`);
+  }
   st.lastPush = Date.now();
   saveState(st);
   console.log(`本轮推送完成，共 ${candidates.length} 条重要资讯`);
@@ -318,7 +361,27 @@ async function main() {
 
 // 仅当直接运行本文件时才执行主流程；被 require 时仅暴露渲染函数（供验证/复用脚本使用）
 if (require.main === module) {
-  main().catch(e => { console.error(e); process.exit(1); });
+  const SCHEDULE = !DRY && !FORCE;
+  const INTERVAL_MS = (parseInt(process.env.NEWS_INTERVAL || '600', 10) || 600) * 1000;
+
+  // 单轮执行 + 异常兜底：任何一轮出错都只记录，不影响后续调度，绝不让进程退出
+  async function tick() {
+    try {
+      await main();
+    } catch (e) {
+      console.error('[tick] 本轮异常（已捕获，继续调度）:', e);
+    }
+  }
+
+  if (SCHEDULE) {
+    // 自调度模式：node 常驻，每 NEWS_INTERVAL 秒跑一轮，彻底不依赖 shell 的 while 循环
+    console.log(`[scheduler] 自调度模式启动，间隔 ${INTERVAL_MS / 1000}s`);
+    tick();
+    setInterval(tick, INTERVAL_MS);
+  } else {
+    // --dry-run / --force：一次性执行
+    tick();
+  }
 }
 
 module.exports = { buildCardSvg, renderCard, CARD_W, FONT_PATH };
