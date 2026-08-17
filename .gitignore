@@ -34,3 +34,10 @@ a-share-report/push_targets.json
 # 渲染产物与本地日志
 a-share-report/*.png
 a-share-report/*.log
+
+# ===== NapCat 掉线监控（宿主运行，非容器） =====
+# 运行态产物：状态记录、日志、二维码、远程扫码预览页（含 QQ 登录票据信息，勿提交）
+monitor/state.json
+monitor/monitor.log
+monitor/latest_qr.png
+monitor/napcat_qr.html

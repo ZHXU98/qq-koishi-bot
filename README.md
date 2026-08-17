@@ -29,6 +29,9 @@ qq-koishi-bot/
     ├── render_report.js          # 仅渲染不推送（手动预览）
     ├── push_targets.json.example # 推送目标模板
     └── SKILL.md
+├── monitor/                    # ★ NapCat 掉线监控（宿主机脚本，非容器）
+    ├── check_napcat.sh           # 掉线自动重启自愈；需扫码时导出二维码
+    └── README.md                # WorkBuddy 自动化配置（微信推送/远程扫码交付）
 ```
 
 ---
@@ -216,6 +219,18 @@ docker compose up -d
 3. **字体授权**：中文字体体积大且涉及授权，已 `.gitignore`，用 `setup_fonts.sh` 从本机系统复制，不入库。
 4. **配置保密**：`ths_news_targets.json` / `a-share-report/push_targets.json` 含真实 QQ 号，均 `.gitignore`，勿提交。
 5. **控制台安全**：NapCat Web 管理页已开启登录验证，请设置强密码；如部署在公网需配置防火墙。
+
+---
+
+## NapCat 掉线监控（monitor，宿主机脚本）
+
+`monitor/check_napcat.sh` 每小时守护 NapCat 在线状态（`online && good` 双真判断，能识别"假在线"）：
+
+- **掉线自动自愈**：`docker compose restart napcat` 重启，恢复后发 QQ 提醒主号；
+- **需扫码时**：30 分钟冷却内提醒一次，导出最新二维码到 `monitor/latest_qr.png`；
+- **远程知悉**：由 WorkBuddy 自动化（每小时）触发，开启微信推送，掉线/扫码告警直达用户微信；需扫码时自动生成 `napcat_qr.html` 预览页，远程直接扫码。
+
+> 掉线场景下 QQ 通道与桌面通知都不可达（bot 掉线发不出、远程看不到本机屏幕），故告警必须走微信推送这条与机器无关的通道。完整配置（rrule / push_to_wechat / prompt / 远程扫码交付流程）见 `monitor/README.md`。
 
 ---
 
