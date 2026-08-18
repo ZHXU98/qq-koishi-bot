@@ -1,6 +1,6 @@
 ---
 name: napcat-monitor
-description: NapCat QQ 机器人（OneBot 11）掉线监控与扫码恢复工作流。用于检查 NapCat 是否真正在线（online && good 双真、账号校验，识别"假在线"）、掉线自愈（docker compose restart）、按需交付登录二维码。触发场景：用户问"检查 bot 状态 / NapCat 在线吗 / bot 掉线了 / 要二维码 / 帮我扫码登录 / 运行监控"等，以及每小时 NapCat 掉线监控自动化。关键用户偏好：自动推送只报原因不附二维码；二维码仅在用户对话中主动索取时实时导出交付。
+description: NapCat QQ 机器人（OneBot 11）掉线监控与扫码恢复工作流。用于检查 NapCat 是否真正在线（online && good 双真、账号校验，识别"假在线"）、掉线自愈（docker compose restart）、按需交付登录二维码，以及掉线间隔/频率记录（record_disconnect.sh 自动累计事件、计算平均间隔与去重）。触发场景：用户问"检查 bot 状态 / NapCat 在线吗 / bot 掉线了 / 要二维码 / 帮我扫码登录 / 运行监控 / 掉线频率"等，以及每小时 NapCat 掉线监控自动化。关键用户偏好：自动推送只报原因不附二维码；二维码仅在用户对话中主动索取时实时导出交付。
 agent_created: true
 ---
 
@@ -75,6 +75,54 @@ info=$(curl -s --noproxy '*' -m 5 -X POST http://127.0.0.1:3000/get_login_info)
 5. `present_files` **交付该唯一路径 `$OUT`**（不要交付 `latest_qr.png`）。汇报"⚠️ bot 需重新扫码登录（票据过期），已交付最新二维码，请尽快用手机 QQ 扫描（约 2 分钟有效）"。
 6. 日志里会打印二维码解码 URL（形如 `https://txz.qq.com/p?k=...&f=...`），若图片渲染异常可一并提供作兜底。
 7. 若容器迟迟未生成 `qrcode.png`，告知用户在本机 NapCat WebUI（http://127.0.0.1:6099/webui）查看实时二维码。
+
+## 掉线事件记录（间隔 / 频率统计）
+
+为了长期掌握 NapCat 掉线节奏（识别服务端风控持续踢人，而非偶发票据过期），每小时监控检测到掉线时，应把事件追加到一张事件表，并自动计算「距上次间隔」与「平均间隔」。本能力属于**观测/记录**，只写 `monitor/` 下的日志与状态文件，不改动 check_napcat.sh / docker-compose.yml / push_targets.json，与"禁止改配置"约束不冲突。
+
+关键文件：
+- 记录表：`/Users/zhangxu/Desktop/qq-koishi-bot/monitor/disconnect_log.md`
+- 记录脚本：`/Users/zhangxu/Desktop/qq-koishi-bot/monitor/record_disconnect.sh`
+- 状态文件（累计计数/间隔秒数汇总）：`/Users/zhangxu/Desktop/qq-koishi-bot/monitor/.disconnect_state`
+
+### record_disconnect.sh 用法
+由每小时监控自动化在判定掉线时调用（自愈成功分支传「自动重启恢复」；需扫码分支传「需重新扫码（票据过期）」）：
+```bash
+bash /Users/zhangxu/Desktop/qq-koishi-bot/monitor/record_disconnect.sh "<现象/处置简述>"
+```
+- 自动算序号、距上次间隔（`XhXXm`，首次为 `—`）、刷新汇总块（累计次数、平均间隔）。
+- 自带 **2h 去重**：距上次记录 < 7200s 视为同一 episode，直接退出不重复追加，避免一次长离线被每小时重复计。
+- 间隔 = 距上一次记录的时长，非服务端精确踢人时刻（监控有滞后，正常）。
+- note 参数会去除 `|` 与换行，避免破坏 Markdown 表格。
+
+### disconnect_log.md 结构
+```
+# NapCat 掉线事件记录（disconnect_log）
+## 汇总
+- 统计起始：YYYY-MM-DD HH:MM
+- 累计掉线次数：**N**
+- 平均间隔：约 **XhXXm**
+- 最短 / 最长间隔：**Xm** / **XhXXm**
+- 趋势：（可选，结合日志 serverErrorCode 168 / KickedOffLine 给出判定）
+## 事件明细
+| # | 日期时间 | 距上次 | 现象 / 处置 |
+|---|----------|--------|------------|
+```
+
+### 初始化状态（首次部署 / 预填历史）
+`.disconnect_state` 内容为 `last_epoch<TAB>count<TAB>sum_intervals_seconds`，需先初始化，再用历史数据预填明细行，否则间隔计算会失真。示例（2026-08-18 基线：7 次，末次 18:05，6 个间隔合计 35640s）：
+```bash
+LAST=$(date -j -f '%Y-%m-%d %H:%M' '2026-08-18 18:05' +%s)
+printf '%s\t7\t35640\n' "$LAST" > /Users/zhangxu/Desktop/qq-koishi-bot/monitor/.disconnect_state
+# 35640 = 52m+2h39m+24m+52m+2h27m+2h40m = 3120+9540+1440+3120+8820+9600
+```
+明细行与汇总块直接在 `disconnect_log.md` 手写预填；脚本只负责后续追加。
+
+### gitignore / 入库
+`disconnect_log.md` 与 `.disconnect_state` 是运行态产物，已加入 `.gitignore` 不入库；`record_disconnect.sh` 作为代码保留（与 check_napcat.sh 同类）。
+
+### 自动化接线
+每小时监控自动化（automation-1786964342410）的 prompt 第 4 步已内置此调用；若重建自动化或换会话，按上文把"掉线时调用 record_disconnect.sh"一并写回 prompt。
 
 ## 注意事项
 

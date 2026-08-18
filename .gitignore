@@ -42,5 +42,8 @@ monitor/monitor.log
 monitor/latest_qr*.png
 monitor/napcat_qr.html
 monitor/qr_view.html
+# 掉线事件记录（运行态产物，自动维护，勿提交）
+monitor/disconnect_log.md
+monitor/.disconnect_state
 # NapCat 监控 skill 打包产物（构建产物，非源码）
 .workbuddy/skills/napcat-monitor/napcat-monitor.zip
