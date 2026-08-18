@@ -14,8 +14,9 @@ agent_created: true
 - 监控脚本：`/Users/zhangxu/Desktop/qq-koishi-bot/monitor/check_napcat.sh`
 - 日志：`/Users/zhangxu/Desktop/qq-koishi-bot/monitor/monitor.log`
 - 状态：`/Users/zhangxu/Desktop/qq-koishi-bot/monitor/state.json`
-- 二维码：`/Users/zhangxu/Desktop/qq-koishi-bot/monitor/latest_qr.png`
-- 预览页：`/Users/zhangxu/Desktop/qq-koishi-bot/monitor/napcat_qr.html`
+- 二维码（脚本导出目标）：`/Users/zhangxu/Desktop/qq-koishi-bot/monitor/latest_qr.png`
+- 二维码（对话交付用，见下）：`/Users/zhangxu/Desktop/qq-koishi-bot/monitor/latest_qr_<时分秒>.png`（**唯一文件名，禁止覆盖 latest_qr.png**，否则 present_files 按路径缓存会展示旧图）
+- 预览页：`/Users/zhangxu/Desktop/qq-koishi-bot/monitor/napcat_qr.html`（仅作为可选兜底，自动推送禁用）
 
 ## 探测原理（识别"假在线"）
 
@@ -47,14 +48,33 @@ info=$(curl -s --noproxy '*' -m 5 -X POST http://127.0.0.1:3000/get_login_info)
 
 ## 对话中按需交付二维码（用户索取时执行）
 
-1. 检查状态（用上方探测命令）；若在线则告知"在线正常"无需扫码。
-2. 若 offline，刷新二维码（**必须实时刷新**，旧的已过期）：
+> ⚠️ **两大已踩坑 bug（2026-08-18 实测，务必遵守，否则用户拿到过期/旧码）**：
+> 1. **只 `docker cp` 不重启 = 拷贝静态旧码**：NapCat 只有重新进入"待扫码"登录流程才会写出带当前时间戳的新 `qrcode.png`。单纯拷贝容器里已有文件不会刷新，旧码早已过期。
+> 2. **复用同名 `latest_qr.png` = 被预览缓存成旧图**：`present_files` 按文件路径缓存，重复覆盖同一文件名时前端常显示第一枚旧图（实测用户一直看到 13:00 的旧码）。**必须用唯一时间戳文件名。**
+
+1. 先探测状态（用上方命令）；若已在线则告知"在线正常"无需扫码。
+2. 若 offline，**先重启容器强制重新生成二维码**：
    ```bash
-   docker cp napcat:/app/napcat/cache/qrcode.png /Users/zhangxu/Desktop/qq-koishi-bot/monitor/latest_qr.png
+   docker compose -f /Users/zhangxu/Desktop/qq-koishi-bot/docker-compose.yml restart napcat
    ```
-3. 用 Python 将 PNG 转 base64 内嵌进自包含 HTML（`napcat_qr.html`，标题「NapCat 需重新扫码」，居中展示，附「请用手机 QQ 扫描下方二维码登录 rssBOT，二维码约 2 分钟过期，若过期重新索取」说明），保存到 `monitor/napcat_qr.html`。
-4. 调用 present_files 交付该 HTML（实时预览），汇报"⚠️ bot 需重新扫码登录（票据过期），已生成二维码预览页供远程扫码"。可同时附 `latest_qr.png` 原图方便直接查看。
-5. 若二维码文件不存在/导出失败，告知用户在本机 NapCat WebUI（http://127.0.0.1:6099/webui）查看实时二维码。
+3. **轮询等待容器内 `qrcode.png` 真正刷新**（mtime 距现在 < 60s，确认是刚生成的；或 `docker logs napcat --tail 3` 出现「二维码已保存」）。**绝不在 restart 后立刻 `docker cp`**，否则拷到的是过期旧码：
+   ```bash
+   for _ in $(seq 1 30); do
+     m=$(docker exec napcat stat -c %Y /app/napcat/cache/qrcode.png 2>/dev/null) || { sleep 2; continue; }
+     [ $(( $(date +%s) - m )) -lt 60 ] && break
+     sleep 2
+   done
+   ```
+4. **导出到唯一文件名（关键，绕过 present_files 预览缓存）**：
+   ```bash
+   TS=$(date +%H%M%S)
+   OUT=/Users/zhangxu/Desktop/qq-koishi-bot/monitor/latest_qr_${TS}.png
+   docker cp napcat:/app/napcat/cache/qrcode.png "$OUT"
+   ls -l "$OUT"   # 核对 mtime 确为当前时刻、size 正常（约 590~600B），避免交付旧码
+   ```
+5. `present_files` **交付该唯一路径 `$OUT`**（不要交付 `latest_qr.png`）。汇报"⚠️ bot 需重新扫码登录（票据过期），已交付最新二维码，请尽快用手机 QQ 扫描（约 2 分钟有效）"。
+6. 日志里会打印二维码解码 URL（形如 `https://txz.qq.com/p?k=...&f=...`），若图片渲染异常可一并提供作兜底。
+7. 若容器迟迟未生成 `qrcode.png`，告知用户在本机 NapCat WebUI（http://127.0.0.1:6099/webui）查看实时二维码。
 
 ## 注意事项
 

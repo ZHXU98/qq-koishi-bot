@@ -110,10 +110,27 @@ else
     write_state "online" "$now"
   else
     log "自动重启后仍无法连接（可能需重新扫码登录）"
+    # 每次都刷新最新二维码：容器重启会重新生成 QR，旧码已过期必须覆盖刷新。
+    # 30 分钟冷却只用于限制通知频率，绝不能因此跳过二维码导出（否则下发旧码）。
+    qr_ok=0
+    for _ in $(seq 1 12); do
+      if "$DOCKER_BIN" exec napcat test -s /app/napcat/cache/qrcode.png 2>/dev/null; then
+        qr_ok=1; break
+      fi
+      sleep 2
+    done
+    if [ "$qr_ok" -eq 1 ]; then
+      if "$DOCKER_BIN" cp napcat:/app/napcat/cache/qrcode.png "$QR_OUT" 2>/dev/null; then
+        log "已导出最新二维码到 $QR_OUT"
+      else
+        log "二维码导出失败（docker cp 未成功覆盖 $QR_OUT）"
+      fi
+    else
+      log "未找到容器内二维码（napcat 尚未生成），本次未更新 $QR_OUT"
+    fi
+    # 30 分钟冷却仅限制桌面通知/微信推送频率，不影响二维码刷新
     if [ $((now - last_alert)) -gt 1800 ]; then
       notify_desktop "NapCat 需重新扫码登录（票据可能已过期）。请在 Mac 上处理。"
-      "$DOCKER_BIN" cp napcat:/app/napcat/cache/qrcode.png "$QR_OUT" 2>/dev/null || true
-      log "已导出最新二维码到 $QR_OUT"
       write_state "offline" "$now"
     else
       log "离线告警冷却中（30 分钟内已提醒），跳过重复通知"

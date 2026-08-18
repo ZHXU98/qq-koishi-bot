@@ -39,5 +39,8 @@ a-share-report/*.log
 # 运行态产物：状态记录、日志、二维码、远程扫码预览页（含 QQ 登录票据信息，勿提交）
 monitor/state.json
 monitor/monitor.log
-monitor/latest_qr.png
+monitor/latest_qr*.png
 monitor/napcat_qr.html
+monitor/qr_view.html
+# NapCat 监控 skill 打包产物（构建产物，非源码）
+.workbuddy/skills/napcat-monitor/napcat-monitor.zip
