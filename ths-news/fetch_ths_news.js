@@ -42,14 +42,30 @@ const NEWS_CAPTION = '📌 同花顺重要金融资讯（同花顺官方「重�
 const FONT_PATH = process.env.THS_FONT || '/app/fonts/cjk.ttc'; // 容器内挂载的中文字体（方案A）
 const CARD_W = 640;             // 卡片宽度
 
-// ---------- 配置读取 ----------
+// ---------- 配置读取（热加载：每个推送周期重新读盘，改 ths_news_targets.json 无需重启容器即可生效）----------
 const cfgPath = fs.existsSync(NEWS_TARGETS_PATH) ? NEWS_TARGETS_PATH : CONFIG_PATH;
-let cfg = { private: [], groups: [], imageWidth: 600, imageScale: 2 };
-try {
-  if (fs.existsSync(cfgPath)) cfg = Object.assign(cfg, JSON.parse(fs.readFileSync(cfgPath, 'utf8')));
-} catch (e) { console.error('读取配置失败:', cfgPath, e.message); }
-const PRIVATE_IDS = parseList(cfg.private);
-const GROUP_IDS = parseList(cfg.groups);
+let PRIVATE_IDS = [];
+let GROUP_IDS = [];
+let lastTargetsSig = '';
+// 重新读取推送目标；仅在目标集合变化时打印日志（减少噪音），读取失败则沿用上轮配置（不丢目标）。
+function loadTargets() {
+  try {
+    if (!fs.existsSync(cfgPath)) return;
+    const c = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    const priv = parseList(c.private);
+    const grp = parseList(c.groups);
+    const sig = JSON.stringify(priv) + '|' + JSON.stringify(grp);
+    if (sig !== lastTargetsSig) {
+      PRIVATE_IDS = priv;
+      GROUP_IDS = grp;
+      lastTargetsSig = sig;
+      console.log('[targets] 配置已更新 private=', JSON.stringify(PRIVATE_IDS), 'groups=', JSON.stringify(GROUP_IDS));
+    }
+  } catch (e) {
+    console.error('读取配置失败（沿用上轮配置）:', cfgPath, e.message);
+  }
+}
+loadTargets(); // 进程启动先加载一次
 
 function parseList(v) {
   if (!v) return [];
@@ -286,6 +302,7 @@ function buildCardSvg(dateStr, items) {
 
 // ---------- 主流程 ----------
 async function main() {
+  loadTargets(); // 热加载推送目标：每个推送周期重新读盘，改配置无需重启容器
   const dt = new Date();
   const dateStr = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
   console.log('=== 同花顺重要资讯聚合', dateStr, DRY ? '(dry-run)' : FORCE ? '(force)' : '', '===');

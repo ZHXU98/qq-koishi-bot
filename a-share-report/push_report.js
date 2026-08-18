@@ -51,19 +51,23 @@ function parseList(...vals) {
 
 // 目标配置：优先用环境变量，否则读取 push_targets.json（与脚本同目录）
 //   QQ_PRIVATE_IDS / QQ_GROUP_IDS 可临时覆盖配置文件
+// 抽成 loadTargets() 每次运行重新读盘，改 push_targets.json 无需重启/重跑即生效（与 ths-news 一致的热加载方式）。
 const CONFIG_PATH = process.env.PUSH_TARGETS || path.join(__dirname, 'push_targets.json');
-let cfg = { private: [], groups: [], caption: '' };
-try {
-  if (fs.existsSync(CONFIG_PATH)) cfg = Object.assign(cfg, JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')));
-} catch (e) { console.error('读取配置文件失败:', CONFIG_PATH, e.message); }
-
-const PRIVATE_IDS = parseList(process.env.QQ_PRIVATE_IDS, process.env.QQ_PRIVATE_ID, cfg.private);
-const GROUP_IDS = parseList(process.env.QQ_GROUP_IDS, process.env.QQ_GROUP_ID, cfg.groups);
-const CAPTION = process.env.REPORT_CAPTION || cfg.caption || '';
-// 图片尺寸：按手机端阅读优化。viewport 宽度越接近手机 CSS 宽度，发出去越不用放大看。
-//   imageWidth 默认 600（CSS px），imageScale 默认 2（输出像素 = width*scale）
-const IMAGE_WIDTH = parseInt(process.env.IMAGE_WIDTH || cfg.imageWidth || '600', 10) || 600;
-const IMAGE_SCALE = parseInt(process.env.IMAGE_SCALE || cfg.imageScale || '2', 10) || 2;
+let PRIVATE_IDS = [], GROUP_IDS = [], CAPTION = '', IMAGE_WIDTH = 600, IMAGE_SCALE = 2;
+function loadTargets() {
+  let c = { private: [], groups: [], caption: '', imageWidth: 600, imageScale: 2 };
+  try {
+    if (fs.existsSync(CONFIG_PATH)) c = Object.assign(c, JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')));
+  } catch (e) { console.error('读取配置文件失败（沿用上轮配置）:', CONFIG_PATH, e.message); }
+  PRIVATE_IDS = parseList(process.env.QQ_PRIVATE_IDS, process.env.QQ_PRIVATE_ID, c.private);
+  GROUP_IDS  = parseList(process.env.QQ_GROUP_IDS,  process.env.QQ_GROUP_ID,  c.groups);
+  CAPTION     = process.env.REPORT_CAPTION || c.caption || '';
+  // 图片尺寸：按手机端阅读优化。viewport 宽度越接近手机 CSS 宽度，发出去越不用放大看。
+  //   imageWidth 默认 600（CSS px），imageScale 默认 2（输出像素 = width*scale）
+  IMAGE_WIDTH = parseInt(process.env.IMAGE_WIDTH || c.imageWidth || '600', 10) || 600;
+  IMAGE_SCALE = parseInt(process.env.IMAGE_SCALE || c.imageScale || '2', 10) || 2;
+}
+loadTargets(); // 进程启动先加载一次（本脚本为一次性运行，每次执行都会重新读盘）
 
 function todayFile() {
   const d = new Date();
@@ -139,6 +143,8 @@ async function sendWithRetry(ep, body, headers, label) {
 (async () => {
   // 1) 登录健康检查（掉线就先告警退出，不浪费后续渲染）
   if (!(await checkLogin())) process.exit(4);
+
+  console.log('[targets] 推送目标 private=', JSON.stringify(PRIVATE_IDS), 'groups=', JSON.stringify(GROUP_IDS));
 
   if (PRIVATE_IDS.length === 0 && GROUP_IDS.length === 0) {
     console.error('缺少目标：请设置 QQ_PRIVATE_IDS 或 QQ_GROUP_IDS（逗号分隔多个）');
