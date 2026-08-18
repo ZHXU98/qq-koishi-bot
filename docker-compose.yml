@@ -46,6 +46,26 @@ services:
       - botnet
     command: ["sh", "-c", "sh /app/start_news_cron.sh"]
 
+  qq-reply:
+    image: node:22-alpine
+    container_name: qq-reply
+    restart: unless-stopped
+    working_dir: /app
+    depends_on:
+      - napcat
+    volumes:
+      - ./reply/index.js:/app/index.js:ro
+      - ./reply/package.json:/app/package.json:ro
+      - ./reply/config.json:/app/config.json:ro
+    environment:
+      - NAPCAT_WS_URL=ws://napcat:3001
+      - NAPCAT_URL=http://napcat:3000
+      - BOT_UIN=${QQ_ACCOUNT}
+      - TZ=Asia/Shanghai
+    networks:
+      - botnet
+    command: ["node", "/app/index.js"]
+
   # koishi:
   #   image: koishijs/koishi:latest
   #   container_name: koishi

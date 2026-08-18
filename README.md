@@ -1,9 +1,10 @@
-# QQ 机器人（NapCat + 同花顺资讯转发 + A股复盘推送）
+# QQ 机器人（NapCat + 同花顺资讯转发 + A股复盘推送 + 被@回复）
 
-基于 **NapCat**（OneBot 协议 QQ 机器人网关）的 Docker Compose 项目，包含两条自动化推送链路：
+基于 **NapCat**（OneBot 协议 QQ 机器人网关）的 Docker Compose 项目，包含三条自动化链路 + 一套被动回复指令服务：
 
 1. **同花顺重要资讯转发（`ths-news`，容器运行）**：每 10 分钟拉取同花顺官方「重要」快讯，渲染成中文图片卡片推到 QQ 私聊 / 群。
 2. **A股 每日复盘推送（`a-share-report`，宿主机运行）**：把 WorkBuddy 生成的 A股 复盘 HTML 渲染成图，推到 QQ 私聊 / 群。
+3. **被@回复 + 指令（`qq-reply`，容器运行）**：监听群聊 / 私聊消息，群里被 @ 机器人时回复，私聊直接发指令即可，支持 `/help` `/ping` `/status` `/echo` 等指令。
 
 > 本项目**已不再使用 Koishi**，原 Koishi / RSSHub 相关配置与文档均已废弃移除。
 
@@ -13,7 +14,7 @@
 
 ```
 qq-koishi-bot/
-├── docker-compose.yml          # 容器编排（napcat + ths-news）
+├── docker-compose.yml          # 容器编排（napcat + ths-news + qq-reply）
 ├── .env.example                # QQ 账号模板（复制为 .env 填 QQ_ACCOUNT）
 ├── .gitignore
 ├── napcat/                     # NapCat 运行数据（登录态/配置，已 gitignore）
@@ -24,6 +25,11 @@ qq-koishi-bot/
 │   ├── setup_fonts.sh           # 从本机复制中文字体（避免提交 22MB）
 │   ├── fonts/                   # 中文字体目录（.ttc 不入库）
 │   ├── README.md / PROMPTS.md / SKILL.md
+├── reply/                      # ★ 被@回复 + 指令服务（容器，零依赖）
+│   ├── index.js                  # 主服务：WS 监听事件 + HTTP 回复
+│   ├── package.json
+│   ├── config.json.example       # 触发规则/欢迎语模板
+│   └── README.md
 └── a-share-report/             # ★ A股 复盘推送（宿主机脚本，非容器）
     ├── push_report.js            # 主脚本：登录健康检查 → 渲染 → 推送 QQ
     ├── render_report.js          # 仅渲染不推送（手动预览）
@@ -139,6 +145,60 @@ fetch_ths_news.js  ── 过滤(import>0) + 去重(seen) + 组装条目
 
 ---
 
+## 被@回复 + 指令服务（qq-reply，容器）
+
+监听 NapCat 的 WebSocket 消息事件，实现机器人的**被动回复**：识别 @ / 指令 / 磁力链接并自动回复，支持磁力预览（WhatsLink API）。与 `ths-news`（主动定时推送）互补。
+
+### 触发规则与权限（最终版）
+
+| 场景 | 行为 |
+|------|------|
+| 群聊 · 任意人 @ + 闲聊 | **忽略**（只有特定指令才触发，防止被随便@刷屏） |
+| 群聊 · @ + 指令 | 响应；普通成员仅可用 `groupRestrictedCmds`（默认 `["ping","status"]`），其余指令回受限提示 |
+| 群聊 · 管理员（`admins`）直接发磁链（无需@） | 自动预览 |
+| 私聊 · 白名单（`privateWhitelist`） | 仅响应指令 / 磁链，闲聊忽略 |
+| 私聊 · 非白名单 | 拒绝提示 |
+
+### 指令表
+
+| 指令 | 别名 | 说明 |
+|------|------|------|
+| `/help` | `/菜单` | 指令菜单 |
+| `/ping` | `/存活` | 存活检测（运行时长 + 当前时间） |
+| `/status` | `/状态` | 服务状态 + **监控指标**（模拟硬件温度/频率，仅展示） |
+| `/echo <内容>` | `/复读` | 复读 |
+| `/preview <磁链或40位hash>` | `/预览` `/磁力预览` | **磁力预览**：WhatsLink API 返回名称/大小/文件数 + 内容截图 |
+| 消息含 `magnet:?xt=...` | 自动 | 自动触发 `/preview`（同一权限规则） |
+
+> 群聊预览默认**不带图**（`groupImages: false`）：腾讯对群聊批量图片有安全审核，涉黄批量图连发会被静默拦截（sendMsg 超时）；图片自动**私聊补发**给管理员。私聊预览照常带图（单条消息图片上限 4 张）。
+
+### 前置条件
+
+NapCat 需开启**正向 WebSocket 事件上报**（`napcat/config/onebot11_<QQ号>.json` 的 `network.websocketServers` 含端口 `3001`，本项目已配置）；改完 NapCat 配置后需 `docker compose restart napcat` 生效。
+
+### 使用
+
+```bash
+# 生成配置（先建文件再 up！compose 挂载源缺失会建成目录导致 EISDIR）
+cp reply/config.json.example reply/config.json
+# 编辑 config.json：填 admins / privateWhitelist（你的 QQ）
+
+# 启动（依赖 napcat）
+docker compose up -d qq-reply
+
+# 确认就绪：看到「✅ WebSocket 已连接」
+docker compose logs -f qq-reply
+```
+
+- **零依赖**：Node ≥ 21 内置 WebSocket + fetch，无需 `npm install`。
+- **断线自愈**：WS 断开每 5 秒自动重连。
+- **发送重试**：send_* 端点 5 次 × 5s，抵御 NapCat sendMsg 间歇超时（风控下常见）。
+- **配置热加载**：`reply/config.json` 每次收到消息重新读盘，改完无需重启。
+
+> 完整文档见 [`reply/README.md`](./reply/README.md)。扩展新指令：编辑 `reply/index.js` 的 `routeCommand()` 后 `docker compose restart qq-reply`。部署/排障/踩坑全套经验见 `.workbuddy/skills/qq-reply-service/SKILL.md`。
+
+---
+
 ## A股 每日复盘推送（a-share-report，宿主机脚本）
 
 把 WorkBuddy 自动化 / `a-share-daily-review` skill 生成的 **A股 复盘 HTML 报告**，渲染成适合手机阅读的长图并推送到 QQ。**这套脚本跑在宿主机（非 Docker 容器）**，依赖本机 Chrome + `puppeteer-core`（与 ths-news 的纯 resvg 路线不同，因为需要真实浏览器渲染 ECharts 图表）。
@@ -197,10 +257,12 @@ docker compose ps
 
 # 实时日志
 docker compose logs -f ths-news
+docker compose logs -f qq-reply
 docker compose logs -f napcat
 
 # 重启单个服务
 docker compose restart ths-news
+docker compose restart qq-reply
 
 # 停止 / 删除全部
 docker compose down

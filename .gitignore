@@ -35,6 +35,10 @@ a-share-report/push_targets.json
 a-share-report/*.png
 a-share-report/*.log
 
+# ===== qq-reply 被@回复服务（容器） =====
+# 运行配置（可含自定义欢迎语/管理员列表，勿提交；用 config.json.example 模板）
+reply/config.json
+
 # ===== NapCat 掉线监控（宿主运行，非容器） =====
 # 运行态产物：状态记录、日志、二维码、远程扫码预览页（含 QQ 登录票据信息，勿提交）
 monitor/state.json

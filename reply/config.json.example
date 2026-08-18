@@ -1,0 +1,12 @@
+{
+  "groupAtOnly": true,
+  "privateAlways": true,
+  "admins": [],
+  "privateWhitelist": [],
+  "groupRestrictedCmds": ["ping", "status"],
+  "groupImages": false,
+  "unknownMsg": "未知指令，发送 /help 查看可用指令",
+  "restrictedMsg": "⚠️ 该指令仅限管理员使用；普通成员可使用：/ping、/status",
+  "deniedMsg": "🛡️ 本机器人仅对授权账号开放",
+  "welcome": "👋 你好，我是机器人助手。群聊请 @我 + 指令，私聊可直接发送指令；发送 /help 查看全部指令。"
+}
