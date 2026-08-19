@@ -165,6 +165,17 @@ const SEND_RETRIES = (() => { const n = Number(process.env.SEND_RETRIES); return
 const SEND_RETRY_DELAY = (() => { const n = Number(process.env.SEND_RETRY_DELAY); return Number.isFinite(n) && n >= 0 ? n : 3000; })();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// ---------- 发送节流（防腾讯风控：QQ 对短时高频群发/私发敏感，掉线多由「瞬时连发」触发） ----------
+// SEND_MIN_INTERVAL：同一批内目标与目标之间的最小间隔(ms，默认 2000)；SEND_JITTER：随机抖动上限(ms，默认 3000)
+//   → 实际间隔 = SEND_MIN_INTERVAL + [0, SEND_JITTER) 随机值，打散节奏避免固定间隔被识别
+// BATCH_MIN_INTERVAL：批与批（多张卡片）之间的最小间隔(ms，默认 5000)；BATCH_JITTER：随机抖动上限(ms，默认 5000)
+// 均为纯发送节奏控制，不吞消息、不影响重试逻辑；可在 docker-compose environment 中调整或设 0 关闭
+const SEND_MIN_INTERVAL = (() => { const n = Number(process.env.SEND_MIN_INTERVAL); return Number.isFinite(n) && n >= 0 ? n : 2000; })();
+const SEND_JITTER = (() => { const n = Number(process.env.SEND_JITTER); return Number.isFinite(n) && n >= 0 ? n : 3000; })();
+const BATCH_MIN_INTERVAL = (() => { const n = Number(process.env.BATCH_MIN_INTERVAL); return Number.isFinite(n) && n >= 0 ? n : 5000; })();
+const BATCH_JITTER = (() => { const n = Number(process.env.BATCH_JITTER); return Number.isFinite(n) && n >= 0 ? n : 5000; })();
+const jittered = (base, jitter) => base + Math.floor(Math.random() * (jitter + 1));
+
 // 单次发送并解析真实成败（HTTP 200 + body.status=ok + retcode=0 才算成功）
 async function sendOnce(ep, body, headers) {
   const r = await fetch(NAPCAT_URL + ep, { method: 'POST', headers, body: JSON.stringify(body) });
@@ -206,14 +217,20 @@ async function pushToTargets(items, dateStr) {
     ...PRIVATE_IDS.map(u => ({ kind: '私聊', id: u, ep: '/send_private_msg', body: { user_id: Number(u) } })),
     ...GROUP_IDS.map(g => ({ kind: '群', id: g, ep: '/send_group_msg', body: { group_id: Number(g) } })),
   ];
-  for (const batch of batches) {
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
     const segs = await buildMessageSegs(batch, dateStr);
-    for (const tg of targets) {
+    for (let j = 0; j < targets.length; j++) {
+      const tg = targets[j];
       const res = await sendWithRetry(tg.ep, { ...tg.body, message: segs }, headers, `${tg.kind} ${tg.id}`);
       console.log(`${tg.kind} ${tg.id} -> ${res.ok ? '✅成功' : '❌失败(已重试' + SEND_RETRIES + '次)'}`, res.text.slice(0, 140));
       res.ok ? ok++ : fail++;
       if (!res.ok && tg.kind === '私聊') privateFail++;
+      // 节流：同一批内目标之间随机间隔，避免瞬时连发触发风控
+      if (j < targets.length - 1) await sleep(jittered(SEND_MIN_INTERVAL, SEND_JITTER));
     }
+    // 节流：批（多张卡片）之间随机间隔
+    if (i < batches.length - 1) await sleep(jittered(BATCH_MIN_INTERVAL, BATCH_JITTER));
   }
   console.log(`完成：成功 ${ok} 个，失败 ${fail} 个（共 ${items.length} 条，分 ${batches.length} 图）`);
   return { ok, fail, privateFail };

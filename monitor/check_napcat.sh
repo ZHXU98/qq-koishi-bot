@@ -137,7 +137,7 @@ restart_and_recover() {
     fi
     # 30 分钟冷却仅限制桌面通知频率，不影响二维码刷新
     if [ $((now - last_alert)) -gt 1800 ]; then
-      notify_desktop "NapCat 仍不可用：如为安全验证请在 Mac 上完成验证；如为票据过期请扫码。详见 monitor/latest_qr.png。"
+      notify_desktop "NapCat 仍不可用：如为安全验证请在 Mac 上完成验证；如为票据过期请扫码（monitor/latest_qr.png），或找 WorkBuddy 协助扫码。"
       write_state "offline" "$now"
     else
       log "离线告警冷却中（30 分钟内已提醒），跳过重复通知"

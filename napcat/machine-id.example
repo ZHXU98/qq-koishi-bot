@@ -1,0 +1,14 @@
+# machine-id 模板 —— 设备指纹固定值
+#
+# 用途：挂载到容器 /etc/machine-id（只读），使容器重建后 QQ 设备指纹不变，
+#       避免触发"新设备验证/重新扫码"。hostname/MAC/machine-id 三者固定后，
+#       容器 ID 变化（recreate）不再影响设备指纹。
+#
+# 首次部署：
+#   1. 生成固定值（任意 32 位小写 hex，建议与首次登录的容器保持一致）：
+#        echo "$(uuidgen | tr -d '-' | tr 'A-F' 'a-f')" > napcat/machine-id
+#   2. 或直接复制本机容器内当前值（保持指纹连续，不触发新设备验证）：
+#        docker exec napcat cat /etc/machine-id > napcat/machine-id
+#   3. 确保 docker-compose.yml 挂载 ./napcat/machine-id:/etc/machine-id:ro
+#
+# 注意：本文件是模板，真实值 napcat/machine-id 已被 .gitignore 忽略（敏感设备标识）。

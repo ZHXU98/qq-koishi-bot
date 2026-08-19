@@ -51,3 +51,16 @@ monitor/disconnect_log.md
 monitor/.disconnect_state
 # NapCat 监控 skill 打包产物（构建产物，非源码）
 .workbuddy/skills/napcat-monitor/napcat-monitor.zip
+
+# ===== 2026-08-19 新增 =====
+# 备份文件（如 docker-compose.yml.bak-qrflow）
+*.bak-*
+
+# 本地二维码预览页（含 QQ 登录票据信息，勿提交）
+monitor/napcat_qr_*.html
+
+# WorkBuddy 会话自动产物（自动化备份/记忆，非本项目源码）
+.workbuddy/
+
+# 设备指纹固定值（敏感设备标识，勿提交；用 machine-id.example 模板）
+napcat/machine-id

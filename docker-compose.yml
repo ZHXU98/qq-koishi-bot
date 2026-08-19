@@ -14,7 +14,12 @@ services:
       # 不再需要重新扫码（除非 QQ 服务端主动让票据失效，那种情况才需重扫一次）
       - NAPCAT_QUICK_ACCOUNT=${QQ_ACCOUNT}
       # 票据失效时的密码回退：自动用 ACCOUNT + 密码快速登录，免手动扫码
+      # 流程约定（2026-08-19 固化）：密码回退原生只尝试一次；若失败，容器启动补丁
+      # （entrypoint-login-patch.sh）会让 NapCat 立即进入二维码扫码态，不再反复重启空转，
+      # 由 monitor/check_napcat.sh 导出二维码（monitor/latest_qr.png）后找 WorkBuddy 扫码登录。
       - NAPCAT_QUICK_PASSWORD=${QQ_QUICK_PASSWORD}
+    # 覆盖镜像默认入口（bash entrypoint.sh）：先打登录流程补丁，再走原入口
+    entrypoint: ["bash", "/app/entrypoint-login-patch.sh"]
     networks:
       # 固定容器 MAC 地址：无论容器 restart 还是被删除重建，网卡 MAC 保持不变，
       # QQ 设备指纹（machine-info 基于 MAC 派生）不再变化，避免反复触发"新设备验证/扫码"
@@ -24,6 +29,11 @@ services:
     volumes:
       - ./napcat/config:/app/napcat/config
       - ./napcat/QQ:/app/.config/QQ
+      - ./napcat/entrypoint-login-patch.sh:/app/entrypoint-login-patch.sh:ro
+      # 固化 machine-id：容器重建会重新生成 /etc/machine-id（Linux 标准设备标识，QQ 客户端
+      # 采集它做设备指纹），挂载固定值后重建设备指纹不再变化，避免触发"新设备验证/重新扫码"
+      # （2026-08-19 固化：容器 ID 变化被观测到，hostname/MAC/machine-id 三者固定后 ID 变化无害）
+      - ./napcat/machine-id:/etc/machine-id:ro
     ports:
       - "6099:6099"
       - "5140:5140"
