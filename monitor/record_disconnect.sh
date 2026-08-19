@@ -29,7 +29,7 @@ if [ "${last_epoch:-0}" -gt 0 ]; then
 fi
 
 #  sanitize note: 去掉 | 与换行，避免破坏表格
-note=$(printf '%s' "$1" | tr -d '|\n')
+note=$(printf '%s' "${1:-}" | tr -d '|\n')
 
 count=$((count + 1))
 if [ "${last_epoch:-0}" -gt 0 ]; then
@@ -45,8 +45,8 @@ if [ "$count" -gt 1 ]; then
   avg=$(printf '%dh%02dm' $((sum/(count-1)/3600)) $((sum/(count-1)%3600/60)))
 fi
 TS=$(date '+%Y-%m-%d %H:%M')
-sed -i '' "s|^- 累计掉线次数：.*|- 累计掉线次数：**$count**（截至 $TS）|" "$LOG"
-sed -i '' "s|^- 平均间隔：.*|- 平均间隔：约 **$avg**|" "$LOG"
+sed -i '' "s|^- 累计掉线次数：.*|- 累计掉线次数：**${count}**（截至 ${TS}）|" "$LOG"
+sed -i '' "s|^- 平均间隔：.*|- 平均间隔：约 **${avg}**|" "$LOG"
 
 # 写回 state
 printf '%s\t%s\t%s\n' "$NOW_EPOCH" "$count" "$sum" > "$STATE"

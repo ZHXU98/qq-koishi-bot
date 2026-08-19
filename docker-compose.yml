@@ -5,6 +5,8 @@ services:
     image: mlikiowa/napcat-docker:latest
     container_name: napcat
     restart: unless-stopped
+    # 固定主机名：容器重建后 hostname 不再变成新容器 ID，设备指纹进一步稳定
+    hostname: napcat-dev
     environment:
       - NAPCAT_UID=0
       - ACCOUNT=${QQ_ACCOUNT}
@@ -13,6 +15,12 @@ services:
       - NAPCAT_QUICK_ACCOUNT=${QQ_ACCOUNT}
       # 票据失效时的密码回退：自动用 ACCOUNT + 密码快速登录，免手动扫码
       - NAPCAT_QUICK_PASSWORD=${QQ_QUICK_PASSWORD}
+    networks:
+      # 固定容器 MAC 地址：无论容器 restart 还是被删除重建，网卡 MAC 保持不变，
+      # QQ 设备指纹（machine-info 基于 MAC 派生）不再变化，避免反复触发"新设备验证/扫码"
+      # （2026-08-19 固化：当日因容器重建 MAC 变化导致设备 ID 更换需重新扫码）
+      botnet:
+        mac_address: "f2:e2:0d:04:cc:1d"
     volumes:
       - ./napcat/config:/app/napcat/config
       - ./napcat/QQ:/app/.config/QQ
@@ -20,8 +28,6 @@ services:
       - "6099:6099"
       - "5140:5140"
       - "3000:3000"
-    networks:
-      - botnet
 
   ths-news:
     image: node:22-alpine

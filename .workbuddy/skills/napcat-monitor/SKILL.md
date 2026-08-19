@@ -52,12 +52,16 @@ info=$(curl -s --noproxy '*' -m 5 -X POST http://127.0.0.1:3000/get_login_info)
 > 1. **只 `docker cp` 不重启 = 拷贝静态旧码**：NapCat 只有重新进入"待扫码"登录流程才会写出带当前时间戳的新 `qrcode.png`。单纯拷贝容器里已有文件不会刷新，旧码早已过期。
 > 2. **复用同名 `latest_qr.png` = 被预览缓存成旧图**：`present_files` 按文件路径缓存，重复覆盖同一文件名时前端常显示第一枚旧图（实测用户一直看到 13:00 的旧码）。**必须用唯一时间戳文件名。**
 
+> ⚠️ **第三坑（2026-08-19 实测）**：配置了 `NAPCAT_QUICK_PASSWORD` 时 NapCat **优先走密码回退，不会自动进入扫码流程、不会生成二维码**。用户索要二维码时若发现容器不生成 `qrcode.png`，须**临时注释 `NAPCAT_QUICK_PASSWORD`**（docker-compose.yml 加 `#`）、`docker compose up -d napcat` 强制走扫码；用户扫码成功后再恢复注释并应用。
+
+> 📦 **远程交付规范（2026-08-19 固化）**：用户远程时**只交付 PNG 原图**（`present_files` 交付唯一时间戳 PNG），**不生成/不交付 HTML 预览页**（远程端本地图可能不可见，PNG 卡片即可预览/下载）。
+
 1. 先探测状态（用上方命令）；若已在线则告知"在线正常"无需扫码。
-2. 若 offline，**先重启容器强制重新生成二维码**：
+2. 若 offline：检查 docker-compose.yml 中 `NAPCAT_QUICK_PASSWORD` 是否被注释。**若未注释（密码回退生效中），先临时注释它**再重建容器强制走扫码；若已注释直接重启：
    ```bash
-   docker compose -f /Users/zhangxu/Desktop/qq-koishi-bot/docker-compose.yml restart napcat
+   docker compose -f /Users/zhangxu/Desktop/qq-koishi-bot/docker-compose.yml up -d napcat
    ```
-3. **轮询等待容器内 `qrcode.png` 真正刷新**（mtime 距现在 < 60s，确认是刚生成的；或 `docker logs napcat --tail 3` 出现「二维码已保存」）。**绝不在 restart 后立刻 `docker cp`**，否则拷到的是过期旧码：
+3. **轮询等待容器内 `qrcode.png` 真正刷新**（mtime 距现在 < 60s，确认是刚生成的；或 `docker logs napcat --tail 3` 出现「二维码已保存」）。**绝不在重启后立刻 `docker cp`**，否则拷到的是过期旧码：
    ```bash
    for _ in $(seq 1 30); do
      m=$(docker exec napcat stat -c %Y /app/napcat/cache/qrcode.png 2>/dev/null) || { sleep 2; continue; }
@@ -75,6 +79,26 @@ info=$(curl -s --noproxy '*' -m 5 -X POST http://127.0.0.1:3000/get_login_info)
 5. `present_files` **交付该唯一路径 `$OUT`**（不要交付 `latest_qr.png`）。汇报"⚠️ bot 需重新扫码登录（票据过期），已交付最新二维码，请尽快用手机 QQ 扫描（约 2 分钟有效）"。
 6. 日志里会打印二维码解码 URL（形如 `https://txz.qq.com/p?k=...&f=...`），若图片渲染异常可一并提供作兜底。
 7. 若容器迟迟未生成 `qrcode.png`，告知用户在本机 NapCat WebUI（http://127.0.0.1:6099/webui）查看实时二维码。
+8. **扫码成功确认在线后**：若第 2 步临时注释过密码回退，恢复 `NAPCAT_QUICK_PASSWORD` 并 `docker compose up -d napcat` 应用，确保后续优先"快速登录→密码回退"自动免扫码。
+
+## 设备 ID 稳定性（容器重建防护，2026-08-19 固化）
+
+**QQ 设备 ID 的真实来源 = 容器 hostname（默认是容器 ID 前 12 位），不是 MAC。** 用户实测：QQ 设备管理里显示的设备 ID 与 `docker ps` 容器 ID 前 12 位完全一致（如 `95442773cd55`）；固定 hostname 为 `napcat-dev` 后 QQ 设备 ID 即显示 `napcat-dev`。
+
+推论（重要）：
+- `docker compose restart` 不重建容器 → hostname/MAC 不变 → 设备 ID 不变，无需重新验证。
+- `docker compose down + up` / 删容器重建 → hostname 变成新容器 ID 前 12 位 → **设备 ID 变化** → 触发新设备验证/需重新扫码。这也是 8/17~8/18 反复"设备又换了"的根因。
+- 容器重建后 `.config/QQ` 下会并存多个 `nt_qq_<hash>` 目录（每次设备指纹变化留下的痕迹），可据此确认设备变更史。
+
+**永久加固方案（2026-08-19 已应用到 docker-compose.yml，勿回退）**：
+```yaml
+hostname: napcat-dev          # 固定主机名：重建后设备 ID 不再变成新容器 ID
+networks:
+  botnet:
+    mac_address: "f2:e2:0d:04:cc:1d"   # 固定 MAC（Compose 顶层 mac_address 已废弃且对自定义网络不生效，必须放 networks 条目下）
+```
+并恢复 `NAPCAT_QUICK_ACCOUNT` / `NAPCAT_QUICK_PASSWORD`（02:14 TEMP-FOR-QR 曾临时注释强制扫码，扫码完成后恢复）。
+应用后验证：`docker inspect napcat --format '{{.Config.Hostname}} {{range .NetworkSettings.Networks}}{{.MacAddress}}{{end}}'` 与预期一致；重启后日志「正在快速登录」直接复用票据，无需重新扫码。
 
 ## 密码快速登录回退与新设备验证（主动通知）
 
