@@ -1,51 +1,52 @@
 version: "3.8"
 
-services:
-  napcat:
-    image: mlikiowa/napcat-docker:latest
-    container_name: napcat
-    restart: unless-stopped
-    # 固定主机名：容器重建后 hostname 不再变成新容器 ID，设备指纹进一步稳定
-    hostname: napcat-dev
-    environment:
-      - NAPCAT_UID=0
-      - ACCOUNT=${QQ_ACCOUNT}
-      # 自动复用已保存的"快速登录"票据：容器每次重启会自动用本地存储的登录态登录，
-      # 不再需要重新扫码（除非 QQ 服务端主动让票据失效，那种情况才需重扫一次）
-      - NAPCAT_QUICK_ACCOUNT=${QQ_ACCOUNT}
-      # 票据失效时的密码回退：自动用 ACCOUNT + 密码快速登录，免手动扫码
-      # 流程约定（2026-08-19 固化）：密码回退原生只尝试一次；若失败，容器启动补丁
-      # （entrypoint-login-patch.sh）会让 NapCat 立即进入二维码扫码态，不再反复重启空转，
-      # 由 monitor/check_napcat.sh 导出二维码（monitor/latest_qr.png）后找 WorkBuddy 扫码登录。
-      - NAPCAT_QUICK_PASSWORD=${QQ_QUICK_PASSWORD}
-    # 覆盖镜像默认入口（bash entrypoint.sh）：先打登录流程补丁，再走原入口
-    entrypoint: ["bash", "/app/entrypoint-login-patch.sh"]
-    networks:
-      # 固定容器 MAC 地址：无论容器 restart 还是被删除重建，网卡 MAC 保持不变，
-      # QQ 设备指纹（machine-info 基于 MAC 派生）不再变化，避免反复触发"新设备验证/扫码"
-      # （2026-08-19 固化：当日因容器重建 MAC 变化导致设备 ID 更换需重新扫码）
-      botnet:
-        mac_address: "f2:e2:0d:04:cc:1d"
-    volumes:
-      - ./napcat/config:/app/napcat/config
-      - ./napcat/QQ:/app/.config/QQ
-      - ./napcat/entrypoint-login-patch.sh:/app/entrypoint-login-patch.sh:ro
-      # 固化 machine-id：容器重建会重新生成 /etc/machine-id（Linux 标准设备标识，QQ 客户端
-      # 采集它做设备指纹），挂载固定值后重建设备指纹不再变化，避免触发"新设备验证/重新扫码"
-      # （2026-08-19 固化：容器 ID 变化被观测到，hostname/MAC/machine-id 三者固定后 ID 变化无害）
-      - ./napcat/machine-id:/etc/machine-id:ro
-    ports:
-      - "6099:6099"
-      - "5140:5140"
-      - "3000:3000"
+# ============================================================
+# 当前架构（2026-08-26 起）：官方 QQ 机器人通道为主
+#   - official-bot-gateway：官方开放平台机器人网关（快讯查询 + 每日汇总 + qq-reply 通道）
+#   - qq-reply：被@回复服务（接官方网关）
+#   - napcat / ths-news：旧 NapCat 转发链路，已注释停用（个人号易被风控踢线）。
+#     如需重新启用（例如官方群推送权限开通前临时恢复实时转发）：
+#       1. 取消下方 napcat / ths-news 两个服务的注释（# 开头）
+#       2. docker compose up -d napcat ths-news
+#       3. NapCat 需重新扫码登录（私聊官方机器人或对话中向 AI 索取二维码）
+#     恢复后 ths-news 每 10 分钟照常转发到 private/groups 配置的目标。
+# ============================================================
 
+services:
+  # ==================== 旧链路（已停用，保留可恢复） ====================
+  # napcat:
+  #   image: mlikiowa/napcat-docker:latest
+  #   container_name: napcat
+  #   restart: unless-stopped
+  #   hostname: napcat-dev
+  #   environment:
+  #     - NAPCAT_UID=0
+  #     - ACCOUNT=${QQ_ACCOUNT}
+  #     - NAPCAT_QUICK_ACCOUNT=${QQ_ACCOUNT}
+  #     # 密码回退失败即转扫码（entrypoint-login-patch.sh 补丁）
+  #     - NAPCAT_QUICK_PASSWORD=${QQ_QUICK_PASSWORD}
+  #   entrypoint: ["bash", "/app/entrypoint-login-patch.sh"]
+  #   networks:
+  #     botnet:
+  #       mac_address: "f2:e2:0d:04:cc:1d"
+  #   volumes:
+  #     - ./napcat/config:/app/napcat/config
+  #     - ./napcat/QQ:/app/.config/QQ
+  #     - ./napcat/entrypoint-login-patch.sh:/app/entrypoint-login-patch.sh:ro
+  #     - ./napcat/machine-id:/etc/machine-id:ro
+  #   ports:
+  #     - "6099:6099"
+  #     - "5140:5140"
+  #     - "3000:3000"
+
+  # 快讯转发（2026-08-26 起发送走官方网关，原 10 分钟检查频率不变）
   ths-news:
     image: node:22-alpine
     container_name: ths-news
     restart: unless-stopped
     working_dir: /app
     depends_on:
-      - napcat
+      - official-bot-gateway
     volumes:
       - ./ths-news/fetch_ths_news.js:/app/fetch_ths_news.js:ro
       - ./ths-news/ths_news_targets.json:/app/ths_news_targets.json:ro
@@ -54,9 +55,10 @@ services:
       - ths-news-state:/app/state
       - ths-news-modules:/app/node_modules
     environment:
-      - NAPCAT_URL=http://napcat:3000
+      # 发送走官方网关（官方群主动推送需平台权限；私聊主动每月 4 条）
+      - NAPCAT_URL=http://official-bot-gateway:3100
       - TZ=Asia/Shanghai
-      - NEWS_INTERVAL=600
+      - NEWS_INTERVAL=300
       - THS_STATE=/app/state/ths_news_state.json
     networks:
       - botnet

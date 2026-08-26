@@ -6,6 +6,13 @@ agent_created: true
 
 # NapCat 掉线监控与按需扫码
 
+## ⚠️ 当前状态（2026-08-26 起）
+
+**NapCat 已停用**（个人号易被风控踢线，已切换官方 QQ 机器人通道）。`docker-compose.yml` 中 napcat 服务已注释，掉线监控自动化已暂停。本 skill 保留供**恢复旧链路**或**回退排障**时使用：
+
+- 恢复 NapCat：取消 `docker-compose.yml` 中 napcat 服务注释 → `docker compose up -d napcat` → NapCat 需扫码登录（按下方"按需交付二维码"流程）→ 恢复掉线监控自动化。
+- 当前主通道为官方机器人：见 `ths-news-forwarder` skill「当前架构状态」。
+
 ## 概述
 
 监控 NapCat 容器（OneBot 11，HTTP 端口 3000）的真实在线状态，掉线时自动重启自愈，无法自愈则通知用户重新扫码登录。核心约束：**只做监控与汇报，禁止改动任何配置文件**（check_napcat.sh / docker-compose.yml / push_targets.json 等一律不修改）。
@@ -52,7 +59,10 @@ info=$(curl -s --noproxy '*' -m 5 -X POST http://127.0.0.1:3000/get_login_info)
 > 1. **只 `docker cp` 不重启 = 拷贝静态旧码**：NapCat 只有重新进入"待扫码"登录流程才会写出带当前时间戳的新 `qrcode.png`。单纯拷贝容器里已有文件不会刷新，旧码早已过期。
 > 2. **复用同名 `latest_qr.png` = 被预览缓存成旧图**：`present_files` 按文件路径缓存，重复覆盖同一文件名时前端常显示第一枚旧图（实测用户一直看到 13:00 的旧码）。**必须用唯一时间戳文件名。**
 
-> ⚠️ **第三坑（2026-08-19 实测）**：配置了 `NAPCAT_QUICK_PASSWORD` 时 NapCat **优先走密码回退，不会自动进入扫码流程、不会生成二维码**。用户索要二维码时若发现容器不生成 `qrcode.png`，须**临时注释 `NAPCAT_QUICK_PASSWORD`**（docker-compose.yml 加 `#`）、`docker compose up -d napcat` 强制走扫码；用户扫码成功后再恢复注释并应用。
+> ⚠️ **第三坑（2026-08-19 实测 + 2026-08-26 细化）**：配置了 `NAPCAT_QUICK_PASSWORD` 时 NapCat **优先走密码回退**。
+> - **08-19 场景（密码回退静默等待，无码）**：NapCat 一直等密码回退结果，**不自动进入扫码流程、不生成二维码**。此时须**临时注释 `NAPCAT_QUICK_PASSWORD`**（docker-compose.yml 加 `#`）、`docker compose up -d napcat` 强制走扫码；用户扫码成功后再恢复注释并应用。
+> - **08-26 场景（密码回退需验证码 → 自动回落扫码）**：重启后日志出现「密码回退需要验证码，请在 WebUi 中继续完成验证」（如 sms-verify-login）时，NapCat **会自动回落扫码授权模式并生成新二维码**（日志同时打印「请扫描下面的二维码」+「二维码已保存」）。此时**无需临时注释密码配置**，直接按第 3~5 步轮询 + 导出交付即可。
+> - 判定方法：重启后看日志——出现「需要验证码…请在 WebUi 中继续完成验证」后若紧接「二维码已保存」，直接走扫码交付；若只有验证提示而无二维码，才走临时注释密码分支。
 
 > 📦 **远程交付规范（2026-08-19 固化）**：用户远程时**只交付 PNG 原图**（`present_files` 交付唯一时间戳 PNG），**不生成/不交付 HTML 预览页**（远程端本地图可能不可见，PNG 卡片即可预览/下载）。
 

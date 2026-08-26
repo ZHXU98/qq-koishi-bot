@@ -83,6 +83,13 @@ function openidByQq(qq) {
   for (const [oid, u] of Object.entries(bindings.users)) if (u.qq && String(u.qq) === o) return oid;
   return '';
 }
+// QQ 群号 → 群 openid（官方事件只有群 openid 无群号，需在 bindings.groups 手动补 qq 字段；
+// 例：GET /bindings 查看群 openid 后，在 bindings.json 的 groups 里给对应项加 "qq": "609994072"）
+function groupOpenidByQq(qq) {
+  const g = String(qq);
+  for (const [oid, grp] of Object.entries(bindings.groups)) if (grp.qq && String(grp.qq) === g) return oid;
+  return '';
+}
 // openid → QQ 号（逆向，供事件翻译时把 owner 显示成 QQ 号）
 function qqByOpenid(oid) {
   if (bindings.owner.openid === oid) return bindings.owner.qq;
@@ -108,47 +115,6 @@ function parseOneBotMessage(message) {
     }
   }
   return { text: texts.join(''), images };
-}
-
-// ==================== 快讯服务（官方版"持续转发"） ====================
-// 官方机器人主动推送每月仅 4 条，无法"来一条推一条"；替代方案：
-//   1. 被动查询：私聊 / 群里 @机器人 发「快讯」→ 即时回复最近重要资讯
-//   2. 每日汇总：每天 DAILY_PUSH_HH:mm 用召回消息（is_wakeup）发 1 条当日重要资讯汇总
-const THS_URL = 'https://news.10jqka.com.cn/tapp/news/push/stock/?page=1&tag=&pageSize=50';
-const DAILY_PUSH_HOUR = Number(process.env.DAILY_PUSH_HOUR || 21);
-const DAILY_PUSH_MIN = Number(process.env.DAILY_PUSH_MIN || 30);
-const DAILY_STATE_FILE = process.env.GW_DAILY_STATE || path.join(__dirname, 'daily-state.json');
-
-async function fetchImportantNews(limit = 8) {
-  try {
-    const resp = await fetch(THS_URL, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
-      signal: AbortSignal.timeout(10000),
-    });
-    const j = await resp.json();
-    const items = (j.data?.list || [])
-      .filter((it) => Number(it.import) > 0) // 同花顺官方「重要」标记
-      .slice(0, limit)
-      .map((it, i) => {
-        const t = new Date(Number(it.ctime) * 1000);
-        const p = (n) => String(n).padStart(2, '0');
-        return `${i + 1}. [${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}] ${it.title}`;
-      });
-    return items;
-  } catch (e) {
-    console.error('[news] 快讯抓取失败:', e.message);
-    return [];
-  }
-}
-function formatNewsReply(items, tag) {
-  if (!items.length) return `${tag}：当前暂无重要资讯（非交易时段或同花顺无「重要」标记）。`;
-  return `${tag}\n${items.join('\n')}`;
-}
-function loadDailyState() {
-  try { return JSON.parse(fs.readFileSync(DAILY_STATE_FILE, 'utf8')); } catch { return { lastDate: '' }; }
-}
-function saveDailyState(st) {
-  try { fs.writeFileSync(DAILY_STATE_FILE, JSON.stringify(st, null, 2)); } catch (e) { console.error('[news] 每日状态保存失败:', e.message); }
 }
 
 // ==================== 官方机器人 ====================
@@ -181,15 +147,7 @@ bot.on('message', async (ctx, msg) => {
       return; // 频道/私信暂不处理
     }
 
-    // 快讯查询指令（被动回复，官方版"持续转发"）：私聊或群里 @机器人 发「快讯」/「news」
-    const cmd = (msg.content || '').trim();
-    if (/^(快讯|news|资讯)$/i.test(cmd)) {
-      const items = await fetchImportantNews(6);
-      const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-      await bot.sendText(msg.replyTarget, formatNewsReply(items, `📌 最新重要资讯（${now}）`));
-      return; // 指令已处理，不再转发给下游
-    }
-
+    // 业务指令（快讯等）已迁移至 qq-reply 容器统一处理；网关只负责事件转发与发送通道
     const onebot = {
       post_type: 'message',
       self_id: APP_ID,
@@ -223,7 +181,7 @@ async function sendToOneBot(params) {
   let target;
   if (scope === 'group') {
     const gid = String(params.group_id || '');
-    target = { scope: 'group', targetId: gid };
+    target = { scope: 'group', targetId: groupOpenidByQq(gid) || gid }; // 支持 QQ 群号或群 openid
   } else {
     const uid = String(params.user_id || '');
     const oid = openidByQq(uid) || uid; // 支持 owner QQ 号或 openid
@@ -324,42 +282,6 @@ function broadcast(event) {
 // ==================== 启动 ====================
 process.on('SIGINT', () => { console.log('\n退出'); bot.stop(); process.exit(0); });
 process.on('SIGTERM', () => { console.log('\n退出'); bot.stop(); process.exit(0); });
-
-// 每日汇总定时器：每天 DAILY_PUSH_HOUR:DAILY_PUSH_MIN 用召回消息给 owner 发当日重要资讯
-// 注意：召回消息要求用户当日有互动（私聊/群@过机器人），否则平台会拒绝，次日自动重试。
-function checkDailyPush() {
-  const now = new Date();
-  const h = now.getHours();
-  const m = now.getMinutes();
-  const today = now.toISOString().slice(0, 10);
-  const st = loadDailyState();
-  if (h === DAILY_PUSH_HOUR && m >= DAILY_PUSH_MIN && m < DAILY_PUSH_MIN + 10 && st.lastDate !== today) {
-    st.lastDate = today;
-    saveDailyState(st);
-    (async () => {
-      if (!bindings.owner.openid) {
-        console.warn('[news] 每日汇总跳过：owner 未绑定 openid（先私聊机器人发 bind-owner）');
-        st.lastDate = '';
-        saveDailyState(st);
-        return;
-      }
-      const items = await fetchImportantNews(10);
-      try {
-        await bot.sendWakeup(
-          { scope: 'c2c', targetId: bindings.owner.openid },
-          formatNewsReply(items, `📌 今日重要资讯汇总（${today}）`),
-        );
-        console.log(`[news] 每日汇总已发送（${today}）`);
-      } catch (e) {
-        console.error('[news] 每日汇总发送失败（可能当日无互动，明日自动重试）:', e?.message || e);
-        st.lastDate = '';
-        saveDailyState(st);
-      }
-    })();
-  }
-}
-setInterval(checkDailyPush, 60 * 1000);
-checkDailyPush();
 
 bot.start().catch((e) => {
   console.error('❌ 机器人启动失败:', e?.message || e);
