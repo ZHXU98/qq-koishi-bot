@@ -127,10 +127,10 @@ async function sendReply(ev, text, images = []) {
 }
 
 // 逐张发送预览图（官方通道一条消息只能一张图；慢速逐条转发，避免图片被截断或触发频控）
-// images 最多 4 张；可选先发 text（一条文本消息），再每张图单独一条消息、间隔 delay ms
+// images 最多 10 张；可选先发 text（一条文本消息），再每张图单独一条消息、间隔 delay ms
 async function sendImagesSequential(ev, images, text = '', { delay = 700 } = {}) {
   if (text) await sendReply(ev, text);
-  for (const img of (images || []).slice(0, 4)) {
+  for (const img of (images || []).slice(0, 10)) {
     await sendReply(ev, '', [img]);
     await sleep(delay);
   }
@@ -376,7 +376,7 @@ async function handleEvent(ev) {
       let text = r.text;
       if (imgs.length > 0 && !showImg) {
         const total = imgs.length;
-        text += `\n🖼 共 ${total} 张预览图，将逐张私聊发送请查收（官方通道一条消息一张图）`;
+        text += `\n🖼 共 ${total} 张预览图，将逐张私聊发送请查收（官方通道一条消息一张图，最多10张）`;
       }
       await sendReply(ev, text);
       // 逐张发送预览图：官方通道一条消息只能一张图，慢速逐条转发避免被截断/频控
