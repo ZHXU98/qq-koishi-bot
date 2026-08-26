@@ -1,4 +1,4 @@
-// 把 A股 复盘 HTML 渲染成图片，并通过 NapCat OneBot HTTP 推送到 QQ（私聊和/或群聊，支持多目标）
+// 把 A股 复盘 HTML 渲染成图片，并通过官方机器人网关（OneBot 兼容 HTTP）推送到 QQ（私聊和/或群聊，支持多目标）
 //
 // 目标配置（环境变量，多个用逗号分隔；也兼容单个旧变量）：
 //   QQ_PRIVATE_IDS=1547450303,123456789   要私聊发送的 QQ 号列表
@@ -13,7 +13,7 @@
 //
 // 用法: NODE_PATH=<ws>/node_modules node push_report.js [报告html路径]
 //
-// 重试配置（应对 NapCat 重启后图片通道热身延迟 / 瞬时网络抖动）：
+// 重试配置（应对网关/通道重启后图片通道热身延迟 / 瞬时网络抖动）：
 //   SEND_RETRIES=2      单次发送失败后最多重试次数（默认 2）
 //   SEND_RETRY_DELAY=3000  每次重试间隔(ms，默认 3000)
 //
@@ -25,7 +25,7 @@ const fs = require('fs');
 const url = require('url');
 const puppeteer = require('puppeteer-core');
 
-// 清除代理环境变量，确保直连本机 NapCat / 官方网关 (127.0.0.1:3100)
+// 清除代理环境变量，确保直连本机官方机器人网关 (127.0.0.1:3100)
 for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) delete process.env[k];
 process.env.NO_PROXY = '*';
 process.env.no_proxy = '*';
@@ -76,7 +76,7 @@ function todayFile() {
   return path.join(REPORT_DIR, `A股-${s}-复盘.html`);
 }
 
-// 登录健康检查：NapCat 掉线/票据失效时提前告警，避免静默失败 + 浪费一次渲染
+// 登录健康检查：官方网关/机器人通道异常时提前告警，避免静默失败 + 浪费一次渲染
 async function checkLogin() {
   const headers = { 'Content-Type': 'application/json' };
   if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
@@ -84,13 +84,13 @@ async function checkLogin() {
     const r = await fetch(NAPCAT_URL + '/get_login_info', { method: 'POST', headers });
     const j = await r.json().catch(() => ({}));
     if (j.status !== 'ok' || !j.data || !j.data.user_id) {
-      console.error('❌ NapCat 登录态异常 (get_login_info 返回非 ok)：', JSON.stringify(j).slice(0, 200));
+      console.error('❌ 官方网关登录态异常 (get_login_info 返回非 ok)：', JSON.stringify(j).slice(0, 200));
       return false;
     }
     console.log('✅ 机器人在线：', j.data.nickname, '(', j.data.user_id, ')');
     return true;
   } catch (e) {
-    console.error('❌ 无法连接 NapCat (', NAPCAT_URL, ')：', e.message);
+    console.error('❌ 无法连接官方网关 (', NAPCAT_URL, ')：', e.message);
     return false;
   }
 }
@@ -109,7 +109,7 @@ function buildMessage(b64) {
   return segs;
 }
 
-// ---------- 发送（带重试，应对 NapCat 重启后图片通道热身延迟 / 瞬时网络抖动） ----------
+// ---------- 发送（带重试，应对网关/通道重启后图片通道热身延迟 / 瞬时网络抖动） ----------
 const SEND_RETRIES = (() => { const n = Number(process.env.SEND_RETRIES); return Number.isFinite(n) && n >= 0 ? n : 2; })();
 const SEND_RETRY_DELAY = (() => { const n = Number(process.env.SEND_RETRY_DELAY); return Number.isFinite(n) && n >= 0 ? n : 3000; })();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
