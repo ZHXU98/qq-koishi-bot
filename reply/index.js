@@ -111,7 +111,7 @@ async function napcat(ep, body, { retry = false } = {}) {
   return false;
 }
 
-// 发送回复（自动按消息场景选端点）；images 为远程图片 URL 列表（最多 4 张）
+// 发送回复（自动按消息场景选端点）；images 为远程图片 URL 列表（机器人主动限制最多 10 张）
 // 官方通道（official-bot-gateway）：携带网关下发的 msg_id 走被动回复（5min/60min 窗口内有效），
 // 否则会被当作主动推送（群无权限/私聊每月仅 4 条），回复必然失败。
 async function sendReply(ev, text, images = []) {
@@ -256,7 +256,7 @@ async function cmdPreview(magnet) {
       `📦 类型：${j.file_type || j.type || '未知'}`,
       `💾 大小：${fmtSize(j.size)}`,
       `📄 文件数：${j.count || 0}`,
-      shots.length ? `🖼 预览图 ${shots.length} 张（QQ 单条消息最多发 4 张）` : '🖼 无截图（非视频资源）',
+      shots.length ? `🖼 预览图 ${shots.length} 张（机器人主动限制最多发 10 张，逐张发送）` : '🖼 无截图（非视频资源）',
     ];
     return { text: lines.join('\n'), images: shots };
   } catch (e) {
