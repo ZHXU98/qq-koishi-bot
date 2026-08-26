@@ -1,0 +1,14 @@
+{
+  "name": "official-bot-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "官方QQ机器人网关：OneBot 兼容层，替代 NapCat 接入官方开放平台（appid+appsecret）",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@tencent-connect/qqbot-nodejs": "^1.0.4",
+    "ws": "^8.18.0"
+  }
+}

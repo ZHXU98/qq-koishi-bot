@@ -112,15 +112,18 @@ async function napcat(ep, body, { retry = false } = {}) {
 }
 
 // 发送回复（自动按消息场景选端点）；images 为远程图片 URL 列表（最多 4 张）
+// 官方通道（official-bot-gateway）：携带网关下发的 msg_id 走被动回复（5min/60min 窗口内有效），
+// 否则会被当作主动推送（群无权限/私聊每月仅 4 条），回复必然失败。
 async function sendReply(ev, text, images = []) {
   if (!text && !images.length) return;
   const message = [];
   if (text) message.push({ type: 'text', data: { text } });
   for (const img of images.slice(0, 4)) message.push({ type: 'image', data: { file: img } });
+  const extra = ev._reply && ev._reply.msgId ? { msg_id: ev._reply.msgId } : {};
   if (ev.message_type === 'group') {
-    return napcat('/send_group_msg', { group_id: ev.group_id, message }, { retry: true });
+    return napcat('/send_group_msg', { group_id: ev.group_id, message, ...extra }, { retry: true });
   }
-  return napcat('/send_private_msg', { user_id: ev.user_id, message }, { retry: true });
+  return napcat('/send_private_msg', { user_id: ev.user_id, message, ...extra }, { retry: true });
 }
 
 // ---------- 消息解析 ----------

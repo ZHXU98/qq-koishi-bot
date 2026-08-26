@@ -64,3 +64,8 @@ monitor/napcat_qr_*.html
 
 # 设备指纹固定值（敏感设备标识，勿提交；用 machine-id.example 模板）
 napcat/machine-id
+
+# ===== official-bot-gateway =====
+official-bot-gateway/node_modules/
+official-bot-gateway/bindings.json
+official-bot-gateway/daily-state.json

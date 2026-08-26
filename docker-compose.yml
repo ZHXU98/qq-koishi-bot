@@ -68,19 +68,43 @@ services:
     restart: unless-stopped
     working_dir: /app
     depends_on:
-      - napcat
+      - official-bot-gateway
     volumes:
       - ./reply/index.js:/app/index.js:ro
       - ./reply/package.json:/app/package.json:ro
       - ./reply/config.json:/app/config.json:ro
     environment:
-      - NAPCAT_WS_URL=ws://napcat:3001
-      - NAPCAT_URL=http://napcat:3000
-      - BOT_UIN=${QQ_ACCOUNT}
+      # 2026-08-26：改接官方网关（NapCat 弃用）；BOT_UIN 与网关转发的 at.qq 一致（官方 APP_ID）
+      - NAPCAT_WS_URL=ws://official-bot-gateway:3101
+      - NAPCAT_URL=http://official-bot-gateway:3100
+      - BOT_UIN=${QQBOT_APP_ID}
       - TZ=Asia/Shanghai
     networks:
       - botnet
     command: ["node", "/app/index.js"]
+
+  # 官方 QQ 机器人网关（新途径）：OneBot 兼容层，接入官方开放平台（appid+appsecret）
+  # 与 NapCat 并行运行，互不影响；跑通后可把 ths-news/qq-reply 的 NAPCAT_URL 指向本网关
+  official-bot-gateway:
+    image: node:22-alpine
+    container_name: official-bot-gateway
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./official-bot-gateway:/app
+    environment:
+      - QQBOT_APP_ID=${QQBOT_APP_ID}
+      - QQBOT_APP_SECRET=${QQBOT_APP_SECRET}
+      - OWNER_QQ=1547450303
+      - TZ=Asia/Shanghai
+      - GW_HTTP_PORT=3100
+      - GW_WS_PORT=3101
+    networks:
+      - botnet
+    ports:
+      - "3100:3100"
+      - "3101:3101"
+    command: ["sh", "-c", "npm install --no-audit --no-fund --registry=https://registry.npmmirror.com && exec node /app/index.js"]
 
   # koishi:
   #   image: koishijs/koishi:latest
