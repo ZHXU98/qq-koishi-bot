@@ -126,6 +126,16 @@ async function sendReply(ev, text, images = []) {
   return napcat('/send_private_msg', { user_id: ev.user_id, message, ...extra }, { retry: true });
 }
 
+// 逐张发送预览图（官方通道一条消息只能一张图；慢速逐条转发，避免图片被截断或触发频控）
+// images 最多 4 张；可选先发 text（一条文本消息），再每张图单独一条消息、间隔 delay ms
+async function sendImagesSequential(ev, images, text = '', { delay = 700 } = {}) {
+  if (text) await sendReply(ev, text);
+  for (const img of (images || []).slice(0, 4)) {
+    await sendReply(ev, '', [img]);
+    await sleep(delay);
+  }
+}
+
 // ---------- 消息解析 ----------
 // messagePostFormat=array：把 CQ 码数组解析成 { atMe, text }
 function parseMessage(segs) {
@@ -366,17 +376,19 @@ async function handleEvent(ev) {
       let text = r.text;
       if (imgs.length > 0 && !showImg) {
         const total = imgs.length;
-        const sent = Math.min(total, 4); // sendReply 单条消息图片上限 4 张
-        text += total === sent
-          ? `\n🖼 共 ${total} 张预览图（QQ 限制单条消息最多发 4 张），已私聊发送请查收`
-          : `\n🖼 共 ${total} 张预览图（QQ 限制单条消息最多发 4 张），已私聊发送前 ${sent} 张`;
+        text += `\n🖼 共 ${total} 张预览图，将逐张私聊发送请查收（官方通道一条消息一张图）`;
       }
-      await sendReply(ev, text, showImg ? imgs : []);
-      if (!showImg && imgs.length > 0 && isAdmin) {
-        await sendReply({ message_type: 'private', user_id: ev.user_id }, r.text, imgs);
+      await sendReply(ev, text);
+      // 逐张发送预览图：官方通道一条消息只能一张图，慢速逐条转发避免被截断/频控
+      if (imgs.length > 0) {
+        if (showImg) {
+          await sendImagesSequential(ev, imgs); // 群里逐张
+        } else if (isAdmin) {
+          await sendImagesSequential({ message_type: 'private', user_id: ev.user_id }, imgs); // 私聊逐张补发
+        }
       }
     } else {
-      await sendReply(ev, r.text, imgs);
+      await sendImagesSequential(ev, imgs, r.text); // 私聊：先文本，再逐张发图
     }
   } else if (cmd.type === 'status') {
     await sendReply(ev, await cmdStatus());
