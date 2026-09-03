@@ -1,19 +1,19 @@
 version: "3.8"
 
 # ============================================================
-# 当前架构（2026-08-26 起）：官方 QQ 机器人通道为主
+# 当前架构（2026-09-02）：官方通道为主（NapCat 个人号当天停用：老掉线）
 #   - official-bot-gateway：官方开放平台机器人网关（快讯查询 + 每日汇总 + qq-reply 通道）
-#   - qq-reply：被@回复服务（接官方网关）
-#   - napcat / ths-news：旧 NapCat 转发链路，已注释停用（个人号易被风控踢线）。
-#     如需重新启用（例如官方群推送权限开通前临时恢复实时转发）：
-#       1. 取消下方 napcat / ths-news 两个服务的注释（# 开头）
-#       2. docker compose up -d napcat ths-news
-#       3. NapCat 需重新扫码登录（私聊官方机器人或对话中向 AI 索取二维码）
-#     恢复后 ths-news 每 10 分钟照常转发到 private/groups 配置的目标。
+#   - qq-reply：官方通道回复服务（接 official-bot-gateway，权限配置 reply/config.json）
+#   - ths-news：快讯转发（发送走官方网关）
+#   - napcat / qq-reply-napcat：已注释停用（个人号易掉线风控）；恢复方法见下方服务注释
+# 配置热加载：config 文件每条消息重读盘，改完无需重启。
 # ============================================================
 
 services:
-  # ==================== 旧链路（已停用，保留可恢复） ====================
+  # ==================== NapCat 非官方机器人（2026-09-02 启用于当天停用：个人号老掉线） ====================
+  # 如需恢复：取消下方 napcat / qq-reply-napcat 两段注释 → docker compose up -d napcat qq-reply-napcat
+  # → NapCat 需重新扫码（登录态在 ./napcat/QQ，失效则 docker restart napcat 出新二维码）
+  # 注意：个人号有风控/掉线风险；权限独立配置 reply/config.napcat.json（与官方 config.json 分开）
   # napcat:
   #   image: mlikiowa/napcat-docker:latest
   #   container_name: napcat
@@ -75,6 +75,9 @@ services:
       - ./reply/index.js:/app/index.js:ro
       - ./reply/package.json:/app/package.json:ro
       - ./reply/config.json:/app/config.json:ro
+      # 2026-08-31：共享 ths-news 的 @resvg/resvg-js 渲染库与中文字体（/stock 图表用，只读）
+      - ths-news-modules:/app/node_modules:ro
+      - ./ths-news/fonts:/app/fonts:ro
     environment:
       # 2026-08-26：改接官方网关（NapCat 弃用）；BOT_UIN 与网关转发的 at.qq 一致（官方 APP_ID）
       - NAPCAT_WS_URL=ws://official-bot-gateway:3101
@@ -84,6 +87,30 @@ services:
     networks:
       - botnet
     command: ["node", "/app/index.js"]
+
+  # NapCat 通道回复服务（2026-09-02 启用于当天停用：个人号老掉线；如需恢复随 napcat 一起取消注释）
+  # 同一份 index.js，但挂载独立权限配置 config.napcat.json（群权限与官方 Bot 分开，互不影响）
+  # qq-reply-napcat:
+  #   image: node:22-alpine
+  #   container_name: qq-reply-napcat
+  #   restart: unless-stopped
+  #   working_dir: /app
+  #   depends_on:
+  #     - napcat
+  #   volumes:
+  #     - ./reply/index.js:/app/index.js:ro
+  #     - ./reply/package.json:/app/package.json:ro
+  #     - ./reply/config.napcat.json:/app/config.json:ro   # 独立权限配置（NapCat 版）
+  #     - ths-news-modules:/app/node_modules:ro
+  #     - ./ths-news/fonts:/app/fonts:ro
+  #   environment:
+  #     - NAPCAT_WS_URL=ws://napcat:3001
+  #     - NAPCAT_URL=http://napcat:3000
+  #     - BOT_UIN=${QQ_ACCOUNT}
+  #     - TZ=Asia/Shanghai
+  #   networks:
+  #     - botnet
+  #   command: ["node", "/app/index.js"]
 
   # 官方 QQ 机器人网关（新途径）：OneBot 兼容层，接入官方开放平台（appid+appsecret）
   # 与 NapCat 并行运行，互不影响；跑通后可把 ths-news/qq-reply 的 NAPCAT_URL 指向本网关

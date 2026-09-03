@@ -157,10 +157,13 @@ bot.on('message', async (ctx, msg) => {
       user_id: qqByOpenid(msg.senderId) || msg.senderId,
       // 群事件：官方 GROUP_* 事件均为被@触发，转发时补 at 段供下游（qq-reply）识别；
       // at.qq 用官方 APP_ID，下游 BOT_UIN 需保持一致。
+      // 注意：官方 content 在@时带 "<@openid> " 前缀标记（2026-08-31 实测），必须剥离，
+      //       否则下游把 "<@xxx>" 当命令首词匹配失败（@+指令不回复的根因）。
+      text: (msg.content || '').replace(/<@[0-9A-Za-z_]+>/g, '').trim(),
       message: kind === 'group'
-        ? [{ type: 'at', data: { qq: String(APP_ID) } }, { type: 'text', data: { text: msg.content || '' } }]
+        ? [{ type: 'at', data: { qq: String(APP_ID) } }, { type: 'text', data: { text: (msg.content || '').replace(/<@[0-9A-Za-z_]+>/g, '').trim() } }]
         : [{ type: 'text', data: { text: msg.content || '' } }],
-      raw_message: msg.content || '',
+      raw_message: (msg.content || '').replace(/<@[0-9A-Za-z_]+>/g, '').trim(),
       sender: { user_id: qqByOpenid(msg.senderId) || msg.senderId, nickname: msg.senderName || '' },
       // 网关私有扩展：供下游被动回复时使用
       _reply: { scope: kind === 'group' ? 'group' : 'c2c', targetId: kind === 'group' ? msg.groupOpenid : msg.senderId, msgId: msg.messageId },

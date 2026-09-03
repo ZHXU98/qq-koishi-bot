@@ -1,0 +1,14 @@
+{
+  "groupAtOnly": true,
+  "privateAlways": true,
+  "admins": ["1547450303"],
+  "privateWhitelist": ["1547450303"],
+  "groupWhitelist": ["528165429"],
+  "groupAdminOnly": false,
+  "groupRestrictedCmds": ["ss", "stock", "info", "news", "ping", "status", "echo", "help"],
+  "groupImages": false,
+  "unknownMsg": "未知指令，发送 /help 查看可用指令",
+  "restrictedMsg": "⚠️ 该指令仅限管理员使用（zj 资金流 / 磁力种子预览对群友不开放）",
+  "deniedMsg": "🛡️ 本机器人仅对授权账号开放",
+  "welcome": "👋 你好，我是机器人助手。群聊请 @我 + 指令，私聊可直接发送指令；发送 /help 查看全部指令。"
+}
