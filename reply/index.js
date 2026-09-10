@@ -16,7 +16,11 @@
 // 配置文件 config.json（热加载：每次收到消息重新读盘，改完无需重启）：
 //   groupAtOnly:         群聊仅响应被 @ 的消息（默认 true）
 //   privateAlways:       私聊总是响应（默认 true）
-//   admins:              管理员 QQ 列表（群聊中不受指令限制）
+//   admins:              管理员 QQ/openid 列表（群聊中不受指令限制）
+//   owners:              机器人主人列表（写操作唯一凭据，如 /stocks 的 -add/-update/-del）；
+//                        填 QQ 号即可。网关只会把 bindings.owner 还原成纯 QQ 号，其余用户
+//                        的 user_id 是 openid；故代码另取网关 owner.openid 做兜底比对
+//                        （60 秒缓存），bindings 被重置时主人不会被锁在门外。
 //   privateWhitelist:    私聊白名单（非列表内账号私聊一律拒绝；空数组 = 不限制）
 //   groupRestrictedCmds: 群聊中非管理员可用的指令名白名单（如 ["ping","status"]；空数组 = 不限制）
 //   restrictedMsg:       群聊非管理员使用受限指令时的提示
@@ -41,7 +45,8 @@ let reconnectTimer = null; // WS 重连定时器（连接失败时 ws 库可能�
 const DEFAULTS = {
   groupAtOnly: true,
   privateAlways: true,
-  admins: [],
+  admins: [],                // 管理员（群聊中不受指令限制）。只认主人 QQ 号 + 其他用户的 openid
+  owners: [],                // 机器人主人（写操作唯一凭据，如 /stocks 的 -add/-update/-del）；填 QQ 号；空数组 = 谁都不能写
   privateWhitelist: [],
   groupWhitelist: [],        // 群白名单：空数组=不限制；非空=仅响应列表内群（如 ["528165429"]）
   groupAdminOnly: false,     // 群聊仅管理员可触发（非管理员消息一律不响应）
@@ -178,8 +183,11 @@ function cmdHelp() {
     '/stocks <周期> <组合名 或 股票...>   股票组合拼图（一图多看）',
     '        周期（单选）：-t 分时 / -d 日线 / -w 周线 / -m 月线（不写默认日线）',
     '        例：/stocks -d 我的持仓　/stocks -t 600519 000858　/stocks -w 贵州茅台 宁德时代',
-    '/stocks -add <股票...> -name <组合名>   保存组合（仅管理员）',
-    '/stocks -list   列出已保存组合　/stocks -del <组合名> 删除（仅管理员）',
+    '/stocks -list   列出已保存组合',
+    '        编辑类（仅机器人主人）：-add 新建/覆盖　-update 整组替换　-del 删除',
+    '        例：/stocks -add 600519 300750 -name 我的持仓',
+    '        　　/stocks -update 我的持仓 600519 300750 002594',
+    '        　　/stocks -del 我的持仓',
     '/zj <1|2> [t|d]   行业资金流：留空=当前排行TOP10；t=分时波动曲线；d=日级流入曲线',
     '        例：/zj 2　/zj 1 t　/zj 2 d（曲线图为东财行业分类，申万无免费时序源）',
     '/info <代码或名称> [条数]   个股速查（仅A股）：行情/公司概况/公告/新闻',
@@ -1033,6 +1041,12 @@ async function fetchEmTrends(secid, isUS) {
 }
 
 // 取实时快照（名称/现价/涨跌），GBK 解码；5 秒缓存（盘中反复查同票时命中）
+// 证券名称归一化：腾讯对部分标的会返回带填充空格的名称（如 000858 → 「五 粮 液」），
+// 仅当名称是「纯中文 + 空格」时去掉空格，避免误伤带空格的英文名（如美股英文名）
+function normStockName(s) {
+  const v = String(s || '').trim();
+  return /^[\u4e00-\u9fa5\s]+$/.test(v) ? v.replace(/\s+/g, '') : v;
+}
 // 支持：A股/港股/美股（~分隔）；hf_ 全球商品（逗号分隔：现价,涨跌额,昨收,今开,最高,最低,时间,...,日期,名称）
 async function fetchStockQuote(code) {
   const ckey = 'quote:' + code;
@@ -1048,7 +1062,7 @@ async function fetchStockQuote(code) {
       const f = m[1].split(',');
       const price = Number(f[0]), chg = Number(f[1]), prevClose = Number(f[2]);
       const result = {
-        name: f[13] || code, isIndex: false, price, prevClose, open: Number(f[3]), high: Number(f[4]), low: Number(f[5]),
+        name: normStockName(f[13]) || code, isIndex: false, price, prevClose, open: Number(f[3]), high: Number(f[4]), low: Number(f[5]),
         chg, chgPct: prevClose > 0 ? chg / prevClose * 100 : 0,
         time: f[6] || '', date: f[12] || '', market: 'hf',
         amount: 0, turnover: 0, volumeRatio: 0, amplitude: 0,
@@ -1072,7 +1086,7 @@ async function fetchStockQuote(code) {
     const peDyn = isUS ? 0 : Number(a[52]), peTtm = Number(a[39]), peStatic = isUS ? 0 : Number(a[53]);
     const pb = isUS ? 0 : Number(a[46]); // 美股 a[46] 是公司英文名，无 PB
     const result = {
-      name: a[1], isIndex, price, prevClose: Number(a[4]), open: Number(a[5]),
+      name: normStockName(a[1]), isIndex, price, prevClose: Number(a[4]), open: Number(a[5]),
       chg: Number(a[31]), chgPct: Number(a[32]), high: Number(a[33]), low: Number(a[34]),
       currency: a[35] || '',            // USD / HKD / CNY
       time: a[30] || '',                // 行情时间戳（美股为美东时间）
@@ -1833,6 +1847,41 @@ function globalQuoteText(code, q) {
   return L.join('\n');
 }
 
+// ---------- 主人识别（写操作唯一凭据，2026-09-11 新增） ----------
+// 背景：官方通道下网关把 openid 反查成 QQ 号后才下发事件（gateway 里 `qqByOpenid(senderId) || senderId`），
+// 而 qqByOpenid 只认 bindings.owner（即主人）与手动配了 qq 字段的用户 —— 也就是说**只有主人的事件带纯 QQ 号**，
+// 其他人拿到的都是 openid。由此推论出两条容易踩的坑：
+//   1) config.json 的 admins 若要给「非主人」放权，必须填 TA 的 **openid**（QQ 号永远匹配不上）；
+//   2) 若网关 bindings.json 丢失/被重置，主人也会退回 openid，按 QQ 号比对会把主人误判成无权。
+// 因此这里做双通道校验：先比 owners 名单里的 QQ 号，再比网关 /bindings 里的 owner.openid（60 秒缓存）。
+let __ownerBind = { at: 0, openid: '' };
+async function ownerOpenid() {
+  if (Date.now() - __ownerBind.at < 60000) return __ownerBind.openid;
+  let oid = '';
+  try {
+    const r = await fetch(NAPCAT_URL + '/bindings', { signal: AbortSignal.timeout(4000) });
+    const j = await r.json();
+    oid = String((j && j.data && j.data.owner && j.data.owner.openid) || '');
+  } catch (_) { /* 网关不可达时退化为「只按 QQ 号比对」，不阻塞指令 */ }
+  __ownerBind = { at: Date.now(), openid: oid };
+  return oid;
+}
+function ownerList() { return (CONFIG.owners || []).map(v => String(v).trim()).filter(Boolean); }
+// 是否主人（异步：含 openid 兜底）。fail-closed —— owners 未配置且 openid 对不上时一律拒绝。
+async function isOwnerCtx(ctx = {}) {
+  if (ctx.isOwner) return true;
+  const uid = String(ctx.uid || '').trim();
+  if (!uid) return false;
+  if (ownerList().includes(uid)) return true;
+  const oid = await ownerOpenid();
+  return !!oid && uid === oid;
+}
+function ownerDeniedMsg() {
+  return ownerList().length
+    ? '🛡️ 组合的增删改仅限机器人主人'
+    : '🛡️ 组合的增删改仅限机器人主人；当前未配置 owners，请在 reply/config.json 中填写 owners 名单';
+}
+
 // ================= /stocks 股票组合拼图（2026-09-11 新增） =================
 // 用法：
 //   /stocks -add <股票...> -name <组合名>   保存/覆盖组合（仅管理员）
@@ -1847,7 +1896,8 @@ const PORTFOLIO_DIR = process.env.PORTFOLIO_DIR || path.join(__dirname, 'data');
 const PORTFOLIO_PATH = path.join(PORTFOLIO_DIR, 'portfolios.json');
 const PORTFOLIO_MAX = 20;      // 单个组合最多保存的股票数
 const STOCKS_RENDER_MAX = 16;  // 单张拼图最多渲染的股票数
-const PORTFOLIO_NAME_RE = /^[\u4e00-\u9fa5A-Za-z0-9_.\-]{1,12}$/;
+// 组合名：中英文/数字/下划线打头，后接中英文/数字/下划线/点/短横线，总长 1-12；首字符不得是 -（避免与参数混淆）
+const PORTFOLIO_NAME_RE = /^[\u4e00-\u9fa5A-Za-z0-9_][\u4e00-\u9fa5A-Za-z0-9_.\-]{0,11}$/;
 // 只保留 分时/日/周/月 四个周期（用户要求：不需要分钟/小时图）
 const STOCKS_PERIODS = { '-t': 'time', '-time': 'time', '分时': 'time', '-d': 'day', '-day': 'day', '日线': 'day', '-w': 'week', '-week': 'week', '周线': 'week', '-m': 'month', '-month': 'month', '月线': 'month' };
 const STOCKS_PERIOD_LABEL = { day: '日线', week: '周线', month: '月线', time: '分时' };
@@ -1856,12 +1906,16 @@ const STOCKS_USAGE = [
   '出图：/stocks <周期> <组合名 或 股票...>',
   '　　周期（单选）：-t 分时 | -d 日线 | -w 周线 | -m 月线（不写默认日线）',
   '　　例：/stocks -d 我的持仓　/stocks -t 600519 000858　/stocks -w 贵州茅台 宁德时代',
-  '组合：/stocks -add <股票...> -name <组合名>　保存组合（仅管理员）',
-  '　　　/stocks -list　列出已保存组合',
-  '　　　/stocks -del <组合名>　删除组合（仅管理员）',
-  '　　例：/stocks -add 600519 300750 002594 -name 我的持仓',
+  '组合：/stocks -list　列出已保存组合',
+  '编辑（仅机器人主人）：',
+  '　/stocks -add <股票...> -name <组合名>　新建 / 整组覆盖',
+  '　/stocks -update <组合名> <股票...>　　 用新名单整组替换（组合须已存在）',
+  '　/stocks -del <组合名>　　　　　　　　　删除组合',
+  '　　例：/stocks -add 600519 300750 -name 我的持仓',
+  '　　　　/stocks -update 我的持仓 600519 300750 002594',
   `单张图最多 ${STOCKS_RENDER_MAX} 只，单个组合最多保存 ${PORTFOLIO_MAX} 只`,
 ].join('\n');
+const STOCKS_EDIT_MODES = ['add', 'update', 'del'];
 
 // 组合存储：data/portfolios.json（容器挂载 ./reply/data，可写；tmp+rename 原子替换）
 function loadPortfolios() {
@@ -2084,27 +2138,62 @@ function buildStocksPng(items, meta) {
   return 'base64://' + canvas.toBuffer('image/png').toString('base64');
 }
 
+// 解析股票参数 → { okList, bad }：保序、去重、逐个验证「能解析出代码且有行情」
+async function resolveStockArgs(list) {
+  const resolved = await mapLimit(list, 4, async q => {
+    let code = normalizeCode(q);
+    if (!code) code = await resolveStockCode(q);
+    if (!code) return { q, err: '未找到' };
+    const qt = await fetchStockQuote(code);
+    if (!qt || !(Number(qt.price) > 0)) return { q, err: '无行情' };
+    return { code, name: qt.name || q };
+  });
+  const okList = [], bad = [], seen = new Set();
+  for (const r of resolved) {
+    if (r.err) { bad.push(`${r.q}（${r.err}）`); continue; }
+    if (seen.has(r.code)) continue;
+    seen.add(r.code); okList.push({ code: r.code, name: r.name });
+  }
+  return { okList, bad };
+}
+
 // 命令入口：/stocks（返回 { ok, text? } 或 { ok, img, note? }）
+// 权限：list / 出图 → 所有人可用；add / update / del → 仅 owners（writeOwnerGate）
 async function cmdStocks(args, ctx = {}) {
-  const isAdmin = !!ctx.isAdmin;
   const raw = (args || []).map(a => String(a).trim()).filter(Boolean);
   if (!raw.length) return { ok: false, text: STOCKS_USAGE };
 
   let mode = 'query', nameFromFlag = false, name = '';
-  const periods = [], operands = [];
+  const periods = [], operands = [], modes = new Set();
   for (let i = 0; i < raw.length; i++) {
     const p = raw[i], pl = p.toLowerCase();
-    if (pl === '-add' || pl === 'add' || pl === '新增') { mode = 'add'; continue; }
-    if (pl === '-del' || pl === '-rm' || pl === '-delete' || pl === 'del' || pl === '删除') { mode = 'del'; continue; }
-    if (pl === '-list' || pl === 'list' || pl === '列表') { mode = 'list'; continue; }
+    if (pl === '-add' || pl === 'add' || pl === '新增') { mode = 'add'; modes.add('add'); continue; }
+    if (pl === '-update' || pl === 'update' || pl === '-set' || pl === '修改' || pl === '更新') { mode = 'update'; modes.add('update'); continue; }
+    if (pl === '-del' || pl === '-rm' || pl === '-delete' || pl === 'del' || pl === '删除') { mode = 'del'; modes.add('del'); continue; }
+    if (pl === '-list' || pl === 'list' || pl === '列表') { mode = 'list'; modes.add('list'); continue; }
     if (pl === '-name' || pl === 'name' || pl === '名称') {
-      const buf = [];
-      while (i + 1 < raw.length && !raw[i + 1].startsWith('-')) buf.push(raw[++i]);
-      name = buf.join('').trim(); nameFromFlag = true; continue;
+      // 只吃紧跟的一个 token：组合名本身不允许空格，贪婪消费会把后面的股票一起吞掉
+      // （曾导致 `/stocks -update -name 我的持仓 300750` 被误判为「没给股票」）
+      name = (i + 1 < raw.length ? raw[++i] : '').trim(); nameFromFlag = true; continue;
     }
     if (STOCKS_PERIODS[pl]) { periods.push(STOCKS_PERIODS[pl]); continue; }
     if (p.startsWith('-') && p.length > 1) return { ok: false, text: `⚠️ 未知参数「${p}」\n\n${STOCKS_USAGE}` };
     operands.push(p);
+  }
+  // 操作符互斥：-add / -update / -del / -list 一次只能用一种（避免「后写的静默覆盖前写的」）
+  if (modes.size > 1) {
+    return { ok: false, text: `⚠️ 一次只能用一种操作，检测到：${[...modes].map(m => '-' + m).join('、')}\n\n${STOCKS_USAGE}` };
+  }
+  const isEdit = STOCKS_EDIT_MODES.includes(mode);
+  // -name 写了但后面没跟值 → 明确报错（否则会被当成「组合名为空」，提示方向不对）
+  if (nameFromFlag && !name && isEdit) {
+    return { ok: false, text: `⚠️ -name 后面缺少组合名（组合名不能含空格）\n\n${STOCKS_USAGE}` };
+  }
+  // —— 写操作闸门：仅主人 ——（与 groupRestrictedCmds 无关，群内普通成员即使能调 /stocks 也会被这里拦下）
+  if (isEdit && !(await isOwnerCtx(ctx))) return { ok: false, text: ownerDeniedMsg() };
+  // 编辑指令不接受周期参数（否则用户会以为顺带出了图）
+  if (isEdit && periods.length) {
+    return { ok: false, text: `⚠️ -${mode} 是编辑指令，不接受周期参数\n想看行情请单独发：/stocks <周期> <组合名>` };
   }
 
   // —— 列出组合（所有人） ——
@@ -2123,33 +2212,21 @@ async function cmdStocks(args, ctx = {}) {
     return { ok: true, text: L.join('\n') };
   }
 
-  // —— 保存组合（仅管理员） ——
+  // —— 新建 / 整组覆盖（-add，仅主人） ——
   if (mode === 'add') {
-    if (!isAdmin) return { ok: false, text: '🛡️ 保存组合仅限管理员' };
     if (!nameFromFlag || !name) return { ok: false, text: `⚠️ 缺少组合名，请用 -name <组合名>\n\n${STOCKS_USAGE}` };
-    if (!PORTFOLIO_NAME_RE.test(name)) return { ok: false, text: '⚠️ 组合名仅支持中英文/数字/下划线/短横线/点，长度 1-12' };
+    if (!PORTFOLIO_NAME_RE.test(name)) return { ok: false, text: '⚠️ 组合名仅支持中英文/数字/下划线/短横线/点，长度 1-12，且不能以 - 开头' };
     if (!operands.length) return { ok: false, text: '⚠️ 未指定股票，例：/stocks -add 600519 300750 -name 我的持仓' };
-    if (operands.length > PORTFOLIO_MAX) return { ok: false, text: `⚠️ 单个组合最多 ${PORTFOLIO_MAX} 只（当前 ${operands.length} 只）` };
-    const resolved = await mapLimit(operands, 4, async q => {
-      let code = normalizeCode(q);
-      if (!code) code = await resolveStockCode(q);
-      if (!code) return { q, err: '未找到' };
-      const qt = await fetchStockQuote(code);
-      if (!qt || !(Number(qt.price) > 0)) return { q, err: '无行情' };
-      return { code, name: qt.name || q };
-    });
-    const okList = [], bad = [], seen = new Set();
-    for (const r of resolved) {
-      if (r.err) { bad.push(`${r.q}（${r.err}）`); continue; }
-      if (seen.has(r.code)) continue;
-      seen.add(r.code); okList.push({ code: r.code, name: r.name });
-    }
-    if (!okList.length) return { ok: false, text: `⚠️ 没有解析出有效股票${bad.length ? `\n${bad.join('、')}` : ''}` };
+    if (operands.length > PORTFOLIO_MAX) return { ok: false, text: `⚠️ 单个组合最多 ${PORTFOLIO_MAX} 只（当前 ${operands.length} 只），组合未改动` };
+    const { okList, bad } = await resolveStockArgs(operands);
+    if (!okList.length) return { ok: false, text: `⚠️ 没有解析出有效股票，组合未改动${bad.length ? `\n${bad.join('、')}` : ''}` };
     const pf = loadPortfolios();
     const existed = !!pf[name];
     pf[name] = {
-      owner: String(ctx.uid || ''), created: existed ? (pf[name].created || nowText()) : nowText(),
-      updated: nowText(), stocks: okList,
+      owner: String((existed && pf[name].owner) || ctx.uid || ''),
+      created: existed ? (pf[name].created || nowText()) : nowText(),
+      updated: nowText(),
+      stocks: okList,
     };
     if (!savePortfolios(pf)) return { ok: false, text: '⚠️ 组合保存失败（服务端写盘异常），请查看容器日志' };
     const L = [`${existed ? '♻️ 已覆盖组合' : '✅ 已保存组合'}【${name}】${okList.length} 只`,
@@ -2159,19 +2236,69 @@ async function cmdStocks(args, ctx = {}) {
     return { ok: true, text: L.join('\n') };
   }
 
-  // —— 删除组合（仅管理员） ——
+  // —— 整组替换（-update，仅主人）：组合必须已存在，用新名单整体覆盖 ——
+  if (mode === 'update') {
+    // 组合名：给了 -name 就用它、位置参数全当股票；否则取第一个位置参数当组合名
+    const target = (nameFromFlag ? name : (operands[0] || '')).trim();
+    const stockArgs = nameFromFlag ? operands : operands.slice(1);
+    if (!target) return { ok: false, text: `⚠️ 缺少组合名，例：/stocks -update 我的持仓 600519 300750\n\n${STOCKS_USAGE}` };
+    if (!PORTFOLIO_NAME_RE.test(target)) return { ok: false, text: `⚠️ 组合名「${target}」不合法（中英文/数字/下划线打头，后接中英文/数字/下划线/点/短横线，1-12 字符）` };
+    // 边界：不给股票 ≠ 清空组合。清空是破坏性操作，必须显式用 -del，这里一律拒绝。
+    if (!stockArgs.length) {
+      return { ok: false, text: `⚠️ -update 至少要给一只股票（不会把组合清空）\n例：/stocks -update ${target} 600519 300750\n想删掉整个组合请用：/stocks -del ${target}` };
+    }
+    // 边界：超上限直接拒绝，不静默截断（否则会悄悄丢票）
+    if (stockArgs.length > PORTFOLIO_MAX) {
+      return { ok: false, text: `⚠️ 单个组合最多 ${PORTFOLIO_MAX} 只（本次给了 ${stockArgs.length} 只），组合未改动` };
+    }
+    const pf = loadPortfolios();
+    if (!pf[target]) {
+      const keys = Object.keys(pf);
+      return {
+        ok: false,
+        text: `⚠️ 没有找到组合【${target}】，-update 只能改已存在的组合\n`
+          + `新建请用：/stocks -add ${stockArgs.slice(0, 3).join(' ')}${stockArgs.length > 3 ? ' …' : ''} -name ${target}`
+          + (keys.length ? `\n现有组合：${keys.join('、')}` : ''),
+      };
+    }
+    const { okList, bad } = await resolveStockArgs(stockArgs);
+    // 边界：全解析失败时保持原组合不动，避免「手滑打错名字把组合清空」
+    if (!okList.length) return { ok: false, text: `⚠️ 没有解析出有效股票，组合未改动${bad.length ? `\n${bad.join('、')}` : ''}` };
+    const before = (Array.isArray(pf[target].stocks) ? pf[target].stocks : []).map(s => s.name || s.code);
+    pf[target] = {
+      owner: String(pf[target].owner || ctx.uid || ''),
+      created: pf[target].created || nowText(),
+      updated: nowText(),
+      stocks: okList,
+    };
+    if (!savePortfolios(pf)) return { ok: false, text: '⚠️ 组合保存失败（服务端写盘异常），请查看容器日志' };
+    // 显式列出增删，避免「手滑换错名单」时无感（写操作可逆性差，回执要够清楚）
+    const beforeSet = new Set(before);
+    const afterNames = okList.map(s => s.name);
+    const added = afterNames.filter(x => !beforeSet.has(x));
+    const removed = before.filter(x => !new Set(afterNames).has(x));
+    const L = [`✏️ 已更新组合【${target}】：${before.length} 只 → ${okList.length} 只`];
+    if (added.length) L.push(`　＋ 新增：${added.join('、')}`);
+    if (removed.length) L.push(`　－ 移除：${removed.join('、')}`);
+    L.push(`　当前：${afterNames.join('、')}`);
+    if (bad.length) L.push(`⚠️ 已跳过：${bad.join('、')}`);
+    L.push(`→ /stocks -d ${target}`);
+    return { ok: true, text: L.join('\n') };
+  }
+
+  // —— 删除组合（-del，仅主人） ——
   if (mode === 'del') {
-    if (!isAdmin) return { ok: false, text: '🛡️ 删除组合仅限管理员' };
-    const target = name || operands.join('');
+    const target = (name || operands.join('')).trim();
     if (!target) return { ok: false, text: `⚠️ 请指定要删除的组合名，例：/stocks -del 我的持仓` };
     const pf = loadPortfolios();
     if (!pf[target]) {
       const keys = Object.keys(pf);
       return { ok: false, text: `⚠️ 没有找到组合【${target}】${keys.length ? `\n现有组合：${keys.join('、')}` : ''}` };
     }
+    const cnt = (Array.isArray(pf[target].stocks) ? pf[target].stocks : []).length;
     delete pf[target];
-    if (!savePortfolios(pf)) return { ok: false, text: '⚠️ 删除失败（服务端写盘异常）' };
-    return { ok: true, text: `🗑️ 已删除组合【${target}】` };
+    if (!savePortfolios(pf)) return { ok: false, text: '⚠️ 删除失败（服务端写盘异常），组合未改动' };
+    return { ok: true, text: `🗑️ 已删除组合【${target}】（${cnt} 只）` };
   }
 
   // —— 出图 ——
@@ -3156,6 +3283,8 @@ async function handleEvent(ev) {
   if (!text) return; // 纯 @ 无文字（或只有图片/表情）→ 不打扰
 
   const uid = String(ev.user_id ?? '');
+  // 注意：官方通道下网关只把「主人」的 openid 反查成 QQ 号（gateway 的 qqByOpenid 只认 bindings.owner），
+  // 其他用户事件里的 user_id 是 **openid**。所以 admins 若要给非主人放权，必须填 TA 的 openid，填 QQ 号永远不匹配。
   const isAdmin = (CONFIG.admins || []).includes(uid);
   const autoMg = extractMagnet(text); // 提前提取磁链：管理员群里直接发磁链也可自动预览
 

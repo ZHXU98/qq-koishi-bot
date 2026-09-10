@@ -205,8 +205,11 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 | 群聊 · 不在 `groupWhitelist` 的群 | 完全忽略 |
 | 私聊 · 在 `privateWhitelist` | 仅响应指令 / 磁链，闲聊忽略 |
 | 私聊 · 不在 `privateWhitelist` | 回 `deniedMsg` 拒绝提示 |
+| **写操作**（`/stocks -add` / `-update` / `-del`）· 任何场景 | **只认 `owners`（主人 QQ 号）**，与 `admins` 无关；其他人一律回「🛡️ 组合的增删改仅限机器人主人」。`owners` 为空 = 谁都不能写（fail-closed） |
 
-> **当前生效配置**（`reply/config.json`）：管理员与私聊白名单均为 `1547450303`；群聊开放指令集为 `ping / status / ss / stock / stocks / zj / info / echo / news / help`（**`/preview` 磁力预览、`/stocks -add` `-del` 仅管理员**）；`groupImages: false`。
+> **两层权限不要混淆**：`groupRestrictedCmds` / `admins` 只管「这条指令名能不能调」；`owners` 只管「组合能不能被写」。两者独立叠加——非管理员可以查询 `/stocks` 与 `-list`；而管理员即使能调 `stocks`，不在 `owners` 里照样写不了。
+
+> **当前生效配置**（`reply/config.json`）：管理员与私聊白名单均为 `1547450303`，`owners` 为 `["1547450303"]`；群聊开放指令集为 `ping / status / ss / stock / stocks / zj / info / echo / news / help`（**`/preview` 磁力预览仅管理员**；**`/stocks -add` `-update` `-del` 仅主人**，查询与 `-list` 所有人可用）；`groupImages: false`。
 
 ### 指令表
 
@@ -216,7 +219,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 |---|---|---|
 | `/ss` | `/指数` | 指数行情图：上证 / 沪深300 / 全市场成交额 / 申万二级资金流 |
 | `/stock <周期> <代码或名称>` | `/股票` `/K线` | K线图 / 分时图 / 文本速查（详见下节） |
-| `/stocks <周期> <组合名 或 股票...>` | `/组合` `/自选` | **股票组合拼图**：一张图并列多看（详见下节） |
+| `/stocks <周期> <组合名 或 股票...>` | `/组合` `/自选` | **股票组合拼图**：一张图并列多看（详见下节）。查询 / `-list` 所有人可用，`-add` / `-update` / `-del` 仅主人 |
 | `/zj <1\|2> [t\|d]` | `/资金` | 申万行业资金流（详见下节） |
 
 **📊 个股与基金**
@@ -289,20 +292,42 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 一篮子票拼成一张图，适合手机上一次性扫完自选或持仓。
 
 ```
-/stocks <周期> <组合名 或 股票...>          # 出图
-/stocks -add <股票...> -name <组合名>       # 保存/覆盖组合（严格管理员）
-/stocks -del <组合名>                       # 删除组合（严格管理员）
-/stocks -list                               # 列出已保存组合
+/stocks <周期> <组合名 或 股票...>          # 出图（所有人）
+/stocks -list                               # 列出已保存组合（所有人）
+/stocks -add <股票...> -name <组合名>       # 新建/覆盖组合（仅主人）
+/stocks -update <组合名> <股票...>          # 整组替换成分股（仅主人）
+/stocks -del <组合名>                       # 删除组合（仅主人）
 ```
+
+> **权限**：只有 `-add` / `-update` / `-del` 三个写操作限主人（`owners` 名单），**其余全部所有人可用**（含私聊白名单内任意账号、群内任意成员）。写操作**只认主人 QQ 号**（`admins` 不生效），回执里会列出实际解析到的全部标的，便于发现误匹配。
 
 **周期**（**单选**，不写默认日线）：`-t` 分时 / `-d` 日线 / `-w` 周线 / `-m` 月线。比 `/stock` 少——分钟/小时图对组合视角没意义，已移除。
 
 ```bash
 /stocks -d 我的持仓                # 展开组合出日线拼图
 /stocks -t 600519 000858           # 直接给多只股票，按输入顺序出图
-/stocks -add 600519 300750 002594 -name 我的持仓   # 保存（仅管理员）
+/stocks -add 600519 300750 002594 -name 我的持仓   # 新建（主人）
+/stocks -update 我的持仓 600519 000858            # 换成这 2 只（主人）
+/stocks -del 我的持仓                             # 删除（主人）
 /stocks -list                      # 看有哪些组合
 ```
+
+**`-update` 边界规则**（`-add` 同理）：
+
+| 输入 | 行为 |
+|---|---|
+| 组合不存在 | 拒绝，并提示 `-add` + 列出已有组合名 |
+| 只给组合名、不给股票 | **拒绝**（不会把组合清空）；想清空请用 `-del` |
+| 股票全部解析失败 | **拒绝，原组合原样保留**（不会存成空组） |
+| 部分解析失败 | 成功的照常写入，回执里单列「已跳过」 |
+| 超过 20 只 | 拒绝，**不静默截断** |
+| 重复股票 | 按代码去重，保留首次出现的顺序 |
+| `-name` 后缺值 | 拒绝（组合名不允许含空格，`-name` 只吃紧跟的一个 token） |
+| 组合名非法 | 拒绝（中英文/数字/下划线打头，后接中英文/数字/下划线/点/短横线，1–12 字符） |
+| 一次给多个操作符（如 `-add` + `-del`） | 拒绝并提示只能一种 |
+| 带周期参数（如 `-update -d ...`） | 拒绝，编辑指令不出图 |
+
+回执形如：`✏️ 已更新组合【我的持仓】：4 只 → 2 只 / ＋ 新增：五粮液 / － 移除：宁德时代、比亚迪 / 当前：贵州茅台、五粮液`。
 
 **出图规格**（按手机可读性倒推）：
 
@@ -374,15 +399,18 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 |---|---|---|
 | `groupAtOnly` | `true` | 群聊仅响应被 @ 的消息 |
 | `privateAlways` | `true` | 私聊响应总开关（配合 `privateWhitelist`） |
-| `admins` | `["1547450303"]` | 管理员 QQ，群聊中可用全部指令 |
+| `admins` | `["1547450303"]` | 管理员，群聊中可用全部指令。**只认主人 QQ 号 + 其他用户的 openid**——非主人的 QQ 号填了也匹配不上 |
+| `owners` | `["1547450303"]` | **机器人主人**：写操作（`/stocks` 的 `-add` / `-update` / `-del`）的唯一凭据，填 **QQ 号**。空数组 = 谁都不能写（fail-closed） |
 | `privateWhitelist` | `["1547450303"]` | 私聊白名单（不在此列表一律拒绝；空数组 = 不限制） |
 | `groupWhitelist` | `[]` | 群白名单（非空 = 仅响应列表内群；空数组 = 不限制） |
 | `groupAdminOnly` | `false` | 群聊仅管理员可触发 |
-| `groupRestrictedCmds` | 10 条 | 群聊非管理员可用指令名白名单（空数组 = 不限制）。`stocks` 放行只代表可用查询 / `-list`，`-add` / `-del` 仍是代码内独立校验的严格管理员操作 |
+| `groupRestrictedCmds` | 10 条 | 群聊非管理员可用指令名白名单（空数组 = 不限制）。`stocks` 放行只代表「能调这条指令」——查询 / `-list` 所有人开放，写操作由 `owners` 独立把关 |
 | `groupImages` | `false` | 群聊是否带图。腾讯对群聊批量图片有安全审核，默认只发文本、图片私聊补发 |
 | `restrictedMsg` / `deniedMsg` / `unknownMsg` / `welcome` | 见文件 | 各类提示文案；置 `""` 则完全忽略不回复 |
 
 > 指令名取 `routeCommand()` 返回的 `name`（不含 `/`）。加新指令：在 `reply/index.js` 的 `routeCommand()` 里追加 `case`，然后 `docker compose restart qq-reply`。
+>
+> **两层权限不要混淆**：`groupRestrictedCmds` / `admins` 决定「指令名能不能调」；`owners` 决定「组合能不能被写」。`owners` 填 **QQ 号**（不是 openid）——只有主人的 `user_id` 会由网关还原成纯 QQ 号，其他用户一律是 openid，所以 `owners` 名单里放别人的 openid 是无效的（那些人本就无权写）。
 
 ### 排障
 
@@ -391,6 +419,8 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 - **@ 机器人无反应**：`BOT_UIN` 必须与网关转发的 `at` 标识一致（当前取 `${QQBOT_APP_ID}`）。可用 `/status` 查看机器人信息与通道状态。
 - **私聊不响应**：检查 `privateAlways`，以及你的 QQ 是否在 `privateWhitelist` 内。
 - **群聊指令被拒**：普通成员只能用 `groupRestrictedCmds` 内指令，属预期；放行需把指令名加进该列表，或把账号加进 `admins`。
+- **`/stocks -add` / `-update` / `-del` 报「仅限机器人主人」**：编辑命令只认 `owners`，`admins` 不生效。确认 `reply/config.json` 的 `owners` 填的是**主人 QQ 号**（不是 openid）；改完无需重启（热加载）。
+- **主人能查询却不能写**：`owners` 里填成了 openid。代码会在网关可用时自动用其下发的 `owner.openid` 兜底识别主人，但**前提是网关侧主人身份正确**（私聊发过 `bind-owner`、且没被重置）。可用 `curl -s http://127.0.0.1:3100/bindings` 核对 `owner` 段。
 - **图片发不出去 / 群聊没图**：`groupImages: false` 时群聊只发文本、图片自动私聊补发，属预期。官方通道对同一条消息的图片数量与频次有限制。
 - **图表「没字」**：容器内缺 `/app/fonts/cjk_sub.ttf`。执行 `bash ths-news/setup_fonts.sh`，bind mount 实时生效、无需重启。
 - **`/stocks -add` 报「保存失败（服务端写盘异常）」**：`./reply/data` 未正确挂载或不可写。确认 docker-compose 里是 `./reply/data:/app/data`（**不能带 `:ro`**），且宿主 `reply/data/` 目录存在。首次部署务必先 `mkdir -p reply/data && echo '{}' > reply/data/portfolios.json`——否则 Docker 会把不存在的宿主路径**当成目录**创建。
@@ -510,7 +540,7 @@ docker compose down
 ## 注意事项
 
 1. **凭证保密**：`.env` 里的 `QQBOT_APP_SECRET` 等同于机器人密码，切勿提交或外传。
-2. **openid 与 QQ 号的关系**：官方平台只认 openid。本项目网关做了映射层，**已互动过的目标仍可直接填 QQ 号 / 群号**；没互动过的目标必须先"见"一次（owner 私聊 `bind-owner`、群需被 @ 一次），或用 openid。映射表用 `/bindings` 查看。
+2. **openid 与 QQ 号的关系**：官方平台只认 openid。本项目网关做了映射层，**已互动过的目标仍可直接填 QQ 号 / 群号**；没互动过的目标必须先"见"一次（owner 私聊 `bind-owner`、群需被 @ 一次），或用 openid。映射表用 `/bindings` 查看。**注意**：这个「openid → QQ 号」的反查只对 `bindings.owner` 生效，其余用户拿到的事件里 `user_id` 仍是 openid——因此 `reply/config.json` 的 `admins` 若要给非主人放权，必须填 **openid**；而 `owners` 填 **QQ 号**即可（代码另有网关 `owner.openid` 兜底）。
 3. **主动推送配额**：单用户/单群 1000 条/天、20 条/分钟；用户可关闭「允许主动发送」，关闭后主动消息会失败。**被动回复不受此限**，但有 5 分钟 / 60 分钟时效。
 4. **登录态保密**：`napcat/QQ/` 含 QQ session（备用通道），已 gitignore，不要上传公开仓库。
 5. **字体授权**：中文字体体积大且涉及授权，已 gitignore，用 `setup_fonts.sh` 从本机系统复制。

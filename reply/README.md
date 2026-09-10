@@ -73,14 +73,50 @@ docker compose logs -f qq-reply
 
 | 用法 | 权限 | 说明 |
 |------|------|------|
-| `/stocks -add <股票...> -name <组合名>` | **严格管理员** | 保存 / 覆盖组合，最多 20 只。例：`/stocks -add 600519 300750 002594 -name 我的持仓` |
-| `/stocks -del <组合名>` | **严格管理员** | 删除组合 |
-| `/stocks -list` | 所有人 | 列出已保存组合（只显示自己的组合名与成分股） |
-| `/stocks <周期> <组合名 或 股票...>` | 所有人 | 出图。给组合名 → 展开成分股；直接给股票 → 按输入顺序出图 |
+| `/stocks -list` | **所有人** | 列出已保存组合（组合名 / 只数 / 更新时间 / 成分股预览 / 出图指令） |
+| `/stocks <周期> <组合名 或 股票...>` | **所有人** | 出图。给组合名 → 展开成分股；直接给股票 → 按输入顺序出图 |
+| `/stocks -add <股票...> -name <组合名>` | **仅主人** | 新建组合；同名则整组覆盖 |
+| `/stocks -update <组合名> <股票...>` | **仅主人** | **整组替换**已存在组合的成分股 |
+| `/stocks -del <组合名>` | **仅主人** | 删除组合 |
 
-> `-add` / `-del` 是**严格管理员**（`config.json` 的 `admins`），不受 `groupRestrictedCmds` 影响——普通成员即使能调 `stocks`，写操作仍会被拒。
+```bash
+/stocks -d 我的持仓                              # 出图（所有人）
+/stocks -list                                    # 看有哪些组合（所有人）
+/stocks -add 600519 300750 002594 -name 我的持仓   # 新建（主人）
+/stocks -update 我的持仓 600519 000858            # 换成这 2 只（主人）
+/stocks -del 我的持仓                             # 删除（主人）
+```
+
+> **权限分两层**，别混淆：
+> 1. **能不能调 `/stocks`** —— 由 `groupRestrictedCmds` 决定（当前已放行 `stocks`），群内所有人可用；私聊另受 `privateWhitelist` 限制。
+> 2. **能不能写** —— `-add` / `-update` / `-del` 在 `cmdStocks()` 里用 **`owners` 名单**独立校验，**与 `admins` 无关**。即使某人是 `admins`（甚至能触发全部指令），只要不在 `owners` 里，写操作一样被拒。
 >
-> **组合名优先级高于股票名**：若参数只有一个且命中已保存组合名，一律按组合展开（如组合名叫「白酒」，`/stocks -d 白酒` 走组合，不会去搜同名的股票）。
+> **主人识别是双通道**：先比 `owners` 里的 QQ 号，再比网关 `/bindings` 里的 `owner.openid`。
+> 之所以要 openid 兜底——官方通道下网关只把**主人**的 openid 反查成 QQ 号下发（`qqByOpenid` 只认 `bindings.owner`），
+> 其他人事件里的 `user_id` 是 openid；一旦网关 `bindings.json` 丢失/重置，主人也会退回 openid，只按 QQ 号比对会把主人锁在门外。
+> 反过来，给**非主人**放权（`admins`）必须填 TA 的 **openid**，填 QQ 号永远匹配不上。
+
+**`-update` 的边界处理**（写操作可逆性差，宁可拒绝也不猜）：
+
+| 情形 | 行为 |
+|---|---|
+| 组合不存在 | 拒绝，并给出「改用 `-add` 新建」的现成命令 + 现有组合列表 |
+| 只给组合名、不给股票 | **拒绝**。空名单一律不走 `-update`（清空是破坏性操作，必须显式 `-del`） |
+| 全部股票解析失败 | **拒绝且原组合保持不变**（防止打错名字把组合清空） |
+| 部分股票解析失败 | 用解析成功的替换，并列出跳过的项 |
+| 超过 20 只 | 拒绝，**不静默截断**（避免悄悄丢票） |
+| 同一只给多次 | 自动去重 |
+| 带周期参数（`-d`） | 拒绝并提示：编辑指令不出图，看行情请另发 `/stocks <周期> <组合名>` |
+| 一次写多个操作符（`-add` + `-del`） | 拒绝并列出冲突项（不做「后者覆盖前者」的静默处理） |
+| `-name` 后无值 | 拒绝（组合名不允许含空格，`-name` 只吃紧跟的一个 token） |
+| 组合名含非法字符 / 超 12 字 | 拒绝并给出命名规则（中英文/数字/下划线打头，后接中英文/数字/下划线/点/短横线） |
+| 组合名以 `-` 开头 | 该 token 先被识别成未知参数 → 回「未知参数」并附用法 |
+
+回执会显式列出**新增 / 移除 / 当前**三行，换错名单时一眼能看出；`created` 保留、只刷新 `updated`。
+
+> **组合名优先级高于股票名**：参数只有一个且命中已保存组合名时，一律按组合展开（如组合名叫「白酒」，`/stocks -d 白酒` 走组合，不会去搜同名股票）。
+>
+> ⚠️ **模糊匹配提醒**：股票名走腾讯 `smartbox` 模糊搜索，生僻/无关的中文词可能命中意外标的——实测「持仓」会被匹配成美股 ETF `usGOP.AM`（国会共和党持仓ETF）。写操作回执会列出全部解析结果，保存前请扫一眼；发现不对用 `-update` 改掉即可。
 
 **出图规格**（针对手机截图阅读优化）：
 
@@ -147,11 +183,12 @@ docker compose logs -f qq-reply
 |------|------|------|
 | `groupAtOnly` | `true` | 群聊仅响应被 @ 的消息 |
 | `privateAlways` | `true` | 私聊总是响应（总开关，需配合 `privateWhitelist` 使用） |
-| `admins` | `[]` | 管理员 QQ 列表（群聊中可用全部指令） |
+| `admins` | `[]` | 管理员列表（群聊中可用全部指令）。**只认主人 QQ 号 + 其他用户的 openid**——非主人的 QQ 号填了也匹配不上 |
+| `owners` | `[]` | **机器人主人**：写操作（`/stocks` 的 `-add`/`-update`/`-del`）的唯一凭据，填 QQ 号。**空数组 = 谁都不能写**（fail-closed） |
 | `privateWhitelist` | `[]` | 私聊白名单（名单外账号私聊一律拒绝；空数组 = 不限制） |
 | `groupWhitelist` | `[]` | 群白名单（非空 = 仅响应列表内群；空数组 = 不限制） |
 | `groupAdminOnly` | `false` | 群聊仅管理员可触发（非管理员消息一律不响应） |
-| `groupRestrictedCmds` | `[]` | 群聊非管理员可用指令名白名单（如 `["ping","status","stocks"]`；空数组 = 不限制）。**注意**：`stocks` 放行只代表可用查询 / `-list`，`-add` / `-del` 是代码内独立校验的严格管理员操作 |
+| `groupRestrictedCmds` | `[]` | 群聊非管理员可用指令名白名单（如 `["ping","status","stocks"]`；空数组 = 不限制）。**注意**：`stocks` 放行只代表「能调这条指令」——查询 / `-list` 对所有人开放，`-add` / `-update` / `-del` 由代码内独立校验的 `owners` 名单决定（与 `admins` 无关） |
 | `groupImages` | `false` | 群聊预览是否带图。**腾讯对群聊批量图片有安全审核**（批量图连发会被静默拦截、sendMsg 超时），默认 `false` = 群聊只发文本预览，图片自动**私聊补发**给触发者；`true` = 群聊直接带图 |
 | `restrictedMsg` | 见文件 | 群聊非管理员使用受限指令时的提示 |
 | `deniedMsg` | 见文件 | 私聊非白名单账号的拒绝提示；置 `""` 则完全忽略不回复 |
@@ -159,6 +196,8 @@ docker compose logs -f qq-reply
 | `welcome` | 见文件 | 非指令消息的引导语；置 `""` 则不回复 |
 
 > 指令名取 `routeCommand()` 返回的 `name`（不含 `/`）：`help` / `ping` / `status` / `echo` / `preview` / `news` / `ss` / `stock` / `stocks` / `zj` / `info` / `etfinfo`。别名（如 `/存活`、`/K线`、`/组合`）映射到同名 `name`，权限判断按 `name` 生效。
+>
+> **两层权限不要混淆**：`groupRestrictedCmds` / `admins` 只管「这条指令名能不能调」；`owners` 只管「组合能不能被写」。两者独立叠加——把 `stocks` 加进 `groupRestrictedCmds` 后，非管理员依然可以查询和 `-list`；而管理员即使能调 `stocks`，只要不在 `owners` 里，`-add` / `-update` / `-del` 照样被拒。
 
 ## 排障
 
@@ -167,6 +206,8 @@ docker compose logs -f qq-reply
 - **@ 不识别**：确认 `BOT_UIN` 与网关转发的 `at` 标识一致（当前取 `${QQBOT_APP_ID}`）。可用 `/status` 查看机器人信息与通道状态。
 - **私聊不响应**：检查 `privateAlways` 是否为 `false`，或你的 QQ 不在 `privateWhitelist` 内（收到 `deniedMsg` 说明被白名单拦截）。
 - **群聊指令被拒**：普通成员仅可用 `groupRestrictedCmds` 内指令，属预期；如需放行，将该指令名加入 `groupRestrictedCmds`，或把账号加入 `admins`。
+- **`/stocks -add/-update/-del` 报「仅限机器人主人」**：编辑命令只认 `owners` 名单，`admins` 不生效。确认 `reply/config.json` 的 `owners` 已填**你的 QQ 号**（非 openid），且容器改了配置后无需重启（每条消息热加载）。
+- **主人能查询却不能写**：`owners` 里填成了 openid。`owners` 应填 QQ 号；网关 `bindings` 重置后代码会自动用网关下发的 `owner.openid` 兜底识别，但前提是网关侧主人身份正确。
 - **群聊收不到图**：`groupImages: false` 时群聊只发文本、图片自动私聊补发给触发者，属预期。
 - **图表「没字」**：容器内缺 `/app/fonts/cjk_sub.ttf`。在宿主执行 `bash ths-news/setup_fonts.sh` 补齐，bind mount 实时生效、无需重启。
 - **`/stocks -add` 报「保存失败（服务端写盘异常）」**：`./reply/data` 没有正确挂载或不可写。确认 docker-compose 里 `./reply/data:/app/data`（**不能带 `:ro`**），且宿主 `reply/data/` 存在。

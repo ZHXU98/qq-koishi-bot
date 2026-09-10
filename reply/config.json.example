@@ -2,6 +2,7 @@
   "groupAtOnly": true,
   "privateAlways": true,
   "admins": [],
+  "owners": [],
   "privateWhitelist": [],
   "groupRestrictedCmds": ["ping", "status"],
   "groupImages": false,
