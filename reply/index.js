@@ -7,11 +7,11 @@
 //
 // 依赖：Node >= 21（内置全局 WebSocket 客户端与 fetch），无需 npm install
 //
-// 环境变量：
-//   NAPCAT_WS_URL   ws://napcat:3001   NapCat 正向 WebSocket 地址
-//   NAPCAT_URL      http://napcat:3000 NapCat OneBot HTTP API 地址
-//   NAPCAT_TOKEN    (空)               NapCat access token（若启用）
-//   BOT_UIN         机器人 QQ 号（识别 @ 用，docker-compose 传 ${QQ_ACCOUNT}）
+// 环境变量（变量名沿用 NapCat 时代命名，现指向官方 QQ 机器人网关）：
+//   NAPCAT_WS_URL   ws://official-bot-gateway:3101   事件通道（OneBot 风格 WS）
+//   NAPCAT_URL      http://official-bot-gateway:3100 发送地址（OneBot 兼容 HTTP）
+//   NAPCAT_TOKEN    (空)               access token（若启用）
+//   BOT_UIN         机器人标识（识别 @ 用，docker-compose 传 ${QQBOT_APP_ID}）
 //
 // 配置文件 config.json（热加载：每次收到消息重新读盘，改完无需重启）：
 //   groupAtOnly:         群聊仅响应被 @ 的消息（默认 true）
@@ -27,8 +27,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const WS_URL = process.env.NAPCAT_WS_URL || 'ws://127.0.0.1:3001';
-const NAPCAT_URL = process.env.NAPCAT_URL || 'http://127.0.0.1:3000';
+const WS_URL = process.env.NAPCAT_WS_URL || 'ws://127.0.0.1:3101';
+const NAPCAT_URL = process.env.NAPCAT_URL || 'http://127.0.0.1:3100';
 const TOKEN = process.env.NAPCAT_TOKEN || '';
 const BOT_UIN = String(process.env.BOT_UIN || '');
 const CONFIG_PATH = path.join(__dirname, 'config.json');

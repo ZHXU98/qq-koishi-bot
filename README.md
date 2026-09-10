@@ -19,11 +19,18 @@
 |---|---|---|
 | 掉线 | 频繁，需扫码 / 密码回退 | **不掉线** |
 | 账号风险 | 高，有封号风险 | 官方合规通道 |
-| 身份标识 | 真实 QQ 号 | **openid**（QQ 号无法反查） |
+| 身份标识 | 真实 QQ 号 | **openid**（平台不认 QQ 号） |
 | 主动推送 | 无限制 | **有配额**：单用户/单群 1000 条/天、20 条/分钟 |
 | 被动回复 | 无时效 | 群 @ 后 **5 分钟**、私聊 **60 分钟**内回复有效 |
 
-代价是：所有推送目标必须先由**事件学习**成 openid（或由 owner 口令绑定），无法直接用 QQ 号寻址。
+**关于目标寻址**：官方平台只认 openid、不认 QQ 号。本项目网关做了一层映射：**已与机器人互动过的目标，仍可直接填 QQ 号 / 群号**（网关查表换算），和以前一样用。
+
+```
+openidByQq(QQ号)  || QQ号     // 私聊：已学习到的 QQ 号可直接用
+groupOpenidByQq(群号) || 群号   // 群聊：已学习到的群号可直接用
+```
+
+代价只有一个：**没互动过的目标必须先"见过"一次**——owner 私聊发 `bind-owner` 绑定，群则需要把机器人拉进去并 @ 一次。学习结果用 `curl -s http://127.0.0.1:3100/bindings` 查看。从未互动过的目标则只能填 openid。
 
 ---
 
@@ -73,7 +80,7 @@ qq-koishi-bot/
 ├── ths-news/                         # ★ 同花顺重要资讯转发
 │   ├── fetch_ths_news.js               # 主脚本（过滤/去重/渲染/推送）
 │   ├── start_news_cron.sh              # 容器内循环拉取 + 首启装 resvg
-│   ├── ths_news_targets.json           # 推送目标（含真实 openid，已 gitignore）
+│   ├── ths_news_targets.json           # 推送目标（含真实 QQ 号 / openid，已 gitignore）
 │   ├── setup_fonts.sh                  # 从本机复制中文字体（避免提交 22MB）
 │   ├── fonts/                          # cjk.ttc（卡片）/ cjk_sub.ttf（图表子集）
 │   └── README.md / PROMPTS.md / SKILL.md
@@ -118,16 +125,18 @@ cp ths-news/ths_news_targets.json.example    ths-news/ths_news_targets.json
 cp a-share-report/push_targets.json.example a-share-report/push_targets.json
 ```
 
-官方通道下目标是 **openid 而非 QQ 号**，所以**首次可留空**——先启动、等事件学习出 openid（见第 5 步），再回填。
+目标可以**直接填 QQ 号 / 群号**（例如 `1547450303` / `609994072`），前提是网关已经"学习"过该目标——见第 5 步。**首次部署建议先留空**，等学完再回填。
 
 ```json
 {
-  "private": ["owner 的 openid"],
-  "groups":  ["群 openid"],
+  "private": ["你的QQ号"],
+  "groups":  ["群号"],
   "imageWidth": 600,
   "imageScale": 2
 }
 ```
+
+> 从未与机器人互动过的目标没有映射，只能填 openid（从 `/bindings` 拿）。
 
 ### 3. 准备中文字体（关键！否则推出去的图片「没字」）
 
@@ -152,7 +161,7 @@ docker logs -f official-bot-gateway     # 看到「✅ 官方机器人已连接 
 
 ### 5. 绑定管理员 + 让机器人进群
 
-官方 API 只认 openid，且 QQ 号无法反查，所以必须**由事件学习**：
+官方平台只认 openid、不认 QQ 号，所以目标必须先让网关"见"到一次，才能把 QQ 号 / 群号映射过去：
 
 ```bash
 # ① 绑 owner：用你的 QQ 私聊机器人发一条
@@ -165,7 +174,7 @@ bind-owner
 curl -s http://127.0.0.1:3100/bindings
 ```
 
-拿到 openid 后回填第 2 步的两个 JSON 文件（**推送目标配置热加载，改完无需重启**）。
+学完之后，第 2 步的两个 JSON 文件里**直接填 QQ 号 / 群号**即可（**推送目标配置热加载，改完无需重启**）。
 
 ### 6. 验证
 
@@ -389,7 +398,7 @@ fetch_ths_news.js ── 过滤(import>0) + 去重(state) + 组装条目
 
 > 发送出口同样是官方网关，默认 `NAPCAT_URL=http://127.0.0.1:3100`（宿主直连）。
 
-**前置**：Node ≥ 18、一款 Chrome / Chromium（macOS 默认 `/Applications/Google Chrome.app/...`，其它平台用 `CHROME_PATH` 覆盖）、`puppeteer-core`（放在可被 `NODE_PATH` 找到的 `node_modules` 下）、机器人已上线并已学习到目标 openid。
+**前置**：Node ≥ 18、一款 Chrome / Chromium（macOS 默认 `/Applications/Google Chrome.app/...`，其它平台用 `CHROME_PATH` 覆盖）、`puppeteer-core`（放在可被 `NODE_PATH` 找到的 `node_modules` 下）、机器人已上线且网关已学习到目标映射。
 
 ```bash
 # 自动推送（传入报告路径；目标与尺寸读 push_targets.json）
@@ -447,7 +456,7 @@ docker compose logs -f ths-news
 # 重启单个服务（改完 index.js 必须重启）
 docker compose restart qq-reply
 
-# 查看 openid 绑定
+# 查看目标绑定（QQ 号 / 群号 → openid 映射）
 curl -s http://127.0.0.1:3100/bindings
 
 # 停止 / 删除全部
@@ -459,11 +468,11 @@ docker compose down
 ## 注意事项
 
 1. **凭证保密**：`.env` 里的 `QQBOT_APP_SECRET` 等同于机器人密码，切勿提交或外传。
-2. **openid 取代 QQ 号**：官方 API 只认 openid，QQ 号无法反查。换目标需重新事件学习（`/bindings` 查看），owner 用 `bind-owner` 口令绑定。
+2. **openid 与 QQ 号的关系**：官方平台只认 openid。本项目网关做了映射层，**已互动过的目标仍可直接填 QQ 号 / 群号**；没互动过的目标必须先"见"一次（owner 私聊 `bind-owner`、群需被 @ 一次），或用 openid。映射表用 `/bindings` 查看。
 3. **主动推送配额**：单用户/单群 1000 条/天、20 条/分钟；用户可关闭「允许主动发送」，关闭后主动消息会失败。**被动回复不受此限**，但有 5 分钟 / 60 分钟时效。
 4. **登录态保密**：`napcat/QQ/` 含 QQ session（备用通道），已 gitignore，不要上传公开仓库。
 5. **字体授权**：中文字体体积大且涉及授权，已 gitignore，用 `setup_fonts.sh` 从本机系统复制。
-6. **配置保密**：`ths_news_targets.json` / `push_targets.json` / `bindings.json` 含真实 openid，均 gitignore，勿提交。
+6. **配置保密**：`ths_news_targets.json` / `push_targets.json` / `bindings.json` 含真实 QQ 号 / openid，均 gitignore，勿提交。
 7. **如果恢复 NapCat 通道**：建议用小号，不要用主号。
 
 ---

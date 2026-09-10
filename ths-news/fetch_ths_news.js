@@ -19,7 +19,8 @@
 //
 // 配置：RSS 资讯独立配置 ths_news_targets.json（private / groups / imageWidth / imageScale），
 //       回退 push_targets.json；与复盘报告 push_report.js 的分发目标解耦。
-// 环境变量：NAPCAT_URL（默认 http://127.0.0.1:3000）、NAPCAT_TOKEN、THS_CONFIG（配置路径）、
+// 环境变量：NAPCAT_URL（默认 http://127.0.0.1:3100，官方网关；容器内由 compose 注入
+//           http://official-bot-gateway:3100）、NAPCAT_TOKEN、THS_CONFIG（配置路径）、
 //           THS_STATE（状态文件路径，默认 /tmp/ths_news_state.json）。
 
 const fs = require('fs');
@@ -29,7 +30,7 @@ const __DIR = __dirname;
 const CONFIG_PATH = path.join(__DIR, 'push_targets.json');
 const NEWS_TARGETS_PATH = process.env.THS_CONFIG || path.join(__DIR, 'ths_news_targets.json');
 const STATE_PATH = process.env.THS_STATE || '/tmp/ths_news_state.json';
-const NAPCAT_URL = process.env.NAPCAT_URL || 'http://127.0.0.1:3000';
+const NAPCAT_URL = process.env.NAPCAT_URL || 'http://127.0.0.1:3100'; // 官方网关（变量名沿用历史命名）
 const TOKEN = process.env.NAPCAT_TOKEN || '';
 const DRY = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force'); // 立即推送当前 Top，用于测试

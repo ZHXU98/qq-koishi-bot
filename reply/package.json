@@ -2,7 +2,7 @@
   "name": "qq-reply",
   "version": "1.0.0",
   "private": true,
-  "description": "NapCat QQ 机器人被@回复与指令服务（零依赖，Node >= 21 内置 WebSocket/fetch）",
+  "description": "QQ 机器人指令中心：被@回复 / 行情K线 / 资金流 / 个股资料 / ETF持仓 / 快讯（零依赖，Node >= 21 内置 WebSocket/fetch）",
   "main": "index.js",
   "engines": {
     "node": ">=21"

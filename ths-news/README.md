@@ -4,28 +4,30 @@
 
 - 数据源：同花顺官方 7×24 接口，每条自带 `import` 字段（`import>0` 即官方标记的「重要」），比关键词加权更准。
 - 渲染：纯 Rust 的 `@resvg/resvg-js` 把 SVG 渲染成 PNG（**无 Chrome / 无 puppeteer 依赖**）。
-- 推送：经 **NapCat**（OneBot 协议）推到 QQ。
-- 自动化：容器内 `start_news_cron.sh` 每 10 分钟拉取一次，「**有就发、不丢弃**」——本轮新捞到的所有「重要」快讯立即全推。
+- 推送：经 **`official-bot-gateway`**（官方开放平台通道，OneBot 兼容 HTTP）推到 QQ。
+- 自动化：容器内 `start_news_cron.sh` 每 **5 分钟**拉取一次，「**有就发、不丢弃**」——本轮新捞到的所有「重要」快讯立即全推。
 - 部署：整个仓库是一个 Docker Compose 项目，克隆后 `docker compose up -d` 即可，**换电脑零环境配置**。
+
+> 历史上推送走 NapCat（个人号），2026-08-26 起改接官方网关；环境变量名沿用 `NAPCAT_URL` 未改。
 
 ---
 
 ## 架构
 
 ```
-同花顺官方接口 (import=3 即「重要」)
-        │  每 10 分钟（start_news_cron.sh 循环）
+同花顺官方接口 (import>0 即「重要」)
+        │  每 5 分钟（start_news_cron.sh 循环）
         ▼
 fetch_ths_news.js  ── 过滤(import>0) + 去重(seen) + 组装条目
         │
         ▼  buildCardSvg() → 中文 SVG 卡片
    @resvg/resvg-js  →  PNG（挂载的中文字体 cjk.ttc）
         │
-        ▼  NapCat OneBot HTTP API (base64 图片消息)
+        ▼  official-bot-gateway HTTP :3100 (base64 图片消息)
    QQ 私聊 / 群 (ths_news_targets.json 配置)
 ```
 
-依赖服务：`napcat`（QQ 机器人网关，提供 OneBot HTTP）。ths-news 容器通过 `botnet` 网络访问 `http://napcat:3000`。
+依赖服务：`official-bot-gateway`（官方机器人 OneBot 兼容层）。ths-news 容器通过 `botnet` 网络访问 `http://official-bot-gateway:3100`。
 
 ---
 
@@ -33,16 +35,17 @@ fetch_ths_news.js  ── 过滤(import>0) + 去重(seen) + 组装条目
 
 ```
 qq-koishi-bot/
-├── docker-compose.yml        # napcat + ths-news 全栈编排（部署入口）
-├── .env.example              # QQ 账号模板
+├── docker-compose.yml        # official-bot-gateway + qq-reply + ths-news 编排（部署入口）
+├── .env.example              # 凭证模板（QQBOT_APP_ID / QQBOT_APP_SECRET）
 ├── .gitignore                # 已忽略字体/密钥/日志
-├── napcat/                   # NapCat 运行数据（登录态，已 gitignore）
+├── official-bot-gateway/     # 官方机器人网关（OneBot 兼容层）
+├── napcat/                   # NapCat 运行数据（登录态，已 gitignore，通道已停用）
 └── ths-news/                 # ★ 本服务全部源码与文档
     ├── fetch_ths_news.js        # 主脚本（含全部渲染/过滤/推送逻辑）
-    ├── start_news_cron.sh       # 容器内 10 分钟循环 + 首启装 resvg
+    ├── start_news_cron.sh       # 容器内 5 分钟循环 + 首启装 resvg
     ├── ths_news_targets.json.example  # 推送目标模板
     ├── setup_fonts.sh           # 从本机复制中文字体（避免提交 22MB）
-    ├── fonts/                   # 中文字体目录（.ttc 不入库）
+    ├── fonts/                   # 中文字体目录（.ttc / .ttf 不入库）
     │   └── .gitkeep
     ├── README.md                # 本文件
     ├── PROMPTS.md               # 可直接复制粘贴的提示词
@@ -53,19 +56,21 @@ qq-koishi-bot/
 
 ## 快速开始（首次部署）
 
-前置：安装好 **Docker** 与 **Docker Compose**，并已在 NapCat 完成 QQ 登录（票据存于 `napcat/` 卷，重启自动复用）。
+前置：安装好 **Docker** 与 **Docker Compose**，并已有一个通过审核的官方 QQ 机器人（AppID / AppSecret）。
 
 ```bash
 # 1. 克隆仓库
 git clone <your-repo-url> qq-koishi-bot && cd qq-koishi-bot
 
-# 2. 准备 QQ 账号
+# 2. 准备官方机器人凭证
 cp .env.example .env
-#   编辑 .env，填入你的 QQ 号：QQ_ACCOUNT=123456789
+#   编辑 .env，填入 q.qq.com 拿到的 QQBOT_APP_ID / QQBOT_APP_SECRET
 
 # 3. 准备推送目标
 cp ths-news/ths_news_targets.json.example ths-news/ths_news_targets.json
-#   编辑 ths-news_targets.json，把 private 改成你的 QQ 号（或加 groups）
+#   目标可直接填 QQ 号 / 群号，前提是网关已"学习"到映射（见下），首次部署可留空：
+#   私聊机器人发 bind-owner 绑 owner，再把机器人拉进群并 @ 一次，映射即被自动学习
+#   用 curl -s http://127.0.0.1:3100/bindings 查看，再回填 private / groups
 
 # 4. 准备中文字体（关键！否则推到 QQ 的图片「没字」）
 bash ths-news/setup_fonts.sh
@@ -87,8 +92,8 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run   # 看筛选结果�
 
 ```json
 {
-  "private": ["替换为你的QQ号"],   // QQ 私聊接收者（数组，可多个）
-  "groups":  [],                    // QQ 群号（数组，可多个）
+  "private": ["1547450303"],        // 私聊接收者（数组，可多个）：QQ 号（已学习映射）或 openid
+  "groups":  ["609994072"],         // 群接收者（数组，可多个）：群号（已学习映射）或群 openid
   "imageWidth": 600,               // 卡片宽度（px，仅记录用）
   "imageScale": 2                  // 渲染倍率（仅记录用）
 }
@@ -100,12 +105,12 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run   # 看筛选结果�
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `NAPCAT_URL` | `http://napcat:3000` | NapCat OneBot 地址 |
-| `NAPCAT_TOKEN` | 空 | NapCat access token（若启用） |
+| `NAPCAT_URL` | `http://official-bot-gateway:3100` | 官方网关地址（变量名沿用历史命名） |
+| `NAPCAT_TOKEN` | 空 | access token（若启用） |
 | `THS_STATE` | `/app/state/ths_news_state.json` | 去重状态文件路径 |
 | `THS_CONFIG` | `/app/ths_news_targets.json` | 推送目标配置路径 |
 | `THS_FONT` | `/app/fonts/cjk.ttc` | 中文字体路径 |
-| `NEWS_INTERVAL` | `600` | 拉取间隔（秒） |
+| `NEWS_INTERVAL` | `300` | 拉取间隔（秒，即 5 分钟） |
 | `IMPORT_ONLY` | `true` | `true`=仅同花顺「重要」；`false`=退化为关键词加权筛选 |
 
 ---
