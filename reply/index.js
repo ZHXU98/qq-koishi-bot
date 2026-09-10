@@ -2299,8 +2299,14 @@ function buildStocksPng(items, meta) {
   ctx.fillStyle = PANEL; ctx.fillRect(0, FOY, W, 1 + FOOTER_H);
   ctx.strokeStyle = LINE; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, FOY + 0.5); ctx.lineTo(W, FOY + 0.5); ctx.stroke();
-  ctx.textAlign = 'center'; ctx.fillStyle = FAINT; ctx.font = '21px cjk';
-  ctx.fillText(meta.footer, W / 2, FOY + 1 + FOOTER_H / 2);
+  ctx.textAlign = 'center'; ctx.fillStyle = FAINT;
+  // 页脚自适应：失败/截断提示并入后可能变长 → 先缩字号（21→13），仍超宽再截断
+  let ffs = 21;
+  const fitFooter = () => { ctx.font = `${ffs}px cjk`; return ctx.measureText(meta.footer).width <= W - 24; };
+  while (ffs > 13 && !fitFooter()) ffs -= 1;
+  let ftxt = meta.footer;
+  while (ftxt.length > 4 && ctx.measureText(ftxt).width > W - 12) ftxt = ftxt.slice(0, -1);
+  ctx.fillText(ftxt, W / 2, FOY + 1 + FOOTER_H / 2);
 
   return 'base64://' + canvas.toBuffer('image/png').toString('base64');
 }
@@ -2580,8 +2586,12 @@ async function cmdStocks(args, ctx = {}) {
   const srcs = [];
   if (items.some(it => !it.error && it.mkt === 'hf')) srcs.push('新浪全球期货');
   if (items.some(it => !it.error && it.mkt !== 'hf')) srcs.push('腾讯行情');
-  const footer = `数据来源：${srcs.join(' + ') || '腾讯行情'} · ${STOCKS_PERIOD_LABEL[period]} · 生成 ${today} ${hhmm}`
-    + (failNote ? `　|　${failNote}` : '');
+  // 用途/统计/失败提示一律并进页脚（图内已可见），不再额外单发一条消息——
+  // 2026-09-11 用户要求：灰底格 + 页脚已足够说明，重复文本消息是干扰。
+  const footer = [`数据来源：${srcs.join(' + ') || '腾讯行情'} · ${STOCKS_PERIOD_LABEL[period]} · 生成 ${today} ${hhmm}`]
+    .concat(failNote ? [failNote] : [])
+    .concat(notes.filter(Boolean))
+    .join('　|　');
 
   const img = buildStocksPng(items, {
     period, title,
@@ -2591,9 +2601,7 @@ async function cmdStocks(args, ctx = {}) {
     statsTxt: `${valid.length} 只 · ${up} 涨 ${down} 跌`,
     footer,
   });
-  const failCnt = items.length - valid.length;
-  if (failCnt > 0) notes.push(`⚠️ ${failCnt} 只数据获取失败：${items.filter(it => it.error).map(it => it.name).join('、')}`);
-  return { ok: true, img, note: notes.filter(Boolean).join('\n') };
+  return { ok: true, img }; // 失败/截断提示已在图内（灰底格 + 页脚），不再额外发文本消息
 }
 
 // ---------- /info 个股信息速查（公司概况+行情+公告+新闻，2026-09-01 新增） ----------
