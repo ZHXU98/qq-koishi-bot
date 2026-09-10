@@ -179,6 +179,8 @@ function cmdHelp() {
     '        例：/zj 2　/zj 1 t　/zj 2 d（曲线图为东财行业分类，申万无免费时序源）',
     '/info <代码或名称> [条数]   个股速查（仅A股）：行情/公司概况/公告/新闻',
     '        如 /info 600519　/info 平安银行 6（公告+新闻各 N 条，默认 3+5）',
+    '/etfinfo <代码或名称>   ETF速查：前十持仓+跟踪指数（非ETF会明确提示）',
+    '        例：/etfinfo 510300　/etfinfo 沪深300ETF　/etfinfo 纳指ETF　/etfinfo 600519',
     '',
     '📰 资讯',
     '/快讯   最新重要资讯（最近 10 条）',
@@ -1016,7 +1018,7 @@ async function fetchStockQuote(code) {
       const f = m[1].split(',');
       const price = Number(f[0]), chg = Number(f[1]), prevClose = Number(f[2]);
       const result = {
-        name: f[13] || code, price, prevClose, open: Number(f[3]), high: Number(f[4]), low: Number(f[5]),
+        name: f[13] || code, isIndex: false, price, prevClose, open: Number(f[3]), high: Number(f[4]), low: Number(f[5]),
         chg, chgPct: prevClose > 0 ? chg / prevClose * 100 : 0,
         time: f[6] || '', date: f[12] || '', market: 'hf',
         amount: 0, turnover: 0, volumeRatio: 0, amplitude: 0,
@@ -1035,11 +1037,12 @@ async function fetchStockQuote(code) {
     if (!m) return null;
     const a = m[1].split('~');
     const isUS = code.startsWith('us');
+    const isIndex = a.indexOf('ZS') > 0; // 腾讯证券类型：ZS=指数（名称如"上证50/沪深300"不含"指数"二字，须靠此标识）
     const price = Number(a[3]);
     const peDyn = isUS ? 0 : Number(a[52]), peTtm = Number(a[39]), peStatic = isUS ? 0 : Number(a[53]);
     const pb = isUS ? 0 : Number(a[46]); // 美股 a[46] 是公司英文名，无 PB
     const result = {
-      name: a[1], price, prevClose: Number(a[4]), open: Number(a[5]),
+      name: a[1], isIndex, price, prevClose: Number(a[4]), open: Number(a[5]),
       chg: Number(a[31]), chgPct: Number(a[32]), high: Number(a[33]), low: Number(a[34]),
       currency: a[35] || '',            // USD / HKD / CNY
       time: a[30] || '',                // 行情时间戳（美股为美东时间）
@@ -2097,6 +2100,139 @@ async function cmdInfo(args) {
   return { ok: true, text: infoText(data) };
 }
 
+// ---------- /etfinfo ETF 持仓速查（前十持仓+跟踪指数，2026-09-07 新增） ----------
+// 用法：/etfinfo <代码或名称>；先判断该代码/名称是不是 ETF（股票/指数/港股/美股/商品会明确提示不是 ETF）
+// 数据源：基金资料=东财移动端 API（简称/类型/跟踪指数/申赎状态）；持仓=东财 fundf10 jjcc（定期报告股票前十）
+// 覆盖：A股场内 ETF / LOF / ETF联接 / 场外基金均可识别；持仓明细仅支持 A股/港股标的（美股持仓不展示）
+// ETF 判定=简称含 ETF 且非联接基金（联接名称如"沪深300ETF联接A"非场内 ETF）
+const EM_FUND_BASIC = 'https://fundmobapi.eastmoney.com/FundMNewApi/FundMNNBasicInformation?FCODE=%s&deviceid=Wap&plat=Wap&product=EFund&version=6.2.8';
+const EM_FUND_CC = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=%s&topline=10';
+// 常见宽基指数 → 跟踪 ETF（输入"上证50"等指数名/代码时提示对应 ETF）
+const IDX_ETF_MAP = {
+  '000016': '510050（上证50ETF）', '000300': '510300（沪深300ETF）',
+  '000905': '510500（中证500ETF）', '000852': '512100（中证1000ETF）',
+  '000688': '588000（科创50ETF）', '399006': '159915（创业板ETF）',
+  '399005': '159949（创业板50ETF）', '399001': '159903（深证ETF）',
+};
+
+// 6位基金代码 → 东财基金资料；非基金/查询失败返回 null
+async function fetchFundBasic(code) {
+  try {
+    const r = await fetch(EM_FUND_BASIC.replace('%s', code), { headers: EM_UA, signal: AbortSignal.timeout(8000) });
+    const j = await r.json();
+    const d = j && j.Datas;
+    if (!d) return null;
+    const name = String(d.SHORTNAME || '').trim();
+    return {
+      code, name,
+      fullType: String(d.FTYPE || ''),
+      sgzt: String(d.SGZT || ''),
+      indexCode: String(d.INDEXCODE || ''),
+      indexName: String(d.INDEXNAME || '').replace(/\(价格\)$/, ''),
+      isEtf: /ETF/i.test(name) && !/联接/i.test(name),
+    };
+  } catch (_) { return null; }
+}
+
+// 定期报告股票前十（东财 jjcc HTML → 结构化）；无持仓披露/非基金返回 null
+async function fetchFundHoldingTop(code) {
+  try {
+    const r = await fetch(EM_FUND_CC.replace('%s', code), {
+      headers: { 'User-Agent': EM_UA['User-Agent'], 'Referer': `http://fundf10.eastmoney.com/ccmx_${code}.html` },
+      signal: AbortSignal.timeout(8000),
+    });
+    const t = await r.text();
+    const m = t.match(/content:"([\s\S]*?)"\s*,\s*arryear/);
+    if (!m || !m[1]) return null;
+    const content = m[1];
+    const dateM = content.match(/截止至：<font[^>]*>([\d-]+)<\/font>/);
+    const labelM = content.match(/(\d{4}年.{1,4}季度)/);
+    const tbl = content.match(/<table[\s\S]*?<\/table>/);
+    const holds = [];
+    if (tbl) {
+      const rows = [...tbl[0].matchAll(/<tr>([\s\S]*?)<\/tr>/g)];
+      for (const rm of rows) {
+        const tds = [...rm[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map(x => x[1]);
+        if (tds.length < 9) continue;
+        const codeText = tds[1].replace(/<[^>]+>/g, '').trim(); // A股6位 / 港股5位 / 美股字母
+        if (!codeText) continue;
+        const pctM = tds[6].match(/([\d.]+)%/); // 占净值比例
+        const clean = v => { const s = String(v).replace(/<[^>]+>/g, '').replace(/,/g, '').trim(); return s ? Number(s) : 0; };
+        holds.push({ code: codeText, name: tds[2].replace(/<[^>]+>/g, '').trim(), pct: pctM ? Number(pctM[1]) : 0, mv: clean(tds[8]) }); // mv 单位：万元
+      }
+    }
+    return { period: labelM ? labelM[1] : '', date: dateM ? dateM[1] : '', holds: holds.slice(0, 10) };
+  } catch (_) { return null; }
+}
+
+async function cmdEtfInfo(args) {
+  const parts = (args || []).map(a => String(a).trim()).filter(Boolean);
+  if (!parts.length) return { ok: false, text: '📋 用法：/etfinfo <代码或名称>\n查 ETF 前十持仓 + 跟踪指数，并提示该代码/名称是不是 ETF\n例：/etfinfo 510300　/etfinfo 沪深300ETF　/etfinfo 159915　/etfinfo 纳指ETF' };
+  const q = parts[0];
+  let code = normalizeCode(q);
+  if (!code) code = await resolveStockCode(q);
+  if (!code) return { ok: false, text: `⚠️ 未找到「${q}」，请用 A股基金 6 位代码或名称（如 510300 / 沪深300ETF）` };
+  const pre = code.slice(0, 2);
+  const raw = code.slice(2).toUpperCase();
+  // —— 非 A股市场：明确提示不是 A股 ETF ——
+  if (pre === 'hk') {
+    if (raw === 'HSI') return { ok: false, text: '⚠️ 恒生指数（HSI）是港股指数，不是 ETF\n跟踪它的 A股 ETF：/etfinfo 159920（恒生ETF）\n指数行情用 /stock 恒指　/stock -t 恒指' };
+    return { ok: false, text: `⚠️ ${raw} 是港股标的，etfinfo 只查 A股场内基金持仓，不支持港股本体的持仓\n想看跟踪港股的 A股 ETF，请发其 A股代码或名称：\n/etfinfo 159920（恒生ETF）　/etfinfo 513180（恒生科技ETF华夏）\n港股行情用 /stock -t ${raw}` };
+  }
+  if (pre === 'us') return { ok: false, text: `⚠️ ${raw} 是美股标的，etfinfo 不支持美股\n看行情用 /stock -t ${raw.replace(/\.\w+$/, '')}` };
+  if (pre === 'hf') return { ok: false, text: `⚠️ ${q} 是国际商品，不是 ETF\n商品分时请用 /stock -t ${q}` };
+  // —— A股非基金（指数/股票）：先识别指数（腾讯快照 ZS 类型标识或代码段），再提示不是 ETF ——
+  if (!/^5/.test(raw) && !/^1[56]/.test(raw)) {
+    const qq = await fetchStockQuote(code);
+    const isIdx = !!(qq && (qq.isIndex || /指数/.test(qq.name || ''))) || (pre === 'sh' && /^000\d{3}$/.test(raw)) || (pre === 'sz' && /^399\d{3}$/.test(raw));
+    if (isIdx) {
+      const nm = (qq && qq.name) || q;
+      const etf = IDX_ETF_MAP[raw];
+      return { ok: false, text: `⚠️ ${nm}（${raw}）是A股指数，不是 ETF\n${etf ? `跟踪该指数的 ETF：/etfinfo ${etf}` : '想查对应 ETF 持仓，发它的基金代码/名称即可'}\n指数行情用 /stock ${pre}${raw}　/ss（主要指数）` };
+    }
+    const qName = qq && qq.name ? ` ${qq.name}` : '';
+    return { ok: false, text: `⚠️ ${raw}${qName} 是A股股票，不是 ETF\n看行情/资料请用：/stock ${raw}　/info ${raw}` };
+  }
+  // —— A股基金前缀（5/15/16）→ 东财核实（并行取资料+持仓） ——
+  const [basic, cc] = await Promise.all([fetchFundBasic(raw), fetchFundHoldingTop(raw)]);
+  if (!basic) return { ok: false, text: `⚠️ ${raw} 未在东财查到基金资料：不是场内基金/ETF，或代码有误` };
+  const kind = basic.isEtf ? '✅ 是 ETF'
+    : /联接/.test(basic.name) ? '⚠️ 是 ETF 联接基金（非场内 ETF，场内另有交易代码）'
+    : /LOF/i.test(basic.name) ? '⚠️ 是 LOF，不是 ETF'
+    : '⚠️ 是基金但不是 ETF';
+  const L = [];
+  L.push(`📊 ${basic.name}（${basic.code}）`);
+  L.push(`${kind} ｜ ${basic.fullType}｜${basic.sgzt || '—'}`);
+  const hasIdx = basic.indexName && basic.indexName !== '--';
+  // 美股类基金判定（etfinfo 只做 A股/港股）：持仓全为美股 ticker（代码含字母，A股/港股均为纯数字）；
+  // 无持仓披露时按跟踪指数特征词（纳斯达克/标普/道琼斯等）判定 → 整段不做美股
+  const usWord = /纳斯达克|纳指|标普|道琼斯|S&P|NASDAQ|罗素/i;
+  const hasHolds = !!(cc && cc.holds.length > 0);
+  const cnHk = hasHolds ? cc.holds.filter(h => !/[A-Za-z]/.test(h.code)) : [];
+  const usCnt = hasHolds ? cc.holds.length - cnHk.length : 0;
+  if (hasHolds ? cnHk.length === 0 : usWord.test(basic.indexName || '')) {
+    L.push(`📭 该基金为美股类（${hasIdx ? basic.indexName : basic.fullType}），etfinfo 只做 A股/港股、不做美股`);
+    L.push('📌 数据来源：基金定期报告（天天基金）');
+    return { ok: true, text: L.join('\n') };
+  }
+  if (hasIdx) L.push(`🎯 跟踪指数：${basic.indexName}${basic.indexCode && basic.indexCode !== '--' ? `（${basic.indexCode}）` : ''}`);
+  else L.push('🎯 跟踪指数：无（非指数型基金）');
+  const periodTxt = (cc && cc.period) ? cc.period : '最新披露';
+  if (!hasHolds) {
+    const t = basic.fullType || '';
+    L.push(`📭 ${periodTxt}无股票持仓明细${/货币|债券|商品/.test(t) ? `（${t}一般无股票持仓）` : ''}`);
+  } else {
+    L.push(`🧾 前十持仓 ${periodTxt}${cc.date ? `（截止 ${cc.date}）` : ''}`);
+    const fmtMv = v => v >= 10000 ? (v / 10000).toFixed(2) + '亿' : Math.round(v) + '万'; // mv 万元 → 亿/万
+    cnHk.forEach((h, i) => L.push(`${i + 1}. ${h.name}(${h.code}) ${h.pct.toFixed(2)}%  ${fmtMv(h.mv)}`));
+    const sum = cnHk.reduce((a, x) => a + x.pct, 0);
+    if (usCnt > 0) L.push(`（另有 ${usCnt} 只美股持仓未展示，不计入）\n已展示持仓占比合计 ${sum.toFixed(2)}%`);
+    else L.push(`前10合计 ${sum.toFixed(2)}%（集中度）`);
+  }
+  L.push('📌 数据来源：基金定期报告（天天基金）');
+  return { ok: true, text: L.join('\n') };
+}
+
 // ---------- /zj 申万行业资金流（2026-08-31 新增） ----------
 // 用法：/zj <级别>，级别：1 一级 / 2 二级 / 3 三级
 // 数据源：腾讯板块行情 getRank（hy=申万一级 31 个、hy2=申万二级 124 个），字段 zljlr=主力净流入（万）
@@ -2523,6 +2659,7 @@ function routeCommand(text) {
     case 'stock': case '股票': case 'K线': return { name: 'stock', type: 'stock', args: parts };
     case 'zj': case '资金': return { name: 'zj', type: 'zj', args: parts };
     case 'info': case '个股': case '资料': return { name: 'info', type: 'info', args: parts };
+    case 'etfinfo': case 'etf': case '基金持仓': return { name: 'etfinfo', type: 'etfinfo', args: parts };
     default: return null;
   }
 }
@@ -2631,6 +2768,9 @@ async function handleEvent(ev) {
   } else if (cmd.type === 'info') {
     const r = await cmdInfo(cmd.args);
     await sendReply(ev, r.text || '⚠️ 个股信息获取失败');
+  } else if (cmd.type === 'etfinfo') {
+    const r = await cmdEtfInfo(cmd.args);
+    await sendReply(ev, r.text || '⚠️ ETF 信息获取失败');
   } else {
     await sendReply(ev, cmd.text);
   }
