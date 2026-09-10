@@ -212,7 +212,7 @@ docker compose logs -f qq-reply
 - **图表「没字」**：容器内缺 `/app/fonts/cjk_sub.ttf`。在宿主执行 `bash ths-news/setup_fonts.sh` 补齐，bind mount 实时生效、无需重启。
 - **`/stocks -add` 报「保存失败（服务端写盘异常）」**：`./reply/data` 没有正确挂载或不可写。确认 docker-compose 里 `./reply/data:/app/data`（**不能带 `:ro`**），且宿主 `reply/data/` 存在。
 - **`/stocks -add` 报「未找到 / 无行情」**：标的解析走的是 `smartbox` 搜索 + 腾讯快照，确认代码或名称正确；港美股/ETF/商品同样支持保存。
-- **`/stocks` 出图但某格是灰底「取数失败」**：该标的在该周期无数据（如国际商品只有分时、港美股没有分钟 K），属预期，其余格子不受影响。
+- **`/stocks` 出图但某格是灰底「取数失败」**：该标的在该周期无数据（如港美股没有分钟 K、国际商品没有分钟 K），属预期，其余格子不受影响。
 - **老 `portfolios.json` 想搬到新机器**：直接拷 `reply/data/portfolios.json`（gitignored）。格式见 `reply/data/portfolios.json.example`。
 
 ## 上游数据源
@@ -224,7 +224,7 @@ docker compose logs -f qq-reply
 | 分钟 K（1/5/30/60m） | 腾讯 `proxy.finance.qq.com` mkline |
 | 当日分时 | 腾讯 minute/query、东财 `push2his` trends2 |
 | 名称 → 代码搜索 | 腾讯 `smartbox.gtimg.cn`（GBK） |
-| 国际商品分时 | 新浪 `GlobalFuturesService` |
+| 国际商品分时 / 日线 | 新浪 `GlobalFuturesService`（`getGlobalFuturesMinLine` / `getGlobalFuturesDailyKLine`；周/月由日 K 本地聚合） |
 | 申万行业资金流 | 腾讯 `getRank`（`hy` / `hy2`） |
 | 板块资金流曲线 | 东财 `clist` + `fflow` |
 | 个股公告 / 新闻 | 东财 `np-anotice-stock` / `search-api-web` |

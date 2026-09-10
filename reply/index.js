@@ -179,7 +179,7 @@ function cmdHelp() {
     '        周期：-d 日线 / -w 周线 / -M 月线（均线+BOLL）/ -1m / -5m / -30m / -1h / -t 分时',
     '        例：/stock -d 600519　/stock -5m 贵州茅台　/stock -t 00700　/stock AAPL',
     '        支持 A股/港股/美股/ETF；港股 -d/-t；美股 -d/-t（盘后显示上个交易日）',
-    '        商品 -t 分时图：/stock -t 布伦特原油　/stock -t 黄金；指数文本速查：/stock 道琼斯　/stock 恒指',
+    '        国际商品 日/周/月/分时：/stock -d 黄金　/stock -w 布伦特原油　/stock -t 黄金；指数文本速查：/stock 道琼斯　/stock 恒指',
     '/stocks <周期> <组合名 或 股票...>   股票组合拼图（一图多看）',
     '        周期（单选）：-t 分时 / -d 日线 / -w 周线 / -m 月线（不写默认日线）',
     '        例：/stocks -d 我的持仓　/stocks -t 600519 000858　/stocks -w 贵州茅台 宁德时代',
@@ -936,8 +936,10 @@ async function fetchStockKline(code, period) {
       if (r && r.length >= 10) { result = r; break; }
     }
   } else {
-    if (period === 'time' && code.startsWith('hf_')) {
-      result = await fetchSinaGlobalMin(code); // 国际商品：腾讯/东财无分时，走新浪全球期货
+    if (code.startsWith('hf_')) {
+      // 国际商品：腾讯/东财既无分时也无日线，一律走新浪全球期货
+      // （分时=当日分钟线；日/周/月=全球期货日 K，周月由日 K 本地聚合）
+      result = period === 'time' ? await fetchSinaGlobalMin(code) : await fetchSinaGlobalKline(code, period);
     } else {
       let url;
       if (isLong) url = STOCK_FQKLINE.replace('%s', code).replace('%s', period); // 日/周/月K
@@ -984,6 +986,73 @@ async function fetchSinaGlobalMin(code) {
     out._date = String(rows[0][0] || '').slice(5); // MM-DD
     return out;
   } catch (_) { return null; }
+}
+
+// 新浪全球期货 日 K（周/月由日 K 本地聚合）——
+// 腾讯/东财对 hf_ 国际商品既无分时也无日线，新浪 GlobalFuturesService.getGlobalFuturesDailyKLine 可用，
+// 返回全量历史（约 2500+ 根，2016-09 起）。volume 字段仅部分品种有值：
+// 布油(OIL)/伦铜(CAD) 有量，黄金(GC)/白银(SI)/原油(CL)/天然气(NG)/美铜(HG) 恒定 0 → 渲染层需容错。
+const SINA_GLOBAL_DAILY = 'https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_=/GlobalFuturesService.getGlobalFuturesDailyKLine?symbol=%s';
+const HF_DAILY_TTL = 10 * 60 * 1000;    // 日线一天才变一次；单次响应近 400KB，必须长缓存，否则组合出图会反复重拉
+const _hfDailyCache = new Map();        // symbol → { at, rows }（进程级）
+async function fetchSinaGlobalDaily(sym) {
+  const hit = _hfDailyCache.get(sym);
+  if (hit && Date.now() - hit.at < HF_DAILY_TTL) return hit.rows;
+  const stale = hit ? hit.rows : null; // 上游偶发失败时退回旧数据，不阻塞出图
+  try {
+    const resp = await fetch(SINA_GLOBAL_DAILY.replace('%s', sym), {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn/' },
+      signal: AbortSignal.timeout(12000),
+    });
+    const t = await resp.text();
+    const si = t.indexOf('('), ei = t.lastIndexOf(')');
+    if (si < 0 || ei < si) return stale;
+    const j = JSON.parse(t.slice(si + 1, ei));
+    if (!Array.isArray(j) || j.length < 2) return stale;
+    const rows = j.map(r => ({
+      t: String(r.date || '').slice(0, 10),
+      open: Number(r.open), close: Number(r.close),
+      high: Number(r.high), low: Number(r.low),
+      vol: Number(r.volume) || 0,
+    })).filter(k => /^\d{4}-\d{2}-\d{2}$/.test(k.t) && k.open > 0 && k.close > 0 && k.high > 0 && k.low > 0);
+    if (rows.length < 2) return stale;
+    _hfDailyCache.set(sym, { at: Date.now(), rows });
+    return rows;
+  } catch (_) { return stale; }
+}
+// 日 K → 周 K / 月 K（首根取开、最高取 max、最低取 min、末根取收、量求和）
+// 周以「当周周一日期」为标签，月以「当月 1 日」为标签；渲染层按 t.slice(2,7) 显示 YY-MM，两种都适用
+function aggHfKline(daily, period) {
+  const bucketOf = k => {
+    if (period === 'month') return k.t.slice(0, 7) + '-01';
+    const d = new Date(k.t + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // 回退到本周一（周一=0）
+    return d.toISOString().slice(0, 10);
+  };
+  const out = [], idx = new Map();
+  for (const k of daily) {
+    const b = bucketOf(k);
+    const g = idx.get(b);
+    if (!g) {
+      idx.set(b, { t: b, open: k.open, high: k.high, low: k.low, close: k.close, vol: k.vol });
+      out.push(idx.get(b));
+    } else {
+      if (k.high > g.high) g.high = k.high;
+      if (k.low < g.low) g.low = k.low;
+      g.close = k.close;
+      g.vol += k.vol;
+    }
+  }
+  return out;
+}
+// 国际商品 日/周/月 K（统一入口；分钟 K 数据源不支持，调用方需先拦截）
+async function fetchSinaGlobalKline(code, period) {
+  const sym = HF_SINA_SYM[code];
+  if (!sym) return null;
+  const daily = await fetchSinaGlobalDaily(sym);
+  if (!daily || daily.length < 2) return null;
+  if (period === 'week' || period === 'month') return aggHfKline(daily, period);
+  return daily;
 }
 
 // 东财 trends2 分时（兜底：腾讯无分时/盘后时取最近交易日完整分时）
@@ -1213,10 +1282,21 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   // 最新一根
   const last = klines[n - 1];
   // 分时：现价/昨收用快照（分时数据末行是盘后杂数据，相邻价差≈0 会算错涨跌）；K线用数据收盘价
+  // 国际商品(hf_)非分时例外：① 新浪日K最后一根是「已收盘」那根、快照现价属下一交易时段，
+  //   用 klines[n-2] 当昨收会整体偏离一根；② 快照的 f[2] 并非真昨收（与自带涨跌额对不上，
+  //   如 hf_GC 现价 4402.84/涨跌 -1.30/f[2] 4406.00 → 三者不自洽）。
+  //   故一律由快照涨跌额反推基准，使图内数字与消息标题完全一致。
   const lastPrice = (quote && Number(quote.price) > 0) ? Number(quote.price) : last.close;
-  const prevClose = (timeMode && quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : (klines[n - 2]?.close ?? last.open);
-  const chg = lastPrice - prevClose;
-  const chgPct = prevClose ? (chg / prevClose * 100) : 0;
+  // 国际商品非分时：涨跌额/涨跌幅一律取快照原值（源数据自身不自洽，自行按基准反算会与标题打架）
+  const hfSnapChg = (isHF && !timeMode && quote && isFinite(Number(quote.chg))) ? Number(quote.chg) : NaN;
+  const hfBase = (isHF && !timeMode && quote && Number(quote.price) > 0 && isFinite(hfSnapChg))
+    ? Number(quote.price) - hfSnapChg : null;
+  const prevClose = hfBase != null ? hfBase
+    : ((timeMode && quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : (klines[n - 2]?.close ?? last.open));
+  // chg / chgPct 是「图内涨跌」的唯一口径（下方 numChg / numPct 直接引用，不再二次计算）
+  const chg = isFinite(hfSnapChg) ? hfSnapChg : (lastPrice - prevClose);
+  const chgPct = (isFinite(hfSnapChg) && quote && isFinite(Number(quote.chgPct)))
+    ? Number(quote.chgPct) : (prevClose ? (chg / prevClose * 100) : 0);
   const chgCol = chg >= 0 ? upC : downC;
   // 分时：以「今开」为红绿基准（与价格线一致）；其他周期用昨收（标准涨跌幅）
   const openRef = (quote && Number(quote.open) > 0) ? Number(quote.open) : (klines[0]?.close ?? lastPrice);
@@ -1244,8 +1324,8 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   ctx.fillStyle = sub; ctx.font = '14px cjk';
   ctx.fillText('今日价格', W - PAD, 30);
   const dCol = chgCol; // 右上角颜色与收益率统一按昨收（红涨绿跌标准口径）
-  const numChg = lastPrice - prevClose;
-  const numPct = prevClose ? (numChg / prevClose * 100) : 0;
+  const numChg = chg;
+  const numPct = chgPct;
   ctx.fillStyle = dCol; ctx.font = 'bold 26px cjk';
   ctx.fillText(fp(lastPrice), W - PAD, 52);
   ctx.font = '15px cjk';
@@ -1393,14 +1473,21 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   const volBase = Math.max(...vols.slice(1), 1);
   const volTop = yLegend + LEG_H + 6;
   const volH = VOL_H - 22;
-  for (let i = 0; i < dn; i++) {
-    const k = display[i];
-    const vh = Math.min(volOf(k, i), volBase * 2) / volBase * volH;
-    const col = k.close >= (i > 0 ? display[i - 1].close : k.close) ? upC : downC;
-    const xk = timeMode ? mapX(i) : X(i);
-    ctx.fillStyle = col; ctx.globalAlpha = 0.5;
-    ctx.fillRect(xk - cw / 2, volTop + volH - vh, cw, vh);
-    ctx.globalAlpha = 1;
+  // 外盘商品部分品种数据源不给量（黄金/白银/原油/天然气/美铜恒为 0）→ 画占位说明，不留空面板
+  const noVol = !vols.some(v => Number(v) > 0);
+  if (noVol) {
+    ctx.fillStyle = sub; ctx.font = '13px cjk'; ctx.textAlign = 'center';
+    ctx.fillText('该品种数据源不提供成交量', W / 2, volTop + volH / 2);
+  } else {
+    for (let i = 0; i < dn; i++) {
+      const k = display[i];
+      const vh = Math.min(volOf(k, i), volBase * 2) / volBase * volH;
+      const col = k.close >= (i > 0 ? display[i - 1].close : k.close) ? upC : downC;
+      const xk = timeMode ? mapX(i) : X(i);
+      ctx.fillStyle = col; ctx.globalAlpha = 0.5;
+      ctx.fillRect(xk - cw / 2, volTop + volH - vh, cw, vh);
+      ctx.globalAlpha = 1;
+    }
   }
   ctx.fillStyle = sub; ctx.textAlign = 'left'; ctx.font = '12px cjk';
   ctx.fillText('成交量', PAD, volTop + volH + 16);
@@ -1543,9 +1630,15 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   const last = klines[n - 1];
   // 分时：现价/昨收用快照（分时末行是盘后杂数据，相邻价差≈0 会算错涨跌）；K线用数据收盘价
   const lastPrice = (quote && Number(quote.price) > 0) ? Number(quote.price) : last.close;
-  const prevClose = (timeMode && quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : (klines[n - 2]?.close ?? last.open);
-  const chg = lastPrice - prevClose;
-  const chgPct = prevClose ? (chg / prevClose * 100) : 0;
+  // 国际商品非分时：涨跌额/涨跌幅一律取快照原值（原因见 renderStockPngCanvas 同处注释）
+  const hfSnapChg = (isHF && !timeMode && quote && isFinite(Number(quote.chg))) ? Number(quote.chg) : NaN;
+  const hfBase = (isHF && !timeMode && quote && Number(quote.price) > 0 && isFinite(hfSnapChg))
+    ? Number(quote.price) - hfSnapChg : null;
+  const prevClose = hfBase != null ? hfBase
+    : ((timeMode && quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : (klines[n - 2]?.close ?? last.open));
+  const chg = isFinite(hfSnapChg) ? hfSnapChg : (lastPrice - prevClose);
+  const chgPct = (isFinite(hfSnapChg) && quote && isFinite(Number(quote.chgPct)))
+    ? Number(quote.chgPct) : (prevClose ? (chg / prevClose * 100) : 0);
   const isUp = chg >= 0;
   const chgCol = isUp ? upCol : downCol;
   // 分时：以「今开」为红绿基准（与价格线一致）；其他周期用昨收
@@ -1558,8 +1651,8 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
 <text x="${PAD}" y="54" font-family="PingFang SC,cjk" font-size="13" fill="${sub}">${periodLabel}</text>`;
   // 标题右侧：今天价格（颜色分时按今开，其他按昨收；涨跌额/涨跌幅数字一律按昨收标准收益率）
   const dCol = chgCol; // 右上角颜色与收益率统一按昨收（红涨绿跌标准口径）
-  const numChg = lastPrice - prevClose;
-  const numPct = prevClose ? (numChg / prevClose * 100) : 0;
+  const numChg = chg;
+  const numPct = chgPct;
   s += `<text x="${W - PAD}" y="30" text-anchor="end" font-family="PingFang SC,cjk" font-size="14" fill="${sub}">今日价格</text>`;
   s += `<text x="${W - PAD}" y="52" text-anchor="end" font-family="PingFang SC,cjk" font-size="26" font-weight="bold" fill="${dCol}">${fp(lastPrice)}</text>`;
   s += `<text x="${W - PAD}" y="70" text-anchor="end" font-family="PingFang SC,cjk" font-size="15" fill="${dCol}">${numChg >= 0 ? '+' : ''}${fp(numChg)} (${numPct >= 0 ? '+' : ''}${numPct.toFixed(2)}%)</text>`;
@@ -1682,20 +1775,28 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   });
   } // end else (非分时)
 
-  // 成交量（底部副图；分时模式每根取累计量差值=该分钟增量）
-  const volOf = (k, i) => timeMode ? Math.max(0, k.vol - (i > 0 ? display[i - 1].vol : 0)) : k.vol;
+  // 成交量（底部副图）。注意 fetchStockKline/fetchSinaGlobalMin 产出的 vol 已是「每根量」
+  // （腾讯分时是累计量、解析时已差分；分钟K/日K 本身就是单根量），此处不得再次差分——
+  // 原先 timeMode 下再减前一根，会把分时量算成二次差分（多数柱被压成 0），与 canvas 路径不一致
+  const volOf = (k, i) => k.vol;
   const vols = display.map((k, i) => volOf(k, i));
   // 排除首根（开盘量常异常放大，会把其余柱压到贴地）后的最大值作为高度基准，
   // 开盘柱封顶为基准的 2 倍（用户要求「深红 ≈ 红的 2 倍」），让中间时段柱可见
   const volBase = Math.max(...vols.slice(1), 1);
   const volTop = yLegend + LEG_H + 6;
   const volH = VOL_H - 22;
-  for (let i = 0; i < dn; i++) {
-    const k = display[i];
-    const vh = Math.min(volOf(k, i), volBase * 2) / volBase * volH;
-    const col = k.close >= (i > 0 ? display[i - 1].close : k.close) ? upCol : downCol;
-    const xk = timeMode ? mapX(i) : X(i);
-    s += `<rect x="${xk - cw / 2}" y="${volTop + volH - vh}" width="${cw}" height="${vh}" fill="${col}" opacity="0.5" rx="1"/>`;
+  // 外盘商品部分品种数据源不给量（黄金/白银/原油/天然气/美铜恒为 0）→ 画占位说明
+  const noVol = !vols.some(v => Number(v) > 0);
+  if (noVol) {
+    s += `<text x="${W / 2}" y="${volTop + volH / 2}" font-family="PingFang SC,cjk" font-size="13" fill="${sub}" text-anchor="middle">该品种数据源不提供成交量</text>`;
+  } else {
+    for (let i = 0; i < dn; i++) {
+      const k = display[i];
+      const vh = Math.min(volOf(k, i), volBase * 2) / volBase * volH;
+      const col = k.close >= (i > 0 ? display[i - 1].close : k.close) ? upCol : downCol;
+      const xk = timeMode ? mapX(i) : X(i);
+      s += `<rect x="${xk - cw / 2}" y="${volTop + volH - vh}" width="${cw}" height="${vh}" fill="${col}" opacity="0.5" rx="1"/>`;
+    }
   }
   s += `<text x="${PAD}" y="${volTop + volH + 16}" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">成交量</text>`;
 
@@ -1781,27 +1882,24 @@ async function cmdStock(args) {
   const isHF = code.startsWith('hf_');
   // 美股：分钟K 数据源不支持；日/周/月/分时可用（盘后分时自动回退上个交易日）
   if (isUS && !STOCK_LONG.includes(period) && period !== 'time') {
-    return { ok: false, text: `⚠️ 美股暂不支持 ${STOCK_PERIOD_LABEL[period]} 分钟线（数据源限制）\n可用：/stock -d ${code}（日线）　/stock -w ${code}（周线）　/stock -M ${code}（月线）　/stock -t ${code}（分时）` };
+    return { ok: false, text: `⚠️ 美股暂不支持 ${STOCK_PERIOD_LABEL[period]}线（数据源限制）\n可用：/stock -d ${code}（日线）　/stock -w ${code}（周线）　/stock -M ${code}（月线）　/stock -t ${code}（分时）` };
   }
   // 港股：数据源（腾讯）无分钟K历史；日/周/月/分时可用
   const isHK = code.startsWith('hk');
   if (isHK && !STOCK_LONG.includes(period) && period !== 'time') {
-    return { ok: false, text: `⚠️ 港股暂不支持 ${STOCK_PERIOD_LABEL[period]} 分钟线（数据源限制）\n可用：/stock -d ${code.slice(2)}（日线）　/stock -w ${code.slice(2)}（周线）　/stock -M ${code.slice(2)}（月线）　/stock -t ${code.slice(2)}（分时）` };
+    return { ok: false, text: `⚠️ 港股暂不支持 ${STOCK_PERIOD_LABEL[period]}线（数据源限制）\n可用：/stock -d ${code.slice(2)}（日线）　/stock -w ${code.slice(2)}（周线）　/stock -M ${code.slice(2)}（月线）　/stock -t ${code.slice(2)}（分时）` };
   }
-  // 国际商品：仅分时 -t（新浪全球期货），无日K/分钟K
-  if (isHF && period !== 'time') {
-    if (period === 'day') {
-      const q = await fetchStockQuote(code);
-      return { ok: true, text: q ? globalQuoteText(code, q) : `⚠️ 获取 ${code} 行情失败，请稍后重试` };
-    }
-    return { ok: false, text: `⚠️ 国际商品仅支持 -t 分时图（新浪数据源限制）\n可用：/stock -t ${code}` };
+  // 国际商品：日/周/月/分时均可用（日 K 走新浪全球期货，周/月由日 K 聚合）；分钟 K 数据源不支持
+  if (isHF && !STOCK_LONG.includes(period) && period !== 'time') {
+    const q = resolvedName || code; // 回显用户输入的名字（如「黄金」）而非内部代码 hf_GC
+    return { ok: false, text: `⚠️ 国际商品暂不支持 ${STOCK_PERIOD_LABEL[period]}线（数据源限制）\n可用：/stock -d ${q}（日线）　/stock -w ${q}（周线）　/stock -M ${q}（月线）　/stock -t ${q}（分时）` };
   }
   // 全球指数（usDJI/usIXIC/usINX/hkHSI）：无K线 → 文本行情速查；例外：恒指 hkHSI 腾讯有分时 → 支持 -t 图
   if (GLOBAL_TEXT[code] && !(code === 'hkHSI' && period === 'time')) {
     const q = await fetchStockQuote(code);
     if (!q) return { ok: false, text: `⚠️ 获取 ${code} 行情失败，请稍后重试` };
     const note = period !== 'day'
-      ? `\n⚠️ ${STOCK_PERIOD_LABEL[period]}图暂不支持（腾讯对国际商品/指数无该周期数据），以上为最新行情速查`
+      ? `\n⚠️ ${STOCK_PERIOD_LABEL[period]}图暂不支持（腾讯对全球指数无该周期数据），以上为最新行情速查`
       : '';
     return { ok: true, text: globalQuoteText(code, q) + note };
   }
@@ -2177,7 +2275,13 @@ async function cmdStocks(args, ctx = {}) {
       name = (i + 1 < raw.length ? raw[++i] : '').trim(); nameFromFlag = true; continue;
     }
     if (STOCKS_PERIODS[pl]) { periods.push(STOCKS_PERIODS[pl]); continue; }
-    if (p.startsWith('-') && p.length > 1) return { ok: false, text: `⚠️ 未知参数「${p}」\n\n${STOCKS_USAGE}` };
+    // 以 - 开头的 token 一律当未知参数（组合名不允许以 - 打头）；
+    // 编辑指令下额外提示「它可能是你想写的组合名」，避免用户以为命令坏了
+    if (p.startsWith('-') && p.length > 1) {
+      const bare = p.replace(/^-+/, '');
+      const hint = (STOCKS_EDIT_MODES.includes(mode) && bare) ? `\n💡 组合名不能以 - 开头；如果「${p}」是组合名，请写成「${bare}」` : '';
+      return { ok: false, text: `⚠️ 未知参数「${p}」${hint}\n\n${STOCKS_USAGE}` };
+    }
     operands.push(p);
   }
   // 操作符互斥：-add / -update / -del / -list 一次只能用一种（避免「后写的静默覆盖前写的」）
@@ -2397,7 +2501,11 @@ async function cmdStocks(args, ctx = {}) {
   const today = `${dt.getFullYear()}-${p2(dt.getMonth() + 1)}-${p2(dt.getDate())}`;
   const hhmm = `${p2(dt.getHours())}:${p2(dt.getMinutes())}`;
   const failNote = items.filter(it => it.error).map(it => `${it.name} 取数失败`).join('；');
-  const footer = `数据来源：腾讯行情 · ${STOCKS_PERIOD_LABEL[period]} · 生成 ${today} ${hhmm}`
+  // 数据来源并非只有腾讯：国际商品走新浪全球期货 → 页脚按实际来源标注，避免误导
+  const srcs = [];
+  if (items.some(it => !it.error && it.mkt === 'hf')) srcs.push('新浪全球期货');
+  if (items.some(it => !it.error && it.mkt !== 'hf')) srcs.push('腾讯行情');
+  const footer = `数据来源：${srcs.join(' + ') || '腾讯行情'} · ${STOCKS_PERIOD_LABEL[period]} · 生成 ${today} ${hhmm}`
     + (failNote ? `　|　${failNote}` : '');
 
   const img = buildStocksPng(items, {
@@ -2790,7 +2898,7 @@ async function cmdEtfInfo(args) {
     return { ok: false, text: `⚠️ ${raw} 是港股标的，etfinfo 只查 A股场内基金持仓，不支持港股本体的持仓\n想看跟踪港股的 A股 ETF，请发其 A股代码或名称：\n/etfinfo 159920（恒生ETF）　/etfinfo 513180（恒生科技ETF华夏）\n港股行情用 /stock -t ${raw}` };
   }
   if (pre === 'us') return { ok: false, text: `⚠️ ${raw} 是美股标的，etfinfo 不支持美股\n看行情用 /stock -t ${raw.replace(/\.\w+$/, '')}` };
-  if (pre === 'hf') return { ok: false, text: `⚠️ ${q} 是国际商品，不是 ETF\n商品分时请用 /stock -t ${q}` };
+  if (pre === 'hf') return { ok: false, text: `⚠️ ${q} 是国际商品，不是 ETF\n商品行情请用：/stock -d ${q}（日线）　/stock -t ${q}（分时）` };
   // —— A股非基金（指数/股票）：先识别指数（腾讯快照 ZS 类型标识或代码段），再提示不是 ETF ——
   if (!/^5/.test(raw) && !/^1[56]/.test(raw)) {
     const qq = await fetchStockQuote(code);

@@ -273,7 +273,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 | ETF | `510300` `沪深300ETF` | 全部 | |
 | 港股 | `00700` `hk00700` | `-d` `-w` `-M` `-t` | 数据源无分钟 K，会明确提示 |
 | 美股 | `AAPL` `usAAPL` | `-d` `-w` `-M` `-t` | 数据源无分钟 K；**盘后显示上个交易日** |
-| 国际商品 | `布伦特原油` `黄金` | 仅 `-t` | 新浪全球期货源；`-d` 退化为文本行情速查 |
+| 国际商品 | `布伦特原油` `黄金` | `-d` `-w` `-M` `-t` | 新浪全球期货源（腾讯/东财都没有）；数据源无分钟 K。周/月线由日 K 本地聚合 |
 | 全球指数 | `道琼斯` `恒指` | 文本速查 | 无 K 线；例外：恒指支持 `-t` 分时图 |
 
 **示例**：
@@ -283,9 +283,17 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 /stock -5m 贵州茅台        # 5 分钟 K
 /stock -t 00700           # 腾讯控股当日分时
 /stock AAPL               # 苹果日线（默认周期）
+/stock -d 黄金             # 纽约黄金日线
+/stock -w 布伦特原油        # 布油周线
 /stock -t 布伦特原油        # 商品分时
 /stock 道琼斯              # 指数文本速查
 ```
+
+> **国际商品的数据细节**（踩过的坑）：
+> - 新浪全球期货日 K 从 2016-09 起约 2500+ 根，单次响应近 400KB → 进程内缓存 10 分钟，上游偶发失败时退回旧数据而不是报错。
+> - **日 K 的最后一根是「已收盘」那根**，快照现价属于下一交易时段（外盘近 24h 连续交易），所以图上「今日价格」的涨跌取**快照自带值**，不按 K 线相邻两根反算——否则会出现图上 `-0.97%` 与标题 `-0.03%` 自相矛盾。
+> - 快照第 3 个字段**不是**昨收（与自带涨跌额对不上，如 `hf_GC` 现价 4402.84 / 涨跌 -1.30 / 该字段 4406.00），不要拿它当基准。
+> - **成交量**：布油 / 伦铜有量，黄金 / 白银 / 原油 / 天然气 / 美铜恒为 0 → 图上画「该品种数据源不提供成交量」占位，不留空面板。
 
 ### `/stocks` 详解
 
@@ -370,7 +378,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 | 分钟 K（1/5/30/60m） | 腾讯 `proxy.finance.qq.com` mkline |
 | 当日分时 | 腾讯 minute/query、东财 `push2his` trends2 |
 | 名称 → 代码搜索 | 腾讯 `smartbox.gtimg.cn`（GBK） |
-| 国际商品分时 | 新浪 `GlobalFuturesService` |
+| 国际商品分时 / 日线 | 新浪 `GlobalFuturesService`（`getGlobalFuturesMinLine` / `getGlobalFuturesDailyKLine`） |
 | 申万行业资金流 | 腾讯 `getRank`（`hy` / `hy2`，字段 `zljlr`） |
 | 板块资金流曲线 | 东财 `clist` + `fflow`（分时/日级） |
 | 个股公告 | 东财 `np-anotice-stock` |
