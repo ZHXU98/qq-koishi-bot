@@ -1399,8 +1399,10 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
       ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '11px cjk';
       ctx.fillText('昨收 ' + fp(prevCloseRef), PAD + 29, yRef + 4);
     }
-    // 价格线颜色：以「今开」为红绿基准（现价 > 今开 = 红），而非昨收（用户要求，与行情软件"红上绿下"一致）
-    const priceCol = lastPrice >= openRef ? upC : downC;
+    // 价格线颜色：按「昨收」判断（红涨绿跌标准口径）——现价 < 昨收（负收益）必须绿色。
+    // 早期曾用「今开」作红绿基准，导致尾盘出现「现价 2904 < 昨收 2910 却仍是红线」的负收益红盘，
+    // 2026-09-11 用户纠正为按昨收。与标题右上角 chgCol 保持一致。
+    const priceCol = chg >= 0 ? upC : downC;
     if (dn > 0) {
       ctx.strokeStyle = priceCol; ctx.lineWidth = 2; ctx.beginPath();
       for (let i = 0; i < dn; i++) {
@@ -1719,8 +1721,8 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
       s += `<rect x="${PAD - 6}" y="${yRef - 10}" width="70" height="20" rx="3" fill="${sub}"/>`;
       s += `<text x="${PAD + 29}" y="${yRef + 4}" text-anchor="middle" font-family="PingFang SC,cjk" font-size="11" fill="#fff">昨收 ${fp(prevCloseRef)}</text>`;
     }
-    // 价格线颜色：以「今开」为红绿基准（现价 > 今开 = 红），而非昨收（用户要求，与行情软件一致）
-    const priceCol = lastPrice >= openRef ? upCol : downCol;
+    // 价格线颜色：按「昨收」判断（红涨绿跌，见 renderStockPngCanvas 同处注释）
+    const priceCol = chg >= 0 ? upCol : downCol;
     let dPrice = '', dAvg = '';
     for (let i = 0; i < dn; i++) {
       const px = mapX(i).toFixed(1);
@@ -2070,11 +2072,11 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-// 列数自适应：1 只→1 列；2-8 只→2 列；9-12 只→3 列；13+→4 列（每行最多 4 个）
+// 列数自适应（2026-09-11 用户调整阈值）：1 只→1 列；≤4 只→2 列；5-9 只→3 列；≥10 只→4 列
 function stocksGridCols(n) {
   if (n <= 1) return 1;
-  if (n <= 8) return 2;
-  if (n <= 12) return 3;
+  if (n <= 4) return 2;
+  if (n <= 9) return 3;
   return 4;
 }
 
@@ -2203,12 +2205,38 @@ function buildStocksPng(items, meta) {
         ctx.strokeStyle = BASE; ctx.lineWidth = 1; ctx.setLineDash([5, 5]);
         ctx.beginPath(); ctx.moveTo(chX, yb); ctx.lineTo(chX + chartW, yb); ctx.stroke();
         ctx.setLineDash([]);
+        // 昨收标签（右上角，小字号；分时才有数值）
+        if (it.prevText) {
+          const lb = '昨收 ' + it.prevText;
+          ctx.font = `${Math.max(16, F.meta - 2)}px cjk`;
+          const lw = ctx.measureText(lb).width + 8;
+          const ly = Math.max(chY, yb - 15);
+          ctx.fillStyle = 'rgba(201,206,214,0.95)';
+          ctx.fillRect(chX + chartW - lw, ly, lw, 15);
+          ctx.fillStyle = '#6b7280';
+          ctx.textAlign = 'center';
+          ctx.fillText(lb, chX + chartW - lw / 2, ly + 7.5);
+          ctx.textAlign = 'left';
+        }
       }
     }
 
     if (meta.period === 'time') {
-      // 分时：价格线（红/绿按今开）+ 均价线 + 末端圆点
-      const px = i2 => chX + (dn <= 1 ? 0 : (i2 / (dn - 1)) * chartW);
+      // 分时：价格线（红/绿按昨收）+ 均价线 + 末端圆点
+      // 横轴：A股/港股/美股按「交易分钟」映射（午休压缩，与单只 /stock 的 tmin 一致），
+      //   让「盘中进行到一半」正确停在对应位置，而不是被索引等距铺满到末尾（=误显示成已收盘）。
+      //   商品(hf)近 24h 连续、无固定交易时段，保持索引等距。2026-09-11 修复。
+      const TOT = it.mkt === 'us' ? 390 : (it.mkt === 'hk' ? 330 : 240);
+      const tmin = t => {
+        const s = String(t).replace(':', '');
+        const m = Number(s.slice(0, 2)) * 60 + Number(s.slice(2, 4));
+        if (it.mkt === 'us') return Math.min(TOT - 1, Math.max(0, m - 570));
+        if (it.mkt === 'hk') return Math.min(TOT - 1, Math.max(0, m <= 720 ? m - 570 : 150 + (m - 780)));
+        return Math.min(TOT - 1, Math.max(0, m <= 690 ? m - 571 : m - 660));
+      };
+      const px = i2 => it.mkt === 'hf'
+        ? chX + (dn <= 1 ? 0 : (i2 / (dn - 1)) * chartW)
+        : chX + (tmin(it.disp[i2].t) / TOT) * chartW;
       ctx.beginPath();
       for (let k = 0; k < dn; k++) { const x = px(k), y = Y(it.disp[k].close); k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
       ctx.strokeStyle = it.lineCol; ctx.lineWidth = 2.2; ctx.stroke();
@@ -2499,7 +2527,7 @@ async function cmdStocks(args, ctx = {}) {
 
     it.disp = disp;
     it.chgPct = chgPct;
-    it.lineCol = (period === 'time' && q && Number(q.open) > 0) ? (livePx >= Number(q.open) ? '#e0483e' : '#12a05c') : (chgPct >= 0 ? '#e0483e' : '#12a05c');
+    it.lineCol = chgPct >= 0 ? '#e0483e' : '#12a05c'; // 分时价格线红绿按昨收涨跌（与单只 /stock 一致）
     it.baseline = period === 'time' ? (prevClose > 0 ? prevClose : 0) : (first || 0);
     it.avgLine = (period === 'time' && !/^(sh000|sz399|hkHSI)/.test(it.code))
       ? buildAvgLine(disp) : null;
@@ -2509,6 +2537,7 @@ async function cmdStocks(args, ctx = {}) {
     //   已有同样的 isIndex 守卫（line ~1254/1604），这里补上保持一致。
     const codeShort = it.code.replace(/\.\w+$/, '').toUpperCase();
     it.metaLeft = showPrice ? `${codeShort} · ${fp(livePx)}` : codeShort;
+    it.prevText = (period === 'time' && prevClose > 0) ? fp(prevClose) : ''; // 分时昨收数值（图上标签用）
     if (period === 'time') {
       const hi = Math.max(...disp.map(k => k.high)), lo2 = Math.min(...disp.map(k => k.low));
       const amp = prevClose > 0 ? (hi - lo2) / prevClose * 100 : 0;
