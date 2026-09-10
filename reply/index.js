@@ -2501,7 +2501,12 @@ async function cmdStocks(args, ctx = {}) {
     it.chgPct = chgPct;
     it.lineCol = (period === 'time' && q && Number(q.open) > 0) ? (livePx >= Number(q.open) ? '#e0483e' : '#12a05c') : (chgPct >= 0 ? '#e0483e' : '#12a05c');
     it.baseline = period === 'time' ? (prevClose > 0 ? prevClose : 0) : (first || 0);
-    it.avgLine = period === 'time' ? buildAvgLine(disp) : null;
+    it.avgLine = (period === 'time' && !/^(sh000|sz399|hkHSI)/.test(it.code))
+      ? buildAvgLine(disp) : null;
+    // 注：指数（sh000xxx/sz399xxx/hkHSI）的「累计额/累计量」是全部成分股合计，
+    //   算出的均价（~2700）与指数点位（~3300）完全不在一个量级，加进 Y 轴会把
+    //   价格线压成只剩顶部一小条。单只 /stock -t 在 renderStockPngCanvas/Svg 里
+    //   已有同样的 isIndex 守卫（line ~1254/1604），这里补上保持一致。
     const codeShort = it.code.replace(/\.\w+$/, '').toUpperCase();
     it.metaLeft = showPrice ? `${codeShort} · ${fp(livePx)}` : codeShort;
     if (period === 'time') {
@@ -3594,4 +3599,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { handleEvent, routeCommand, parseMessage, loadConfig, sendReply, cmdStatus, cmdPreview, cmdStock, cmdStocks, cmdSS, cmdZj, cmdInfo, cmdHelp, extractMagnet, genHardwareStats, CONFIG, BOT_UIN };
+module.exports = { handleEvent, routeCommand, parseMessage, loadConfig, sendReply, cmdStatus, cmdPreview, cmdStock, cmdStocks, cmdSS, cmdZj, cmdInfo, cmdHelp, extractMagnet, genHardwareStats, fetchStockKline, fetchStockQuote, buildAvgLine, CONFIG, BOT_UIN };
