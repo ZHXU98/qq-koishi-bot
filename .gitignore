@@ -69,3 +69,9 @@ napcat/machine-id
 official-bot-gateway/node_modules/
 official-bot-gateway/bindings.json
 official-bot-gateway/daily-state.json
+
+# ===== 开发中间产物（2026-09-11 新增：防止再次误提交） =====
+# 图表渲染调试过程中的预览截图（排查临时用，非源码，勿提交）
+monitor/*.png
+# NapCat 登录二维码（含登录票据信息，敏感，勿提交）
+napcat/qrcode*.png
