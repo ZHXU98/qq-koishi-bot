@@ -1088,8 +1088,7 @@ function emSecid(code) {
 }
 async function fetchEmTrends(secid, isUS) {
   try {
-    const resp = await fetch(EM_TRENDS.replace('%s', secid), { headers: EM_UA, signal: AbortSignal.timeout(8000) });
-    const j = await resp.json();
+    const j = await emFetchJson(EM_TRENDS.replace('%s', secid));
     const rows = j?.data?.trends;
     if (!Array.isArray(rows) || rows.length < 2) { console.error('[fetchEmTrends] 数据为空', secid, rows ? rows.length : 'no-trends'); return null; }
     const out = [];
@@ -2585,6 +2584,32 @@ const EM_ANN = 'https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&pa
 const EM_NEWS = 'https://search-api-web.eastmoney.com/search/jsonp?cb=callback&param=%s';
 const EM_UA = { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Referer': 'https://www.eastmoney.com/' };
 
+// 东财行情节点轮换（2026-09-10 实测修）
+// 现象：push2his.eastmoney.com / push2.eastmoney.com 会对调用方出口 IP 主动 RST（UND_ERR_SOCKET / ECONNRESET）。
+// 已排除的因素：冷却 60s/90s 后不恢复（非限流）；换 UA/Referer 无效（非反爬头校验）；
+// 容器与宿主机表现一致（非容器网络）；DNS 正确且换 IP 直连同样被重置（非 DNS 污染）。
+// 结论：东财对部分调用方 IP 持续阻断主站节点，而 push2delay.eastmoney.com（延时行情节点）同接口稳定可用。
+// 注：push2delay 的 dlmkts 延时市场名单为 8/10/128，不含沪深(1/0)、美股(105/106/107)、港股(116)，对我们取数即实时数据。
+// 做法：按「上次成功节点优先」轮换，成功即记忆，避免每个请求都先撞一次墙。
+const EM_HOSTS = ['push2his.eastmoney.com', 'push2.eastmoney.com', 'push2delay.eastmoney.com'];
+let _emHost = EM_HOSTS[0];
+async function emFetchJson(url, timeout = 8000) {
+  const hosts = [_emHost, ...EM_HOSTS.filter(h => h !== _emHost)];
+  let lastErr;
+  for (const h of hosts) {
+    try {
+      const u = new URL(url); u.host = h;
+      const r = await fetch(u.href, { headers: EM_UA, signal: AbortSignal.timeout(timeout) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      if (h !== _emHost) { console.log('[em] 节点切换 ' + _emHost + ' -> ' + h); _emHost = h; }
+      return j;
+    } catch (e) { lastErr = e; }
+  }
+  console.error('[em] 全部节点失败', String(url).slice(0, 70), lastErr && lastErr.message);
+  return null;
+}
+
 // 6位代码 → { pre:'sh'|'sz'|'bj', raw, secucode:'000001.SZ' }
 function infoMarket(code) {
   let c = String(code || '').toLowerCase();
@@ -3029,8 +3054,8 @@ async function fetchEmBoards() {
   const cached = cacheGet('emboards');
   if (cached) return cached;
   try {
-    const r = await fetch(EM_BOARD_LIST, { headers: EM_UA, signal: AbortSignal.timeout(8000) });
-    const j = await r.json();
+    const j = await emFetchJson(EM_BOARD_LIST);
+    if (!j) return null;
     const list = (j.data?.diff || []).map(x => ({ code: String(x.f12), name: String(x.f14 || ''), zljlr: Number(x.f62) || 0 }));
     if (list.length < 2) return null;
     list.sort((a, b) => b.zljlr - a.zljlr);
@@ -3045,9 +3070,8 @@ async function fetchBoardFflow(code, mode) {
   const cached = cacheGet(ckey);
   if (cached) return cached;
   try {
-    const url = (mode === 't' ? EM_BOARD_FF_MIN : EM_BOARD_FF_DAY).replace('%s', code);
-    const r = await fetch(url, { headers: EM_UA, signal: AbortSignal.timeout(8000) });
-    const j = await r.json();
+    const j = await emFetchJson((mode === 't' ? EM_BOARD_FF_MIN : EM_BOARD_FF_DAY).replace('%s', code));
+    if (!j) return null;
     const kl = j.data?.klines;
     if (!Array.isArray(kl) || kl.length < 2) return null;
     let prev = 0;

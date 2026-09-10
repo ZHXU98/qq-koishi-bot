@@ -213,6 +213,7 @@ docker compose logs -f qq-reply
 - **`/stocks -add` 报「保存失败（服务端写盘异常）」**：`./reply/data` 没有正确挂载或不可写。确认 docker-compose 里 `./reply/data:/app/data`（**不能带 `:ro`**），且宿主 `reply/data/` 存在。
 - **`/stocks -add` 报「未找到 / 无行情」**：标的解析走的是 `smartbox` 搜索 + 腾讯快照，确认代码或名称正确；港美股/ETF/商品同样支持保存。
 - **`/stocks` 出图但某格是灰底「取数失败」**：该标的在该周期无数据（如港美股没有分钟 K、国际商品没有分钟 K），属预期，其余格子不受影响。
+- **美股/港股分时突然全失败（`fetch failed` / `socket hang up`）**：东财 `push2his` / `push2` 会间歇性对调用方出口 IP 直接 RST（冷却数分钟不恢复、换 UA 无效，**不是限流**）。代码已内置节点轮换（`emFetchJson`：`push2his → push2 → push2delay`，成功即记忆），日志出现 `[em] 节点切换 xxx -> push2delay.eastmoney.com` 属正常降级；`push2delay` 的延时市场名单（8/10/128）不含沪深/美股/港股，取到的仍是实时数据。三个节点全挂时才真正不可用。
 - **老 `portfolios.json` 想搬到新机器**：直接拷 `reply/data/portfolios.json`（gitignored）。格式见 `reply/data/portfolios.json.example`。
 
 ## 上游数据源
@@ -222,7 +223,7 @@ docker compose logs -f qq-reply
 | 实时快照（指数/ETF/港股/美股） | 腾讯 `qt.gtimg.cn`（GBK） |
 | 日 / 周 / 月 K（320 根，前复权） | 腾讯 `web.ifzq.gtimg.cn` fqkline |
 | 分钟 K（1/5/30/60m） | 腾讯 `proxy.finance.qq.com` mkline |
-| 当日分时 | 腾讯 minute/query、东财 `push2his` trends2 |
+| 当日分时 | 腾讯 minute/query、东财 trends2（`push2his → push2 → push2delay` 节点自动轮换） |
 | 名称 → 代码搜索 | 腾讯 `smartbox.gtimg.cn`（GBK） |
 | 国际商品分时 / 日线 | 新浪 `GlobalFuturesService`（`getGlobalFuturesMinLine` / `getGlobalFuturesDailyKLine`；周/月由日 K 本地聚合） |
 | 申万行业资金流 | 腾讯 `getRank`（`hy` / `hy2`） |
