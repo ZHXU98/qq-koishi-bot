@@ -817,7 +817,12 @@ const GLOBAL_ALIAS = {
   '沪深300': 'sh000300', '中证500': 'sh000905', '上证50': 'sh000016', '科创50': 'sh000688',
 };
 // 无K线数据 → 文本行情速查 的代码（全球指数；hf_ 商品前缀另有判断）
-const GLOBAL_TEXT = { 'usDJI': 1, 'usIXIC': 1, 'usINX': 1, 'hkHSI': 1 };
+// 2026-09-11：hkHSI 移出——实测腾讯对恒指日/周/月/分时全有数据，此前文本拦截是过时限制；
+// usDJI/usINX 日/周/月改走东财 K 线（EM_IDX_SECID），仅分时/分钟级仍文本速查；usIXIC（纳指综合）
+// 东财无对应 secid（100.IXIC/NIXIC/NASDAQ 等均无），保持全周期文本速查。
+const GLOBAL_TEXT = { 'usDJI': 1, 'usIXIC': 1, 'usINX': 1 };
+// 美股指数 → 东财 secid（日/周/月 K 线可用；分时口径与个股不同，不接）
+const EM_IDX_SECID = { 'usDJI': '100.DJIA', 'usINX': '100.SPX' };
 
 // 名称 → 代码（先查中文别名表，再走腾讯 smartbox；smartbox 支持 A股/港股/美股缩写与中文名）
 async function resolveStockCode(q) {
@@ -933,7 +938,11 @@ async function fetchStockKline(code, period) {
   };
   const isLong = STOCK_LONG.includes(period);
   let result = null;
-  if (isLong && code.startsWith('us')) {
+  if (EM_IDX_SECID[code] && isLong) {
+    // 美股指数（道指/标普500）：腾讯无 K 线，走东财 kline（日 klt=101 / 周 102 / 月 103，320 根）
+    // 2026-09-11 新增；分时不走此路（东财对指数分时的采样口径与个股不同），仍文本速查
+    result = await fetchEmKline(EM_IDX_SECID[code], { day: 101, week: 102, month: 103 }[period]);
+  } else if (isLong && code.startsWith('us')) {
     // 美股日/周/月K：接口需带交易所后缀（.OQ 纳斯达克 / .N 纽交所），无后缀输入按 .OQ → .N 依次尝试
     const cands = code.includes('.') ? [code] : [code + '.OQ', code + '.N'];
     for (const cand of cands) {
@@ -960,6 +969,18 @@ async function fetchStockKline(code, period) {
   if (!result) return null;
   cacheSet(ckey, result, 5000); // K线分钟级变化，5 秒缓存足够
   return result;
+}
+
+// 东财 K 线（美股指数专用，klt: 101 日 / 102 周 / 103 月）：与腾讯 qfq 行结构对齐
+async function fetchEmKline(secid, klt) {
+  const url = 'https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=%s&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56,f57&fqt=1&lmt=320&end=20500101&klt=' + klt;
+  const j = await emFetchJson(url.replace('%s', secid));
+  const kl = j?.data?.klines;
+  if (!Array.isArray(kl) || kl.length < 2) return null;
+  return kl.map(r => {
+    const p = String(r).split(',');
+    return { t: p[0], open: Number(p[1]), close: Number(p[2]), high: Number(p[3]), low: Number(p[4]), vol: Number(p[5]) };
+  });
 }
 
 // 新浪全球期货 1 分钟分时（腾讯/东财对 hf_ 国际商品均无分时；新浪 GlobalFuturesService 可用）
@@ -1250,7 +1271,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   })() : null;
 
   // 分时：均价/昨收
-  const isIndex = /^(sh000|sz399|hkHSI)/.test(code);
+  const isIndex = /^(sh000|sz399|hkHSI|usDJI|usINX)/.test(code);
   let avgSeries = null, prevCloseRef = 0;
   if (timeMode) {
     if (quote && Number(quote.prevClose) > 0) prevCloseRef = Number(quote.prevClose);
@@ -1602,7 +1623,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   // 分时模式：均价线 = 累计额/累计量（元/股），昨收为基准线
   // 注意：指数（sh000xxx / sz399xxx）分时数据的累计额/量是成分股合计（万亿/百亿手），
   //       算出的"均价"是无意义的垃圾值（上证实测 -200~4000，会撑爆 Y 轴），指数分时不画均价线（与行情软件一致）
-  const isIndex = /^(sh000|sz399|hkHSI)/.test(code);
+  const isIndex = /^(sh000|sz399|hkHSI|usDJI|usINX)/.test(code);
   let avgSeries = null, prevCloseRef = 0;
   if (timeMode) {
     // 昨收 = 快照 a[4]（最准），用户要求拿不到就算了不画线
@@ -1917,12 +1938,12 @@ async function cmdStock(args) {
     const q = resolvedName || code; // 回显用户输入的名字（如「黄金」）而非内部代码 hf_GC
     return { ok: false, text: `⚠️ 国际商品暂不支持 ${STOCK_PERIOD_LABEL[period]}线（数据源限制）\n可用：/stock -d ${q}（日线）　/stock -w ${q}（周线）　/stock -M ${q}（月线）　/stock -t ${q}（分时）` };
   }
-  // 全球指数（usDJI/usIXIC/usINX/hkHSI）：无K线 → 文本行情速查；例外：恒指 hkHSI 腾讯有分时 → 支持 -t 图
-  if (GLOBAL_TEXT[code] && !(code === 'hkHSI' && period === 'time')) {
+  // 全球指数：usDJI/usINX 日/周/月有东财 K 线（出图），分时/分钟级与 usIXIC 全周期 → 文本行情速查
+  if (GLOBAL_TEXT[code] && !(EM_IDX_SECID[code] && STOCK_LONG.includes(period))) {
     const q = await fetchStockQuote(code);
     if (!q) return { ok: false, text: `⚠️ 获取 ${code} 行情失败，请稍后重试` };
     const note = period !== 'day'
-      ? `\n⚠️ ${STOCK_PERIOD_LABEL[period]}图暂不支持（腾讯对全球指数无该周期数据），以上为最新行情速查`
+      ? `\n⚠️ 该指数暂不支持${STOCK_PERIOD_LABEL[period]}图，以上为最新行情速查`
       : '';
     return { ok: true, text: globalQuoteText(code, q) + note };
   }
@@ -2554,7 +2575,7 @@ async function cmdStocks(args, ctx = {}) {
     it.chgPct = chgPct;
     it.lineCol = chgPct >= 0 ? '#e0483e' : '#12a05c'; // 分时价格线红绿按昨收涨跌（与单只 /stock 一致）
     it.baseline = period === 'time' ? (prevClose > 0 ? prevClose : 0) : (first || 0);
-    it.avgLine = (period === 'time' && !/^(sh000|sz399|hkHSI)/.test(it.code))
+    it.avgLine = (period === 'time' && !/^(sh000|sz399|hkHSI|usDJI|usINX)/.test(it.code))
       ? buildAvgLine(disp) : null;
     // 注：指数（sh000xxx/sz399xxx/hkHSI）的「累计额/累计量」是全部成分股合计，
     //   算出的均价（~2700）与指数点位（~3300）完全不在一个量级，加进 Y 轴会把
