@@ -39,6 +39,10 @@ a-share-report/*.log
 # 运行配置（可含自定义欢迎语/管理员列表，勿提交；用 config.json.example 模板）
 reply/config.json
 
+# /stocks 组合数据（运行态产物，含个人持仓组合，勿提交；用 portfolios.json.example 模板）
+reply/data/portfolios.json
+reply/data/portfolios.json.tmp
+
 # ===== NapCat 掉线监控（宿主运行，非容器） =====
 # 运行态产物：状态记录、日志、二维码、远程扫码预览页（含 QQ 登录票据信息，勿提交）
 monitor/state.json

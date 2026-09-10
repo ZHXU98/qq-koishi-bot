@@ -175,6 +175,11 @@ function cmdHelp() {
     '        例：/stock -d 600519　/stock -5m 贵州茅台　/stock -t 00700　/stock AAPL',
     '        支持 A股/港股/美股/ETF；港股 -d/-t；美股 -d/-t（盘后显示上个交易日）',
     '        商品 -t 分时图：/stock -t 布伦特原油　/stock -t 黄金；指数文本速查：/stock 道琼斯　/stock 恒指',
+    '/stocks <周期> <组合名 或 股票...>   股票组合拼图（一图多看）',
+    '        周期（单选）：-t 分时 / -d 日线 / -w 周线 / -m 月线（不写默认日线）',
+    '        例：/stocks -d 我的持仓　/stocks -t 600519 000858　/stocks -w 贵州茅台 宁德时代',
+    '/stocks -add <股票...> -name <组合名>   保存组合（仅管理员）',
+    '/stocks -list   列出已保存组合　/stocks -del <组合名> 删除（仅管理员）',
     '/zj <1|2> [t|d]   行业资金流：留空=当前排行TOP10；t=分时波动曲线；d=日级流入曲线',
     '        例：/zj 2　/zj 1 t　/zj 2 d（曲线图为东财行业分类，申万无免费时序源）',
     '/info <代码或名称> [条数]   个股速查（仅A股）：行情/公司概况/公告/新闻',
@@ -850,6 +855,31 @@ function calcBOLL(closes, period = 20, k = 2) { // 返回 { mid, up, low } 三�
   return { mid, up, low };
 }
 
+// 分时均价线：优先用数据源自带的均价；否则由「累计额 / 累计量」推算。
+// 注意各板块口径不同：沪深主板/创业板/深市的累计量单位是「手」（÷100），
+// 科创板(688)/北交所等是「股」（÷1）。这里用「末值与末价的偏离度」自动择优除数，
+// 避免选错除数导致均价偏离 100 倍、把价格线压成一条直线（2026-09-11 修复）
+function buildAvgLine(disp) {
+  if (!disp || disp.length < 2) return null;
+  const withAvg = disp.filter(k => Number(k.avgPrice) > 0).length;
+  if (withAvg >= disp.length * 0.8) return disp.map(k => (Number(k.avgPrice) > 0 ? Number(k.avgPrice) : k.close));
+  const last = disp[disp.length - 1];
+  const lastAmt = Number(last.cumAmt), lastVol = Number(last.cumVol), px = Number(last.close);
+  if (!(lastAmt > 0) || !(lastVol > 0) || !(px > 0)) return null;
+  let div = 0;
+  for (const d of [100, 1]) {
+    const v = lastAmt / (lastVol * d);
+    if (v > 0 && Math.abs(v - px) / px < 0.2) { div = d; break; }
+  }
+  if (!div) return null; // 两个口径都对不上 → 宁可不画均价线，也不压扁价格线
+  return disp.map(k => {
+    const a = Number(k.avgPrice);
+    if (a > 0) return a;
+    const amt = Number(k.cumAmt), vol = Number(k.cumVol);
+    return (amt > 0 && vol > 0) ? amt / (vol * div) : k.close;
+  });
+}
+
 // 拉取 K 线/分时：period='day' 走日K（qfqday），'time' 走当日分时，否则分钟K（m1/m5/m30/m60）
 // 美股日K：接口需带交易所后缀（.OQ 纳斯达克 / .N 纽交所），无后缀输入按 .OQ → .N 依次尝试
 async function fetchStockKline(code, period) {
@@ -1126,7 +1156,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   let avgSeries = null, prevCloseRef = 0;
   if (timeMode) {
     if (quote && Number(quote.prevClose) > 0) prevCloseRef = Number(quote.prevClose);
-    if (!isIndex) avgSeries = display.map(k => (k.avgPrice > 0) ? k.avgPrice : ((k.cumAmt && k.cumVol) ? (k.cumAmt / (k.cumVol * ((isHK || isUS) ? 1 : 100))) : k.close)); // 港股/美股分时量单位是股，A股是手
+    if (!isIndex) avgSeries = buildAvgLine(display); // 均价线（除数自动择优，见 buildAvgLine）
   }
 
   // 价格范围
@@ -1455,7 +1485,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   if (timeMode) {
     // 昨收 = 快照 a[4]（最准），用户要求拿不到就算了不画线
     if (quote && Number(quote.prevClose) > 0) prevCloseRef = Number(quote.prevClose);
-    if (!isIndex) avgSeries = display.map(k => (k.avgPrice > 0) ? k.avgPrice : ((k.cumAmt && k.cumVol) ? (k.cumAmt / (k.cumVol * ((isHK || isUS) ? 1 : 100))) : k.close)); // 港股/美股分时量单位是股，A股是手
+    if (!isIndex) avgSeries = buildAvgLine(display); // 均价线（除数自动择优，见 buildAvgLine）
   }
 
   // 价格范围：高低点 + BOLL 上下轨 + 均价 + 昨收基准
@@ -1801,6 +1831,459 @@ function globalQuoteText(code, q) {
   if (q.market === 'hf') L.push(`更新 ${q.date} ${q.time}（国际商品行情）`);
   else L.push(`更新 ${String(q.time).slice(5, 16)}${q.market === 'us' ? '（美东时间）' : '（北京时间）'}`);
   return L.join('\n');
+}
+
+// ================= /stocks 股票组合拼图（2026-09-11 新增） =================
+// 用法：
+//   /stocks -add <股票...> -name <组合名>   保存/覆盖组合（仅管理员）
+//   /stocks -del <组合名>                   删除组合（仅管理员）
+//   /stocks -list                           列出已保存组合（所有人）
+//   /stocks <周期> <组合名 或 股票...>       出图（所有人）
+// 周期（单选）：-t 分时 / -d 日线 / -w 周线 / -m 月线；不写默认日线
+// 出图：1080px 竖版拼图，子图网格按数量自适应（1/2/3/4 列，每行最多 4 个）；
+//       每格为精简走势（无成交量/均线/BOLL），各自价格轴 + 区间起点虚线基准；
+//       涨红跌绿，字号按列数收缩以保证手机端可读。
+const PORTFOLIO_DIR = process.env.PORTFOLIO_DIR || path.join(__dirname, 'data');
+const PORTFOLIO_PATH = path.join(PORTFOLIO_DIR, 'portfolios.json');
+const PORTFOLIO_MAX = 20;      // 单个组合最多保存的股票数
+const STOCKS_RENDER_MAX = 16;  // 单张拼图最多渲染的股票数
+const PORTFOLIO_NAME_RE = /^[\u4e00-\u9fa5A-Za-z0-9_.\-]{1,12}$/;
+// 只保留 分时/日/周/月 四个周期（用户要求：不需要分钟/小时图）
+const STOCKS_PERIODS = { '-t': 'time', '-time': 'time', '分时': 'time', '-d': 'day', '-day': 'day', '日线': 'day', '-w': 'week', '-week': 'week', '周线': 'week', '-m': 'month', '-month': 'month', '月线': 'month' };
+const STOCKS_PERIOD_LABEL = { day: '日线', week: '周线', month: '月线', time: '分时' };
+const STOCKS_USAGE = [
+  '📋 /stocks 股票组合',
+  '出图：/stocks <周期> <组合名 或 股票...>',
+  '　　周期（单选）：-t 分时 | -d 日线 | -w 周线 | -m 月线（不写默认日线）',
+  '　　例：/stocks -d 我的持仓　/stocks -t 600519 000858　/stocks -w 贵州茅台 宁德时代',
+  '组合：/stocks -add <股票...> -name <组合名>　保存组合（仅管理员）',
+  '　　　/stocks -list　列出已保存组合',
+  '　　　/stocks -del <组合名>　删除组合（仅管理员）',
+  '　　例：/stocks -add 600519 300750 002594 -name 我的持仓',
+  `单张图最多 ${STOCKS_RENDER_MAX} 只，单个组合最多保存 ${PORTFOLIO_MAX} 只`,
+].join('\n');
+
+// 组合存储：data/portfolios.json（容器挂载 ./reply/data，可写；tmp+rename 原子替换）
+function loadPortfolios() {
+  try {
+    if (!fs.existsSync(PORTFOLIO_PATH)) return {};
+    const j = JSON.parse(fs.readFileSync(PORTFOLIO_PATH, 'utf8'));
+    return (j && typeof j === 'object' && !Array.isArray(j)) ? j : {};
+  } catch (e) { console.error('[stocks] portfolios 读取失败:', e.message); return {}; }
+}
+function savePortfolios(obj) {
+  try {
+    if (!fs.existsSync(PORTFOLIO_DIR)) fs.mkdirSync(PORTFOLIO_DIR, { recursive: true });
+    const tmp = PORTFOLIO_PATH + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf8');
+    fs.renameSync(tmp, PORTFOLIO_PATH);
+    return true;
+  } catch (e) { console.error('[stocks] portfolios 写入失败:', e.message); return false; }
+}
+
+// 并发限流 map（避免一次性打爆行情接口；结果保序）
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let idx = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const i = idx++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+// 列数自适应：1 只→1 列；2-8 只→2 列；9-12 只→3 列；13+→4 列（每行最多 4 个）
+function stocksGridCols(n) {
+  if (n <= 1) return 1;
+  if (n <= 8) return 2;
+  if (n <= 12) return 3;
+  return 4;
+}
+
+// 子图显示窗口：分时=当日交易时段（商品全量），其余=最近 60 根
+function stocksWindow(it, period) {
+  const kl = it.klines || [];
+  if (period !== 'time') return kl.slice(-60);
+  if (it.mkt === 'hf') return kl;
+  const cap = it.mkt === 'cn' ? '1500' : '1600';
+  const f = kl.filter(k => { const t = String(k.t); return t >= '0930' && t <= cap; });
+  return f.length >= 2 ? f : kl;
+}
+
+// 渲染组合拼图 → 'base64://...'
+function buildStocksPng(items, meta) {
+  const { createCanvas } = require('@napi-rs/canvas');
+  const UP = '#e0483e', DOWN = '#12a05c';
+  const BG = '#ffffff', PANEL = '#f7f8fa', LINE = '#e8eaed', GRIDL = '#f1f3f6';
+  const INK = '#2b2f36', SUB = '#8a919c', FAINT = '#a9aeb8', BASE = '#c9ced6';
+  const AVG = '#f0b90b';
+
+  const W = 1080;
+  const n = items.length;
+  const cols = stocksGridCols(n);
+  const rows = Math.ceil(n / cols);
+  const GAP = 1;
+  const base = Math.floor((W - (cols - 1)) / cols);
+  const rem = (W - (cols - 1)) - base * cols;
+  const colW = [], colX = [];
+  let acc = 0;
+  for (let i = 0; i < cols; i++) { const w = base + (i < rem ? 1 : 0); colW.push(w); colX.push(acc); acc += w + GAP; }
+
+  const HEADER_H = 132, FOOTER_H = 54;
+  const F = cols <= 1 ? { name: 36, chg: 36, meta: 23 }
+    : cols === 2 ? { name: 31, chg: 30, meta: 22 }
+      : cols === 3 ? { name: 27, chg: 26, meta: 21 }
+        : { name: 25, chg: 24, meta: 20 };
+  const PADX = cols <= 2 ? 22 : (cols === 3 ? 16 : 14);
+  const PADY = 18;
+  const TITLE_ROW = Math.round(F.name * 1.55);
+  const META_ROW = Math.round(F.meta * 1.8);
+  const chartW = base - PADX * 2;
+  const chartH = Math.round(chartW * 0.56);
+  const cellH = PADY + TITLE_ROW + chartH + META_ROW + PADY;
+  const gridH = rows * cellH + (rows - 1) * GAP;
+  const GY = HEADER_H + 1;
+  const FOY = GY + gridH;
+  const H = FOY + 1 + FOOTER_H;
+
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
+  ctx.textBaseline = 'middle';
+
+  // —— 顶部汇总栏 ——
+  ctx.fillStyle = PANEL; ctx.fillRect(0, 0, W, HEADER_H);
+  const MX = 30;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = INK; ctx.font = 'bold 36px cjk';
+  ctx.fillText(meta.title, MX, 50);
+  ctx.fillStyle = SUB; ctx.font = '23px cjk';
+  ctx.fillText(meta.sub, MX, 92);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = meta.avgCol; ctx.font = 'bold 40px cjk';
+  ctx.fillText(meta.avgTxt, W - MX, 50);
+  ctx.fillStyle = SUB; ctx.font = '23px cjk';
+  ctx.fillText(meta.statsTxt, W - MX, 92);
+
+  // —— 网格：白底 + 1px 分隔线（不满一行的空格子保持白底，不出现灰块） ——
+  ctx.fillStyle = BG; ctx.fillRect(0, GY, W, gridH);
+  ctx.fillStyle = LINE;
+  for (let c0 = 1; c0 < cols; c0++) ctx.fillRect(colX[c0] - GAP, GY, GAP, gridH);
+  for (let r = 1; r < rows; r++) ctx.fillRect(0, GY + r * (cellH + GAP) - GAP, W, GAP);
+
+  for (let i = 0; i < n; i++) {
+    const it = items[i];
+    const r = Math.floor(i / cols), c0 = i % cols;
+    const cx = colX[c0], cy = GY + r * (cellH + GAP), cwid = colW[c0];
+    if (it.error) { ctx.fillStyle = '#f4f5f7'; ctx.fillRect(cx, cy, cwid, cellH); }
+
+    if (it.error) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = FAINT; ctx.font = `${F.name}px cjk`;
+      ctx.fillText(it.name || it.code, cx + cwid / 2, cy + cellH / 2 - F.meta);
+      ctx.fillStyle = '#c2c6cd'; ctx.font = `${F.meta}px cjk`;
+      ctx.fillText(it.msg || '取数失败', cx + cwid / 2, cy + cellH / 2 + F.meta);
+      continue;
+    }
+
+    // 标题行：名称（左） + 涨跌幅（右，涨红跌绿）
+    const titleY = cy + PADY + TITLE_ROW / 2;
+    ctx.textAlign = 'left';
+    ctx.font = `bold ${F.name}px cjk`;
+    const chgTxt = `${it.chgPct >= 0 ? '+' : ''}${it.chgPct.toFixed(2)}%`;
+    const reserve = ctx.measureText(chgTxt).width + 14;
+    let nm = String(it.name || it.code);
+    while (nm.length > 1 && ctx.measureText(nm).width > cwid - PADX * 2 - reserve) nm = nm.slice(0, -1);
+    ctx.fillStyle = INK;
+    ctx.fillText(nm, cx + PADX, titleY);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = it.chgPct >= 0 ? UP : DOWN;
+    ctx.font = `bold ${F.chg}px cjk`;
+    ctx.fillText(chgTxt, cx + cwid - PADX, titleY);
+
+    // —— 迷你走势 ——
+    const chX = cx + PADX, chY = cy + PADY + TITLE_ROW, dn = it.disp.length;
+    const closes = it.disp.map(k => k.close);
+    let lo = Math.min(...it.disp.map(k => k.low)), hi = Math.max(...it.disp.map(k => k.high));
+    if (!isFinite(lo) || !isFinite(hi)) { lo = Math.min(...closes); hi = Math.max(...closes); }
+    if (it.avgLine) { lo = Math.min(lo, ...it.avgLine); hi = Math.max(hi, ...it.avgLine); }
+    if (it.baseline > 0) { lo = Math.min(lo, it.baseline); hi = Math.max(hi, it.baseline); }
+    const rng = (hi - lo) || 1;
+    const yMin = lo - rng * 0.05, yMax = hi + rng * 0.05;
+    const Y = p => chY + chartH - ((p - yMin) / (yMax - yMin)) * chartH;
+
+    // 浅网格 2 条
+    ctx.strokeStyle = GRIDL; ctx.lineWidth = 1;
+    [1 / 3, 2 / 3].forEach(f => {
+      const yy = Math.round(chY + f * chartH) + 0.5;
+      ctx.beginPath(); ctx.moveTo(chX, yy); ctx.lineTo(chX + chartW, yy); ctx.stroke();
+    });
+    // 区间起点基准虚线（分时为昨收）
+    if (it.baseline > 0) {
+      const yb = Y(it.baseline);
+      if (yb > chY - 1 && yb < chY + chartH + 1) {
+        ctx.strokeStyle = BASE; ctx.lineWidth = 1; ctx.setLineDash([5, 5]);
+        ctx.beginPath(); ctx.moveTo(chX, yb); ctx.lineTo(chX + chartW, yb); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    if (meta.period === 'time') {
+      // 分时：价格线（红/绿按今开）+ 均价线 + 末端圆点
+      const px = i2 => chX + (dn <= 1 ? 0 : (i2 / (dn - 1)) * chartW);
+      ctx.beginPath();
+      for (let k = 0; k < dn; k++) { const x = px(k), y = Y(it.disp[k].close); k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+      ctx.strokeStyle = it.lineCol; ctx.lineWidth = 2.2; ctx.stroke();
+      if (it.avgLine) {
+        ctx.beginPath();
+        for (let k = 0; k < dn; k++) { const x = px(k), y = Y(it.avgLine[k]); k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+        ctx.strokeStyle = AVG; ctx.lineWidth = 1.6; ctx.stroke();
+      }
+      ctx.fillStyle = it.lineCol;
+      ctx.beginPath(); ctx.arc(px(dn - 1), Y(it.disp[dn - 1].close), 4, 0, Math.PI * 2); ctx.fill();
+    } else {
+      // K线：蜡烛（涨红跌绿）
+      const step = chartW / dn;
+      const bw = Math.max(1.2, Math.min(9, step * 0.62));
+      for (let k = 0; k < dn; k++) {
+        const d = it.disp[k];
+        const xx = chX + (k + 0.5) * step;
+        const col = d.close >= d.open ? UP : DOWN;
+        ctx.strokeStyle = col; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(xx, Y(d.high)); ctx.lineTo(xx, Y(d.low)); ctx.stroke();
+        const yT = Y(Math.max(d.open, d.close));
+        const bh = Math.max(1, Y(Math.min(d.open, d.close)) - yT);
+        ctx.fillStyle = col; ctx.fillRect(xx - bw / 2, yT, bw, bh);
+      }
+    }
+
+    // 底部信息行：代码·现价（左） + 区间涨跌幅/振幅（右）；宽度不足时收缩左侧，避免重叠
+    const metaY = cy + PADY + TITLE_ROW + chartH + META_ROW / 2;
+    ctx.font = `${F.meta}px cjk`;
+    const availM = cwid - PADX * 2;
+    const rW = ctx.measureText(it.metaRight).width;
+    let mL = it.metaLeft;
+    while (mL.length > 2 && ctx.measureText(mL).width + rW + 12 > availM) mL = mL.slice(0, -1);
+    ctx.textAlign = 'left'; ctx.fillStyle = SUB;
+    ctx.fillText(mL, cx + PADX, metaY);
+    ctx.textAlign = 'right'; ctx.fillStyle = it.metaCol;
+    ctx.fillText(it.metaRight, cx + cwid - PADX, metaY);
+  }
+
+  // —— 底部 ——
+  ctx.fillStyle = PANEL; ctx.fillRect(0, FOY, W, 1 + FOOTER_H);
+  ctx.strokeStyle = LINE; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, FOY + 0.5); ctx.lineTo(W, FOY + 0.5); ctx.stroke();
+  ctx.textAlign = 'center'; ctx.fillStyle = FAINT; ctx.font = '21px cjk';
+  ctx.fillText(meta.footer, W / 2, FOY + 1 + FOOTER_H / 2);
+
+  return 'base64://' + canvas.toBuffer('image/png').toString('base64');
+}
+
+// 命令入口：/stocks（返回 { ok, text? } 或 { ok, img, note? }）
+async function cmdStocks(args, ctx = {}) {
+  const isAdmin = !!ctx.isAdmin;
+  const raw = (args || []).map(a => String(a).trim()).filter(Boolean);
+  if (!raw.length) return { ok: false, text: STOCKS_USAGE };
+
+  let mode = 'query', nameFromFlag = false, name = '';
+  const periods = [], operands = [];
+  for (let i = 0; i < raw.length; i++) {
+    const p = raw[i], pl = p.toLowerCase();
+    if (pl === '-add' || pl === 'add' || pl === '新增') { mode = 'add'; continue; }
+    if (pl === '-del' || pl === '-rm' || pl === '-delete' || pl === 'del' || pl === '删除') { mode = 'del'; continue; }
+    if (pl === '-list' || pl === 'list' || pl === '列表') { mode = 'list'; continue; }
+    if (pl === '-name' || pl === 'name' || pl === '名称') {
+      const buf = [];
+      while (i + 1 < raw.length && !raw[i + 1].startsWith('-')) buf.push(raw[++i]);
+      name = buf.join('').trim(); nameFromFlag = true; continue;
+    }
+    if (STOCKS_PERIODS[pl]) { periods.push(STOCKS_PERIODS[pl]); continue; }
+    if (p.startsWith('-') && p.length > 1) return { ok: false, text: `⚠️ 未知参数「${p}」\n\n${STOCKS_USAGE}` };
+    operands.push(p);
+  }
+
+  // —— 列出组合（所有人） ——
+  if (mode === 'list') {
+    const pf = loadPortfolios(), keys = Object.keys(pf);
+    if (!keys.length) return { ok: false, text: `📋 还没有保存任何组合\n\n${STOCKS_USAGE}` };
+    const L = [`📋 已保存的组合（${keys.length} 个）`];
+    keys.sort().forEach(k => {
+      const st = (pf[k] && Array.isArray(pf[k].stocks)) ? pf[k].stocks : [];
+      const shown = st.slice(0, 10).map(s => s.name || s.code).join('、');
+      L.push('');
+      L.push(`【${k}】${st.length} 只　更新 ${pf[k].updated || pf[k].created || '-'}`);
+      L.push(`　${shown}${st.length > 10 ? ` 等 ${st.length} 只` : ''}`);
+      L.push(`　→ /stocks -d ${k}`);
+    });
+    return { ok: true, text: L.join('\n') };
+  }
+
+  // —— 保存组合（仅管理员） ——
+  if (mode === 'add') {
+    if (!isAdmin) return { ok: false, text: '🛡️ 保存组合仅限管理员' };
+    if (!nameFromFlag || !name) return { ok: false, text: `⚠️ 缺少组合名，请用 -name <组合名>\n\n${STOCKS_USAGE}` };
+    if (!PORTFOLIO_NAME_RE.test(name)) return { ok: false, text: '⚠️ 组合名仅支持中英文/数字/下划线/短横线/点，长度 1-12' };
+    if (!operands.length) return { ok: false, text: '⚠️ 未指定股票，例：/stocks -add 600519 300750 -name 我的持仓' };
+    if (operands.length > PORTFOLIO_MAX) return { ok: false, text: `⚠️ 单个组合最多 ${PORTFOLIO_MAX} 只（当前 ${operands.length} 只）` };
+    const resolved = await mapLimit(operands, 4, async q => {
+      let code = normalizeCode(q);
+      if (!code) code = await resolveStockCode(q);
+      if (!code) return { q, err: '未找到' };
+      const qt = await fetchStockQuote(code);
+      if (!qt || !(Number(qt.price) > 0)) return { q, err: '无行情' };
+      return { code, name: qt.name || q };
+    });
+    const okList = [], bad = [], seen = new Set();
+    for (const r of resolved) {
+      if (r.err) { bad.push(`${r.q}（${r.err}）`); continue; }
+      if (seen.has(r.code)) continue;
+      seen.add(r.code); okList.push({ code: r.code, name: r.name });
+    }
+    if (!okList.length) return { ok: false, text: `⚠️ 没有解析出有效股票${bad.length ? `\n${bad.join('、')}` : ''}` };
+    const pf = loadPortfolios();
+    const existed = !!pf[name];
+    pf[name] = {
+      owner: String(ctx.uid || ''), created: existed ? (pf[name].created || nowText()) : nowText(),
+      updated: nowText(), stocks: okList,
+    };
+    if (!savePortfolios(pf)) return { ok: false, text: '⚠️ 组合保存失败（服务端写盘异常），请查看容器日志' };
+    const L = [`${existed ? '♻️ 已覆盖组合' : '✅ 已保存组合'}【${name}】${okList.length} 只`,
+      `　${okList.map(s => s.name).join('、')}`];
+    if (bad.length) L.push(`⚠️ 已跳过：${bad.join('、')}`);
+    L.push(`→ /stocks -d ${name}`);
+    return { ok: true, text: L.join('\n') };
+  }
+
+  // —— 删除组合（仅管理员） ——
+  if (mode === 'del') {
+    if (!isAdmin) return { ok: false, text: '🛡️ 删除组合仅限管理员' };
+    const target = name || operands.join('');
+    if (!target) return { ok: false, text: `⚠️ 请指定要删除的组合名，例：/stocks -del 我的持仓` };
+    const pf = loadPortfolios();
+    if (!pf[target]) {
+      const keys = Object.keys(pf);
+      return { ok: false, text: `⚠️ 没有找到组合【${target}】${keys.length ? `\n现有组合：${keys.join('、')}` : ''}` };
+    }
+    delete pf[target];
+    if (!savePortfolios(pf)) return { ok: false, text: '⚠️ 删除失败（服务端写盘异常）' };
+    return { ok: true, text: `🗑️ 已删除组合【${target}】` };
+  }
+
+  // —— 出图 ——
+  const uniq = [...new Set(periods)];
+  if (uniq.length > 1) return { ok: false, text: '⚠️ 周期只能指定一个（-t 分时 / -d 日线 / -w 周线 / -m 月线）' };
+  const period = uniq[0] || 'day';
+  if (!operands.length) return { ok: false, text: STOCKS_USAGE };
+
+  const pf = loadPortfolios();
+  const notes = [];
+  let title = '自选股', targets = [];
+  if (operands.length === 1 && pf[operands[0]]) {
+    const st = Array.isArray(pf[operands[0]].stocks) ? pf[operands[0]].stocks : [];
+    if (!st.length) return { ok: false, text: `⚠️ 组合【${operands[0]}】是空的，请重新用 -add 保存` };
+    targets = st.slice(0, STOCKS_RENDER_MAX).map(s => ({ code: s.code, hint: s.name }));
+    title = operands[0];
+    if (st.length > targets.length) notes.push(`组合共 ${st.length} 只，仅显示前 ${targets.length} 只`);
+  } else {
+    const qs = operands.slice(0, STOCKS_RENDER_MAX);
+    if (operands.length > qs.length) notes.push(`最多显示 ${STOCKS_RENDER_MAX} 只，已取前 ${qs.length} 只`);
+    targets = qs.map(q => ({ q }));
+  }
+
+  const resolved = await mapLimit(targets, 4, async t => {
+    if (t.code) return { code: t.code, hint: t.hint };
+    let code = normalizeCode(t.q);
+    if (!code) code = await resolveStockCode(t.q);
+    return code ? { code, hint: t.q } : { code: '', hint: t.q, err: `未找到「${t.q}」` };
+  });
+
+  const items = await mapLimit(resolved, 4, async t => {
+    if (!t.code) return { error: true, code: t.hint, name: t.hint, msg: '未找到该标的' };
+    const mkt = t.code.startsWith('us') ? 'us' : t.code.startsWith('hk') ? 'hk' : t.code.startsWith('hf_') ? 'hf' : 'cn';
+    const [kl, qt] = await Promise.all([fetchStockKline(t.code, period), fetchStockQuote(t.code)]);
+    const label = (qt && qt.name) || t.hint || t.code;
+    if (!kl || !kl.length) return { error: true, code: t.code, name: label, msg: '取数失败', mkt };
+    return { code: t.code, name: label, klines: kl, quote: qt, mkt };
+  });
+
+  const valid = items.filter(it => !it.error);
+  if (!valid.length) {
+    return { ok: false, text: `⚠️ ${STOCKS_PERIOD_LABEL[period]}数据获取失败\n${items.map(it => `${it.name}：${it.msg}`).join('\n')}` };
+  }
+  if (items.length === 1 && valid.length === 1) title = valid[0].name; // 单只标的：标题直接用股票名
+
+  // 逐项派生出图所需字段
+  const cols = stocksGridCols(items.length);
+  const baseW = Math.floor((1080 - (cols - 1)) / cols); // 与 buildStocksPng 的列宽算法一致
+  // 实测字宽（1080px 画布）：1列可用 1036 / 2列 495 / 3列 327 / 4列 241
+  //   「代码 · 现价 + 区间 xxx%」需 ~400px → 仅 1/2 列放得下
+  //   「代码 + 区间 xxx%」需 ~267px → 3 列可；4 列只能「代码 + xxx%」
+  const showPrice = baseW >= 480;
+  const showPrefix = baseW >= 300;
+  let up = 0, down = 0, sum = 0, cnt = 0;
+  for (const it of items) {
+    if (it.error) continue;
+    const disp = stocksWindow(it, period);
+    const cl = disp.map(k => k.close);
+    const last = cl[cl.length - 1], first = cl[0];
+    const q = it.quote;
+    const livePx = (q && Number(q.price) > 0) ? Number(q.price) : last;
+    const prevClose = (q && Number(q.prevClose) > 0) ? Number(q.prevClose)
+      : (period === 'time' ? first : (it.klines[it.klines.length - 2]?.close ?? first));
+    const chgPct = (q && isFinite(q.chgPct) && q.chgPct !== 0) ? Number(q.chgPct)
+      : (prevClose > 0 ? (livePx - prevClose) / prevClose * 100 : 0);
+
+    // 价格精度：现价三位小数（ETF/部分品种）则保留 3 位
+    let prec = 2;
+    const sv = String(livePx), dot = sv.indexOf('.');
+    if (dot > 0 && sv.slice(dot + 1).replace(/0+$/, '').length > 2) prec = 3;
+    const fp = v => isFinite(v) ? Number(v).toFixed(prec) : '-';
+
+    it.disp = disp;
+    it.chgPct = chgPct;
+    it.lineCol = (period === 'time' && q && Number(q.open) > 0) ? (livePx >= Number(q.open) ? '#e0483e' : '#12a05c') : (chgPct >= 0 ? '#e0483e' : '#12a05c');
+    it.baseline = period === 'time' ? (prevClose > 0 ? prevClose : 0) : (first || 0);
+    it.avgLine = period === 'time' ? buildAvgLine(disp) : null;
+    const codeShort = it.code.replace(/\.\w+$/, '').toUpperCase();
+    it.metaLeft = showPrice ? `${codeShort} · ${fp(livePx)}` : codeShort;
+    if (period === 'time') {
+      const hi = Math.max(...disp.map(k => k.high)), lo2 = Math.min(...disp.map(k => k.low));
+      const amp = prevClose > 0 ? (hi - lo2) / prevClose * 100 : 0;
+      it.metaRight = `${showPrefix ? '振幅 ' : ''}${amp.toFixed(2)}%`;
+      it.metaCol = '#8a919c';
+    } else {
+      const rp = (first > 0) ? (last - first) / first * 100 : 0;
+      it.metaRight = `${showPrefix ? '区间 ' : ''}${rp >= 0 ? '+' : ''}${rp.toFixed(2)}%`;
+      it.metaCol = rp >= 0 ? '#e0483e' : '#12a05c';
+    }
+    if (Number.isFinite(chgPct)) { sum += chgPct; cnt++; chgPct >= 0 ? up++ : down++; }
+  }
+
+  const avg = cnt ? sum / cnt : 0;
+  const dt = new Date();
+  const p2 = x => String(x).padStart(2, '0');
+  const today = `${dt.getFullYear()}-${p2(dt.getMonth() + 1)}-${p2(dt.getDate())}`;
+  const hhmm = `${p2(dt.getHours())}:${p2(dt.getMinutes())}`;
+  const failNote = items.filter(it => it.error).map(it => `${it.name} 取数失败`).join('；');
+  const footer = `数据来源：腾讯行情 · ${STOCKS_PERIOD_LABEL[period]} · 生成 ${today} ${hhmm}`
+    + (failNote ? `　|　${failNote}` : '');
+
+  const img = buildStocksPng(items, {
+    period, title,
+    sub: `${STOCKS_PERIOD_LABEL[period]} · ${today} ${hhmm}`,
+    avgTxt: `${avg >= 0 ? '+' : ''}${avg.toFixed(2)}%`,
+    avgCol: avg >= 0 ? '#e0483e' : '#12a05c',
+    statsTxt: `${valid.length} 只 · ${up} 涨 ${down} 跌`,
+    footer,
+  });
+  const failCnt = items.length - valid.length;
+  if (failCnt > 0) notes.push(`⚠️ ${failCnt} 只数据获取失败：${items.filter(it => it.error).map(it => it.name).join('、')}`);
+  return { ok: true, img, note: notes.filter(Boolean).join('\n') };
 }
 
 // ---------- /info 个股信息速查（公司概况+行情+公告+新闻，2026-09-01 新增） ----------
@@ -2657,6 +3140,7 @@ function routeCommand(text) {
     case '快讯': case 'news': case '资讯': return { name: 'news', type: 'news' };
     case 'ss': case '指数': return { name: 'ss', type: 'ss' };
     case 'stock': case '股票': case 'K线': return { name: 'stock', type: 'stock', args: parts };
+    case 'stocks': case '组合': case '自选': return { name: 'stocks', type: 'stocks', args: parts };
     case 'zj': case '资金': return { name: 'zj', type: 'zj', args: parts };
     case 'info': case '个股': case '资料': return { name: 'info', type: 'info', args: parts };
     case 'etfinfo': case 'etf': case '基金持仓': return { name: 'etfinfo', type: 'etfinfo', args: parts };
@@ -2758,6 +3242,14 @@ async function handleEvent(ev) {
     } else {
       await sendReply(ev, r.text || '⚠️ 图表生成失败');
     }
+  } else if (cmd.type === 'stocks') {
+    const r = await cmdStocks(cmd.args, { isAdmin, uid });
+    if (r.ok && r.img) {
+      await sendReply(ev, '', [r.img]); // 只发图，信息都在图上
+      if (r.note) await sendReply(ev, r.note); // 截断/失败等提示另发一条
+    } else {
+      await sendReply(ev, r.text || '⚠️ 生成失败');
+    }
   } else if (cmd.type === 'zj') {
     const r = await cmdZj(cmd.args);
     if (r.ok && r.img) {
@@ -2843,4 +3335,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { handleEvent, routeCommand, parseMessage, loadConfig, sendReply, cmdStatus, cmdPreview, cmdStock, cmdSS, cmdZj, cmdInfo, cmdHelp, extractMagnet, genHardwareStats, CONFIG, BOT_UIN };
+module.exports = { handleEvent, routeCommand, parseMessage, loadConfig, sendReply, cmdStatus, cmdPreview, cmdStock, cmdStocks, cmdSS, cmdZj, cmdInfo, cmdHelp, extractMagnet, genHardwareStats, CONFIG, BOT_UIN };

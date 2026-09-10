@@ -30,10 +30,11 @@ QQ 用户 ──@ / 指令──▶ 官方 QQ 开放平台 ──▶ official-bo
 ```
 
 - **零依赖**：Node ≥ 21 内置全局 `WebSocket`（事件通道）与 `fetch`（HTTP 回复），无需 `npm install`。
-- **唯一外部库**：`@resvg/resvg-js`，从 `ths-news-modules` 卷**只读共享**（渲染 `/ss` `/stock` `/zj` 图表用）。
+- **渲染库**：`@napi-rs/canvas`（主，Canvas 2D，进程级字体缓存 ~50ms）+ `@resvg/resvg-js`（兜底），均从 `ths-news-modules` 卷**只读共享**（渲染 `/ss` `/stock` `/stocks` `/zj` 图表用）。
 - **断线自愈**：WS 断开后每 5 秒自动重连。
 - **发送重试**：`send_*` 端点 5 次 × 5s，抵御网关间歇超时。
 - **配置热加载**：`config.json` 每次收到消息时重新读盘。
+- **可写挂载**：仅 `./reply/data`（`/stocks` 组合数据）；`index.js` / `config.json` 仍是只读挂载。
 
 ## 快速开始
 
@@ -42,6 +43,9 @@ QQ 用户 ──@ / 指令──▶ 官方 QQ 开放平台 ──▶ official-bo
 ```bash
 # 1. 生成配置文件（可选，默认值即可直接用）
 cp reply/config.json.example reply/config.json
+
+# 1b. 初始化组合数据（/stocks 用；目录不存在时 Docker 会误建成目录，务必先建文件）
+mkdir -p reply/data && echo '{}' > reply/data/portfolios.json
 
 # 2. 启动
 docker compose up -d qq-reply
@@ -60,7 +64,39 @@ docker compose logs -f qq-reply
 |------|------|------|
 | `/ss` | `/指数` | 指数行情图：上证 / 沪深300 / 全市场成交额 / 申万二级资金流 |
 | `/stock <周期> <代码或名称>` | `/股票` `/K线` | K线图 / 分时图 / 文本速查。周期 `-d -w -M -1m -5m -30m -1h -t`；支持 A股/港股/美股/ETF/国际商品/全球指数 |
+| `/stocks <周期> <组合名 或 股票...>` | `/组合` `/自选` | **股票组合拼图**：一张图并列多看，最多 16 只。周期仅 `-t 分时 / -d 日线 / -w 周线 / -m 月线`（单选，默认日线） |
 | `/zj <1\|2> [t\|d]` | `/资金` | 申万行业资金流：留空=当前排行 TOP10；`t`=分时波动曲线；`d`=日级流入曲线 |
+
+### 🗂️ 股票组合（/stocks）
+
+保存常用组合，之后一条指令出图，适合盯一篮子票。
+
+| 用法 | 权限 | 说明 |
+|------|------|------|
+| `/stocks -add <股票...> -name <组合名>` | **严格管理员** | 保存 / 覆盖组合，最多 20 只。例：`/stocks -add 600519 300750 002594 -name 我的持仓` |
+| `/stocks -del <组合名>` | **严格管理员** | 删除组合 |
+| `/stocks -list` | 所有人 | 列出已保存组合（只显示自己的组合名与成分股） |
+| `/stocks <周期> <组合名 或 股票...>` | 所有人 | 出图。给组合名 → 展开成分股；直接给股票 → 按输入顺序出图 |
+
+> `-add` / `-del` 是**严格管理员**（`config.json` 的 `admins`），不受 `groupRestrictedCmds` 影响——普通成员即使能调 `stocks`，写操作仍会被拒。
+>
+> **组合名优先级高于股票名**：若参数只有一个且命中已保存组合名，一律按组合展开（如组合名叫「白酒」，`/stocks -d 白酒` 走组合，不会去搜同名的股票）。
+
+**出图规格**（针对手机截图阅读优化）：
+
+| 项 | 做法 |
+|---|---|
+| 画布 | 1080px 宽竖版长图，单张 PNG 直出（QQ 对 >1080px 会二次压缩） |
+| 列数 | 按数量自适应：1 只 → 1 列；2–8 只 → 2 列；9–12 只 → 3 列；13–16 只 → 4 列（**每行最多 4 个**） |
+| 子图 | 精简版走势，**无成交量 / 均线 / BOLL**；K 线为蜡烛，分时为价格线 + 黄色均价线 |
+| 纵轴 | **各自价格轴**（自适应各自价格区间），配一条灰色虚线做基准：K 线 = 区间起点收盘价，分时 = 昨收 |
+| 配色 | 涨红跌绿（`#e0483e` / `#12a05c`），与 `/stock` 一致 |
+| 顶部汇总栏 | 组合名 + 周期/时间（左）；平均涨跌幅 + `N 只 · M 涨 K 跌`（右） |
+| 每格信息 | 名称 + 涨跌幅（大字号）；底部 `代码 · 现价` + `区间涨跌幅`（分时为 `振幅`） |
+| 窄格降级 | 3 列去掉「现价」只留代码；4 列再去掉「区间 / 振幅」前缀（按实测字宽自动决策，避免重叠） |
+| 容错 | 单只取数失败 → 该格显示灰底「取数失败」，**其余正常出图**；图下文字标注失败标的，并另发一条提示 |
+| 截断 | 超过 16 只只取前 16 只，并另发一条提示说明 |
+
 
 ### 📊 个股与基金
 
@@ -115,14 +151,14 @@ docker compose logs -f qq-reply
 | `privateWhitelist` | `[]` | 私聊白名单（名单外账号私聊一律拒绝；空数组 = 不限制） |
 | `groupWhitelist` | `[]` | 群白名单（非空 = 仅响应列表内群；空数组 = 不限制） |
 | `groupAdminOnly` | `false` | 群聊仅管理员可触发（非管理员消息一律不响应） |
-| `groupRestrictedCmds` | `[]` | 群聊非管理员可用指令名白名单（如 `["ping","status"]`；空数组 = 不限制） |
+| `groupRestrictedCmds` | `[]` | 群聊非管理员可用指令名白名单（如 `["ping","status","stocks"]`；空数组 = 不限制）。**注意**：`stocks` 放行只代表可用查询 / `-list`，`-add` / `-del` 是代码内独立校验的严格管理员操作 |
 | `groupImages` | `false` | 群聊预览是否带图。**腾讯对群聊批量图片有安全审核**（批量图连发会被静默拦截、sendMsg 超时），默认 `false` = 群聊只发文本预览，图片自动**私聊补发**给触发者；`true` = 群聊直接带图 |
 | `restrictedMsg` | 见文件 | 群聊非管理员使用受限指令时的提示 |
 | `deniedMsg` | 见文件 | 私聊非白名单账号的拒绝提示；置 `""` 则完全忽略不回复 |
 | `unknownMsg` | 见文件 | 未识别指令的提示 |
 | `welcome` | 见文件 | 非指令消息的引导语；置 `""` 则不回复 |
 
-> 指令名取 `routeCommand()` 返回的 `name`（不含 `/`）：`help` / `ping` / `status` / `echo` / `preview` / `news` / `ss` / `stock` / `zj` / `info` / `etfinfo`。别名（如 `/存活`、`/K线`）映射到同名 `name`，权限判断按 `name` 生效。
+> 指令名取 `routeCommand()` 返回的 `name`（不含 `/`）：`help` / `ping` / `status` / `echo` / `preview` / `news` / `ss` / `stock` / `stocks` / `zj` / `info` / `etfinfo`。别名（如 `/存活`、`/K线`、`/组合`）映射到同名 `name`，权限判断按 `name` 生效。
 
 ## 排障
 
@@ -133,6 +169,10 @@ docker compose logs -f qq-reply
 - **群聊指令被拒**：普通成员仅可用 `groupRestrictedCmds` 内指令，属预期；如需放行，将该指令名加入 `groupRestrictedCmds`，或把账号加入 `admins`。
 - **群聊收不到图**：`groupImages: false` 时群聊只发文本、图片自动私聊补发给触发者，属预期。
 - **图表「没字」**：容器内缺 `/app/fonts/cjk_sub.ttf`。在宿主执行 `bash ths-news/setup_fonts.sh` 补齐，bind mount 实时生效、无需重启。
+- **`/stocks -add` 报「保存失败（服务端写盘异常）」**：`./reply/data` 没有正确挂载或不可写。确认 docker-compose 里 `./reply/data:/app/data`（**不能带 `:ro`**），且宿主 `reply/data/` 存在。
+- **`/stocks -add` 报「未找到 / 无行情」**：标的解析走的是 `smartbox` 搜索 + 腾讯快照，确认代码或名称正确；港美股/ETF/商品同样支持保存。
+- **`/stocks` 出图但某格是灰底「取数失败」**：该标的在该周期无数据（如国际商品只有分时、港美股没有分钟 K），属预期，其余格子不受影响。
+- **老 `portfolios.json` 想搬到新机器**：直接拷 `reply/data/portfolios.json`（gitignored）。格式见 `reply/data/portfolios.json.example`。
 
 ## 上游数据源
 
@@ -150,3 +190,7 @@ docker compose logs -f qq-reply
 | 基金资料 / 前十持仓 | 东财 `fundmobapi` + `fundf10` jjcc |
 | 重要快讯 | 同花顺 7×24 官方接口 |
 | 磁力预览 | WhatsLink 公开 API |
+
+## 已知修复
+
+- **2026-09-11 · 分时均价线口径（科创板/北交所）**：腾讯 `minute/query` 的累计成交量单位并不统一——沪深主板 / 创业板 / 深市是**手**，科创板（688）/ 北交所等是**股**。原实现写死 `累计额 ÷ (累计量 × 100)`，导致科创板个股均价被缩小 100 倍（如 `688981` 算出均价 1.20 元、实际 119 元），Y 轴被拉到 `-3.58 ~ 125.28`，**价格线被压成一条直线**。现改为由 `buildAvgLine()` 用「末值与末价的偏离度」在 `÷100` / `÷1` 两档中自动择优；两档都对不上时宁可不画均价线，也不压扁价格线。影响 `/stock -t` 与 `/stocks -t` 两条渲染路径（canvas 与 SVG 兜底）。

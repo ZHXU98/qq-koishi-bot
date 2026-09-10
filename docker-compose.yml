@@ -75,6 +75,8 @@ services:
       - ./reply/index.js:/app/index.js:ro
       - ./reply/package.json:/app/package.json:ro
       - ./reply/config.json:/app/config.json:ro
+      # 2026-09-11：/stocks 组合数据（可写，非只读；容器内 /app/data/portfolios.json）
+      - ./reply/data:/app/data
       # 2026-08-31：共享 ths-news 的 @resvg/resvg-js 渲染库与中文字体（/stock 图表用，只读）
       - ths-news-modules:/app/node_modules:ro
       - ./ths-news/fonts:/app/fonts:ro
