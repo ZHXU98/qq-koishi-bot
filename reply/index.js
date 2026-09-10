@@ -2197,26 +2197,14 @@ function buildStocksPng(items, meta) {
       const yy = Math.round(chY + f * chartH) + 0.5;
       ctx.beginPath(); ctx.moveTo(chX, yy); ctx.lineTo(chX + chartW, yy); ctx.stroke();
     });
-    // 区间起点基准虚线（分时为昨收）
+    // 区间起点基准虚线（分时为昨收）。标签不在这里画——曲线后画会盖住标签，
+    // 挪到下方 time 分支末尾（价格线画完后）做冲突避让。
     if (it.baseline > 0) {
       const yb = Y(it.baseline);
       if (yb > chY - 1 && yb < chY + chartH + 1) {
         ctx.strokeStyle = BASE; ctx.lineWidth = 1; ctx.setLineDash([5, 5]);
         ctx.beginPath(); ctx.moveTo(chX, yb); ctx.lineTo(chX + chartW, yb); ctx.stroke();
         ctx.setLineDash([]);
-        // 昨收标签（右上角，小字号；分时才有数值）
-        if (it.prevText) {
-          const lb = '昨收 ' + it.prevText;
-          ctx.font = `${Math.max(16, F.meta - 2)}px cjk`;
-          const lw = ctx.measureText(lb).width + 8;
-          const ly = Math.max(chY, yb - 15);
-          ctx.fillStyle = 'rgba(201,206,214,0.95)';
-          ctx.fillRect(chX + chartW - lw, ly, lw, 15);
-          ctx.fillStyle = '#6b7280';
-          ctx.textAlign = 'center';
-          ctx.fillText(lb, chX + chartW - lw / 2, ly + 7.5);
-          ctx.textAlign = 'left';
-        }
       }
     }
 
@@ -2246,6 +2234,38 @@ function buildStocksPng(items, meta) {
       }
       ctx.fillStyle = it.lineCol;
       ctx.beginPath(); ctx.arc(px(dn - 1), Y(it.disp[dn - 1].close), 4, 0, Math.PI * 2); ctx.fill();
+
+      // 昨收标签（右上角，虚线上方）：在价格线之后绘制，并按曲线实际 y 做上下避让——
+      // 默认贴虚线上方；右上区域被曲线穿过则移到虚线下方；上下都撞则取离曲线更远的一侧。
+      // 2026-09-11：固定位置时「高开回落/高开的票」曲线必穿标签（英伟达/微软/纽约金实测）。
+      if (it.prevText && it.baseline > 0) {
+        const yb = Y(it.baseline);
+        if (yb > chY - 1 && yb < chY + chartH + 1) {
+          const lb = '昨收 ' + it.prevText;
+          ctx.font = `${Math.max(16, F.meta - 2)}px cjk`;
+          const lw = ctx.measureText(lb).width + 8;
+          const lyUp = Math.max(chY, yb - 15);
+          const lyDn = Math.min(chY + chartH - 15, yb + 1);
+          const x0 = chX + chartW - lw; // 标签左缘
+          let hitUp = false, hitDn = false, dUp = Infinity, dDn = Infinity;
+          for (let k = 0; k < dn; k++) {
+            const sx = px(k);
+            if (sx < x0 - 3) continue; // 只看标签横向范围内的曲线段
+            const sy = Y(it.disp[k].close);
+            if (sy >= lyUp - 3 && sy <= lyUp + 18) hitUp = true;
+            if (sy >= lyDn - 3 && sy <= lyDn + 18) hitDn = true;
+            dUp = Math.min(dUp, Math.abs(sy - (lyUp + 7.5)));
+            dDn = Math.min(dDn, Math.abs(sy - (lyDn + 7.5)));
+          }
+          const ly = !hitUp ? lyUp : (!hitDn ? lyDn : (dUp >= dDn ? lyUp : lyDn));
+          ctx.fillStyle = 'rgba(201,206,214,0.92)';
+          ctx.fillRect(chX + chartW - lw, ly, lw, 15);
+          ctx.fillStyle = '#6b7280';
+          ctx.textAlign = 'center';
+          ctx.fillText(lb, chX + chartW - lw / 2, ly + 7.5);
+          ctx.textAlign = 'left';
+        }
+      }
     } else {
       // K线：蜡烛（涨红跌绿）
       const step = chartW / dn;
