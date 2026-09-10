@@ -784,7 +784,7 @@ function normalizeCode(raw) {
   if (/^(sh|sz|bj)/.test(c)) return c;
   if (/^hk/.test(c)) return 'hk' + c.slice(2).toUpperCase(); // hk00700 / hkhsi→hkHSI
   if (/^us[a-z0-9.]{1,10}$/.test(c)) return 'us' + c.slice(2).toUpperCase(); // usaapl→usAAPL、usAAPL.OQ→usAAPL.OQ
-  if (/^hf_[a-z0-9]{1,6}$/.test(c)) return c.toUpperCase(); // hf_oil→hf_OIL
+  if (/^hf_[a-z0-9]{1,6}$/.test(c)) return 'hf_' + c.slice(3).toUpperCase(); // hf_oil→hf_OIL（前缀保持小写，系统其余处均按小写 hf_ 判断）
   if (/^\d{6}$/.test(c)) {
     if (/^[56]/.test(c)) return 'sh' + c; // 60xxxx 沪A / 51xxxx 沪ETF
     return 'sz' + c;                       // 00/30 深A、15xxxx 深ETF
@@ -801,6 +801,11 @@ const GLOBAL_ALIAS = {
   '白银': 'hf_SI', '纽约白银': 'hf_SI', '伦敦银': 'hf_SI',
   '天然气': 'hf_NG', '美国天然气': 'hf_NG',
   '美铜': 'hf_HG', '伦铜': 'hf_CAD',
+  '大豆': 'hf_S', '美豆': 'hf_S', '黄豆': 'hf_S', '美国大豆': 'hf_S',
+  '豆粕': 'hf_SM', '豆粉': 'hf_SM', '美黄豆粉': 'hf_SM',
+  '豆油': 'hf_BO', '美黄豆油': 'hf_BO',
+  '玉米': 'hf_C', '美玉米': 'hf_C', '美国玉米': 'hf_C',
+  '小麦': 'hf_W', '美小麦': 'hf_W', '美国小麦': 'hf_W',
   '费城半导体': 'usSOXX.OQ', '费半': 'usSOXX.OQ', '费城半导体指数': 'usSOXX.OQ',
   '道琼斯': 'usDJI', '道指': 'usDJI', '道琼斯指数': 'usDJI',
   '纳斯达克': 'usIXIC', '纳指': 'usIXIC', '纳斯达克指数': 'usIXIC',
@@ -959,7 +964,9 @@ async function fetchStockKline(code, period) {
 
 // 新浪全球期货 1 分钟分时（腾讯/东财对 hf_ 国际商品均无分时；新浪 GlobalFuturesService 可用）
 // symbol：OIL布油 GC美黄金 SI美白银 CL WTI NG天然气 HG美铜 CAD伦铜
-const HF_SINA_SYM = { 'hf_OIL': 'OIL', 'hf_GC': 'GC', 'hf_SI': 'SI', 'hf_CL': 'CL', 'hf_NG': 'NG', 'hf_HG': 'HG', 'hf_CAD': 'CAD' };
+//         S美大豆 SM美豆粕(豆粉) BO美豆油 C美玉米 W美小麦（2026-09-11 扩展）
+const HF_SINA_SYM = { 'hf_OIL': 'OIL', 'hf_GC': 'GC', 'hf_SI': 'SI', 'hf_CL': 'CL', 'hf_NG': 'NG', 'hf_HG': 'HG', 'hf_CAD': 'CAD',
+  'hf_S': 'S', 'hf_SM': 'SM', 'hf_BO': 'BO', 'hf_C': 'C', 'hf_W': 'W' };
 const SINA_GLOBAL_MIN = 'https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_Global_=/GlobalFuturesService.getGlobalFuturesMinLine?symbol=%s&type=1';
 async function fetchSinaGlobalMin(code) {
   const sym = HF_SINA_SYM[code];
@@ -1135,7 +1142,7 @@ async function fetchStockQuote(code) {
       const resp = await fetch(STOCK_QUOTE.replace('%s', code), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(6000) });
       const buf = Buffer.from(await resp.arrayBuffer());
       const text = new TextDecoder('gbk').decode(buf);
-      const m = text.match(/v_\w+="([^"]+)"/);
+      const m = text.match(/v_[\w.]+="([^"]+)"/);
       if (!m) return null;
       const f = m[1].split(',');
       const price = Number(f[0]), chg = Number(f[1]), prevClose = Number(f[2]);
@@ -1155,7 +1162,7 @@ async function fetchStockQuote(code) {
     const resp = await fetch(STOCK_QUOTE.replace('%s', reqCode), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(6000) });
     const buf = Buffer.from(await resp.arrayBuffer());
     const text = new TextDecoder('gbk').decode(buf);
-    const m = text.match(/v_\w+="([^"]+)"/);
+    const m = text.match(/v_[\w.]+="([^"]+)"/);
     if (!m) return null;
     const a = m[1].split('~');
     const isUS = code.startsWith('us');
