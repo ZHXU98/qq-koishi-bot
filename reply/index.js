@@ -983,7 +983,16 @@ async function fetchSinaGlobalMin(code) {
         avgPrice: Number(isFirst ? row[8] : row[4]) || 0,    // 当日累计均价
       });
     });
-    out._date = String(rows[0][0] || '').slice(5); // MM-DD
+    // 时段标注：外盘近 23 小时连续交易、会话跨自然日（如 06:00 开 → 次日 01:29），
+    // 只写首行日期（09-10）会让人误以为整张图是「9-10 那一天」，故直接给起止时刻。
+    // 首行第 0 位是日期、第 9 位是完整时间戳；后续行被压缩，第 5 位才是时间戳
+    const mdts = s => {
+      const m = /(\d{4})-(\d{2}-\d{2})[ T](\d{2}:\d{2})/.exec(String(s || ''));
+      return m ? `${m[2]} ${m[3]}` : '';
+    };
+    const st = mdts(rows[0][9]) || mdts(rows[0][0]);
+    const en = mdts(rows[rows.length - 1][5]) || mdts(rows[rows.length - 1][4]);
+    out._date = (st && en) ? `${st} 至 ${en}` : String(rows[0][0] || '').slice(5);
     return out;
   } catch (_) { return null; }
 }
@@ -1348,7 +1357,9 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   if (timeMode) {
     // 商品(hf)：连续交易时段，取首/中/末时间标签；A股：09:30/10:30/11:30/14:00/15:00；
     // 港股：09:30/10:30/11:30/14:00/15:00/16:00（12:00/13:00 相邻不重复标）；美股 09:30-16:00 连续均匀标
-    const fmtT = t => String(t).slice(0, 2) + ':' + String(t).slice(2, 4);
+    // 注意 hf_ 新浪分时的 t 本身就带冒号（"06:00"），A股/港美股是紧凑的 "0930"——
+    // 先去掉冒号再插，否则会拼成 "06::0"（外盘分时横轴标签一直是这样，2026-09-11 修）
+    const fmtT = t => { const s = String(t).replace(':', ''); return s.slice(0, 2) + ':' + s.slice(2, 4); };
     const lbs = isHF
       ? [[0, fmtT(display[0].t)], [Math.floor(dn / 2), fmtT(display[Math.floor(dn / 2)].t)], [dn - 1, fmtT(display[dn - 1].t)]]
       : (isUS
@@ -1356,7 +1367,9 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
         : (isHK ? [[0, '09:30'], [60, '10:30'], [120, '11:30'], [180, '14:00'], [240, '15:00'], [TOT - 1, '16:00']] : [[0, '09:30'], [59, '10:30'], [119, '11:30'], [180, '14:00'], [TOT - 1, '15:00']]));
     lbs.forEach(([tm, lb]) => {
       ctx.fillStyle = sub; ctx.font = '12px cjk';
-      ctx.fillText(lb, PAD + (tm / TOT) * plotW, TITLE_H + plotH + 16);
+      // hf_ 的 lbs[0] 是「数据索引」而非分钟数（TOT=240 只对 A股/港美股成立），
+      // 必须走等距映射 X()，否则 x = tm/TOT*plotW 会把中末标签甩到画布外（SVG 路径本就如此，canvas 漏了）
+      ctx.fillText(lb, isHF ? X(tm) : (PAD + (tm / TOT) * plotW), TITLE_H + plotH + 16);
     });
   } else {
     [0, Math.floor((dn - 1) / 2), dn - 1].forEach(i => {
@@ -1667,7 +1680,9 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   }
   // X 轴时间标签：分时精确对齐曲线时刻 tmin 映射（12:00/13:00 相邻不重复标）；商品取首/中/末；其余取首/中/末
   if (timeMode) {
-    const fmtT = t => String(t).slice(0, 2) + ':' + String(t).slice(2, 4);
+    // 注意 hf_ 新浪分时的 t 本身就带冒号（"06:00"），A股/港美股是紧凑的 "0930"——
+    // 先去掉冒号再插，否则会拼成 "06::0"（外盘分时横轴标签一直是这样，2026-09-11 修）
+    const fmtT = t => { const s = String(t).replace(':', ''); return s.slice(0, 2) + ':' + s.slice(2, 4); };
     const lbs = isHF
       ? [[0, fmtT(display[0].t)], [Math.floor(dn / 2), fmtT(display[Math.floor(dn / 2)].t)], [dn - 1, fmtT(display[dn - 1].t)]]
       : (isUS
