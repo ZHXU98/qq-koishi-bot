@@ -29,10 +29,9 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   const isHK = code.startsWith('hk'); // 港股：字段口径不同，不显示基本面面板
   const isUS = code.startsWith('us');
   const isHF = code.startsWith('hf_'); // 国际商品：接近24h连续交易，分时用索引等距映射
-  const hasFund = !!(quote && (quote.peTtm > 0 || quote.pb > 0 || quote.eps > 0)); // 有无个股基本面（ETF 无 PE/PB）
-  const showInfo = !isHK && !isUS && !!quote && quote.mktCap > 0 && (hasFund || quote.open > 0); // 美股无基本面不显示；ETF 无 PE/PB 但有市值/行情，仍显示
+  const showInfo = !isHK && !isUS && !!quote && quote.mktCap > 0; // 有市值即显示（ETF 无 PE/PB 也显示，缺的字段留空）
   const LEG_H = timeMode ? 30 : ((maPeriods && maPeriods.length > 0) ? 66 : 40);
-  const INFO_H = hasFund ? 74 : 34; // 个股三行；ETF 一行（市值/昨收/今开/最高/最低/振幅）
+  const INFO_H = 98; // 四行：估值 / 股本·市值·股息 / 量能·交易 / 价位
   const H = TITLE_H + VOL_H + LEG_H + (showInfo ? INFO_H : 0) + PAD + 8 + 340;
   const n = klines.length;
   const display = timeMode
@@ -364,44 +363,45 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
     const infoTop = volTop + volH + 26;
     ctx.fillStyle = panel; ctx.fillRect(PAD - 8, infoTop - 6, W - PAD * 2 + 16, INFO_H);
     ctx.fillStyle = ink;
-    const f = v => isFinite(v) ? v.toFixed(2) : '-';
-    const fpx = v => isFinite(v) ? Number(v).toFixed(prec) : '-'; // 价格按品种精度（ETF 三位小数）
-    const yi = s => Number(s) / 1e8;
-    // hl: 1=红色加粗（PE动/PB 动态估值），2=深色加粗（今开/最高/最低 突出）
-    // 个股：三行全字段；ETF/无基本面：单行市值+行情（避免大量 '-' 空字段）
-    const rows = hasFund ? [
+    // 数值格式化：无值(0/NaN)一律留空（ETF 无 PE/PB 等基本面字段 → 空白）
+    const fb = (v, d = 2) => (v && isFinite(v) && Number(v) !== 0) ? Number(v).toFixed(d) : '';
+    const fbu = (v, unit, d = 2) => (v && isFinite(v) && Number(v) !== 0) ? Number(v).toFixed(d) + unit : '';
+    const fbp = v => (v && isFinite(v) && Number(v) !== 0) ? Number(v).toFixed(prec) : ''; // 价格按品种精度（ETF 三位小数）
+    const yib = v => Number(v) > 0 ? (Number(v) / 1e8).toFixed(2) + '亿' : '';             // 股本(股)→亿股
+    const amtYi = v => Number(v) > 0 ? (Number(v) / 1e4).toFixed(2) + '亿' : '';           // 成交额(A股=万元)→亿元
+    const divAmt = quote.divYield > 0 ? quote.divYield * quote.price / 100 : 0;
+    // hl: 1=红色加粗（PE动/PB 动态估值），2=深色加粗（价位 突出）
+    const rows = [
       [
-        { l: '市盈率(动)', v: f(quote.peDyn), hl: 1 },
-        { l: '市盈率(TTM)', v: f(quote.peTtm) },
-        { l: '市盈率(静)', v: f(quote.peStatic) },
-        { l: '市净率', v: f(quote.pb), hl: 1 },
-        { l: '每股收益', v: f(quote.eps) },
-        { l: '股息(TTM)', v: f(quote.divYield > 0 ? quote.divYield * quote.price / 100 : 0) },
+        { l: '市盈率(动)', v: fb(quote.peDyn), hl: 1 },
+        { l: '市盈率(TTM)', v: fb(quote.peTtm) },
+        { l: '市盈率(静)', v: fb(quote.peStatic) },
+        { l: '市净率', v: fb(quote.pb), hl: 1 },
+        { l: '每股收益', v: fb(quote.eps) },
+        { l: '每股净资产', v: fb(quote.bvps) },
       ],
       [
-        { l: '总股本', v: (yi(quote.totalShares) ? yi(quote.totalShares).toFixed(2) + '亿' : '-') },
-        { l: '总市值', v: f(quote.mktCap) + '亿' },
-        { l: '每股净资产', v: f(quote.bvps) },
-        { l: '股息率(TTM)', v: f(quote.divYield) + '%' },
-        { l: '流通股', v: (yi(quote.floatShares) ? yi(quote.floatShares).toFixed(2) + '亿' : '-') },
-        { l: '流通值', v: f(quote.floatMktCap) + '亿' },
+        { l: '总股本', v: yib(quote.totalShares) },
+        { l: '总市值', v: fbu(quote.mktCap, '亿') },
+        { l: '流通股', v: yib(quote.floatShares) },
+        { l: '流通值', v: fbu(quote.floatMktCap, '亿') },
+        { l: '股息率(TTM)', v: fbu(quote.divYield, '%') },
+        { l: '股息(TTM)', v: fb(divAmt) },
       ],
       [
-        { l: '换手率', v: f(quote.turnover) + '%' },
-        { l: '量比', v: f(quote.volumeRatio) },
-        { l: '振幅', v: f(quote.amplitude) + '%' },
-        { l: '今开', v: fpx(quote.open), hl: 2 },
-        { l: '最高', v: fpx(quote.high), hl: 2 },
-        { l: '最低', v: fpx(quote.low), hl: 2 },
+        { l: '换手率', v: fbu(quote.turnover, '%') },
+        { l: '量比', v: fb(quote.volumeRatio) },
+        { l: '振幅', v: fbu(quote.amplitude, '%') },
+        { l: '成交额', v: amtYi(quote.amount) },
+        { l: '均价', v: fbp(quote.avgPrice) },
+        { l: '昨收', v: fbp(quote.prevClose) },
       ],
-    ] : [
       [
-        { l: '总市值', v: f(quote.mktCap) + '亿' },
-        { l: '昨收', v: fpx(quote.prevClose) },
-        { l: '今开', v: fpx(quote.open), hl: 2 },
-        { l: '最高', v: fpx(quote.high), hl: 2 },
-        { l: '最低', v: fpx(quote.low), hl: 2 },
-        { l: '振幅', v: f(quote.amplitude) + '%' },
+        { l: '今开', v: fbp(quote.open), hl: 2 },
+        { l: '最高', v: fbp(quote.high), hl: 2 },
+        { l: '最低', v: fbp(quote.low), hl: 2 },
+        { l: '涨停', v: fbp(quote.limitUp), hl: 2 },
+        { l: '跌停', v: fbp(quote.limitDown), hl: 2 },
       ],
     ];
     const colW = (W - PAD * 2) / 6;
@@ -436,11 +436,10 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   const isHK = code.startsWith('hk'); // 港股：字段口径不同，不显示基本面面板
   const isUS = code.startsWith('us');
   const isHF = code.startsWith('hf_'); // 国际商品：接近24h连续交易，分时用索引等距映射
-  const hasFund = !!(quote && (quote.peTtm > 0 || quote.pb > 0 || quote.eps > 0)); // 有无个股基本面（ETF 无 PE/PB）
-  const showInfo = !isHK && !isUS && !!quote && quote.mktCap > 0 && (hasFund || quote.open > 0); // 美股无基本面不显示；ETF 无 PE/PB 但有市值/行情，仍显示
+  const showInfo = !isHK && !isUS && !!quote && quote.mktCap > 0; // 有市值即显示（ETF 无 PE/PB 也显示，缺的字段留空）
   // 分时：图例条占 30px（价格/均价/昨收），需计入否则成交量柱会捅进图例区；日线 66（两行）、分钟线 40（单行）
   const LEG_H = timeMode ? 30 : ((maPeriods && maPeriods.length > 0) ? 66 : 40);
-  const INFO_H = hasFund ? 74 : 34; // 个股三行；ETF 一行
+  const INFO_H = 98; // 四行：估值 / 股本·市值·股息 / 量能·交易 / 价位
   const H = TITLE_H + VOL_H + LEG_H + (showInfo ? INFO_H : 0) + PAD + 8 + 340; // plotH 约 340+，总高自适应
   const n = klines.length;
   // 显示根数：分时=当天全部分钟（≤240）；日线=60 根（3 个月，指数日波动 20 点左右，根数过多会把近期波动压扁）；其余分钟线=120 根
@@ -689,34 +688,30 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   if (showInfo) {
     const infoTop = volTop + volH + 26;
     s += `<rect x="${PAD - 8}" y="${infoTop - 6}" width="${W - PAD * 2 + 16}" height="${INFO_H}" rx="8" fill="${panel}"/>`;
-    const f = (v, d = 2) => v && isFinite(v) ? v.toFixed(d) : '-';
-    const fpx = v => (v && isFinite(v)) ? Number(v).toFixed(prec) : '-'; // 价格按品种精度（ETF 三位小数）
-    const yi = v => Number(v) > 0 ? (Number(v) / 1e8).toFixed(2) + '亿' : '-'; // 股本股→亿
+    // 数值格式化：无值(0/NaN)一律留空（ETF 无 PE/PB 等基本面字段 → 空白）
+    const fb = (v, d = 2) => (v && isFinite(v) && Number(v) !== 0) ? v.toFixed(d) : '';
+    const fbu = (v, unit, d = 2) => (v && isFinite(v) && Number(v) !== 0) ? v.toFixed(d) + unit : '';
+    const fbp = v => (v && isFinite(v) && Number(v) !== 0) ? Number(v).toFixed(prec) : ''; // 价格按品种精度（ETF 三位小数）
+    const yib = v => Number(v) > 0 ? (Number(v) / 1e8).toFixed(2) + '亿' : '';             // 股本(股)→亿股
+    const amtYi = v => Number(v) > 0 ? (Number(v) / 1e4).toFixed(2) + '亿' : '';           // 成交额(A股=万元)→亿元
     const divAmt = quote.divYield > 0 ? quote.divYield * quote.price / 100 : 0;
-    // 个股：三行全字段；ETF/无基本面：单行市值+行情（避免大量 '-' 空字段）
-    const rows = hasFund ? [
-      // 行1：估值
+    // 个股与 ETF 共用同一布局，接口没给的字段留空
+    const rows = [
       [
-        `市盈率(动) ${f(quote.peDyn)}`, `市盈率(TTM) ${f(quote.peTtm)}`, `市盈率(静) ${f(quote.peStatic)}`,
-        `市净率 ${f(quote.pb)}`, `每股收益 ${f(quote.eps)}`, `每股净资产 ${f(quote.bvps)}`,
+        `市盈率(动) ${fb(quote.peDyn)}`, `市盈率(TTM) ${fb(quote.peTtm)}`, `市盈率(静) ${fb(quote.peStatic)}`,
+        `市净率 ${fb(quote.pb)}`, `每股收益 ${fb(quote.eps)}`, `每股净资产 ${fb(quote.bvps)}`,
       ],
-      // 行2：股本/市值/股息
       [
-        `总市值 ${f(quote.mktCap)}亿`, `流通值 ${f(quote.floatMktCap)}亿`,
-        `总股本 ${yi(quote.totalShares)}`, `流通股 ${yi(quote.floatShares)}`,
-        `股息率(TTM) ${f(quote.divYield)}%`, `股息(TTM) ${f(divAmt)}`,
+        `总股本 ${yib(quote.totalShares)}`, `总市值 ${fbu(quote.mktCap, '亿')}`, `流通股 ${yib(quote.floatShares)}`,
+        `流通值 ${fbu(quote.floatMktCap, '亿')}`, `股息率(TTM) ${fbu(quote.divYield, '%')}`, `股息(TTM) ${fb(divAmt)}`,
       ],
-      // 行3：交易/行情
       [
-        `换手率 ${f(quote.turnover)}%`, `量比 ${f(quote.volumeRatio)}`, `振幅 ${f(quote.amplitude)}%`,
-        `今开 ${fpx(quote.open)}`, `最高 ${fpx(quote.high)}`, `最低 ${fpx(quote.low)}`,
+        `换手率 ${fbu(quote.turnover, '%')}`, `量比 ${fb(quote.volumeRatio)}`, `振幅 ${fbu(quote.amplitude, '%')}`,
+        `成交额 ${amtYi(quote.amount)}`, `均价 ${fbp(quote.avgPrice)}`, `昨收 ${fbp(quote.prevClose)}`,
       ],
-    ] : [
-      // ETF/无基本面：市值 + 行情
       [
-        `总市值 ${f(quote.mktCap)}亿`, `昨收 ${fpx(quote.prevClose)}`,
-        `今开 ${fpx(quote.open)}`, `最高 ${fpx(quote.high)}`, `最低 ${fpx(quote.low)}`,
-        `振幅 ${f(quote.amplitude)}%`,
+        `今开 ${fbp(quote.open)}`, `最高 ${fbp(quote.high)}`, `最低 ${fbp(quote.low)}`,
+        `涨停 ${fbp(quote.limitUp)}`, `跌停 ${fbp(quote.limitDown)}`,
       ],
     ];
     const colW = (W - PAD * 2) / 6;
