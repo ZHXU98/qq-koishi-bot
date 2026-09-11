@@ -213,12 +213,35 @@ function analyzeTTimeData(timeKlines, quote) {
   };
 }
 
+// ── 波动率基准：近 N 日平均振幅（%）──
+// 低波动标的（如红利低波 ETF，日均振幅约 1%）若沿用固定 % 做T阈值，T 区间会远大于当日实际波动，
+// 图上价格被压扁、T 线贴边。故按「基准振幅 / 参考振幅」等比缩放做T阈值，且只缩小不放大，
+// 保证对原有普通股票（振幅≈参考振幅）行为零影响。
+const T_REF_AMP = 2.5;    // 参考振幅：固定阈值（约 1.5/2.8%）所对应的典型日振幅
+const T_VOL_FLOOR = 0.35; // 缩放下限，避免低波动标的区间塌成一条线
+function calcVolRef(dayKlines) {
+  const n = (dayKlines || []).length;
+  if (n < 2) return 0;
+  const N = Math.min(10, n - 1);
+  let sum = 0, cnt = 0;
+  for (let i = n - N; i < n; i++) {
+    const k = dayKlines[i], p = dayKlines[i - 1];
+    if (!k || !p || !(p.close > 0) || !(k.high > 0) || !(k.low > 0)) continue;
+    sum += (k.high - k.low) / p.close * 100; cnt++;
+  }
+  return cnt ? sum / cnt : 0;
+}
+
 // ── 计算T位 ──
 // pureAuction：返回 null（上层不渲染T位，只显示竞价分析）
 function calcTPositions(activeForm, timeInfo, dayInfo) {
   const { lastPrice, currentAvg, dayLow, dayHigh, openPhase, pureAuction, openScenario, open, prevClose } = timeInfo;
   const { bollUp, bollLow } = dayInfo;
-  const r2 = v => Math.round(v * 100) / 100;
+  const prec = dayInfo.prec || 2;
+  const r2 = v => Math.round(v * 10 ** prec) / 10 ** prec;
+  // 波动率自适应：按日均振幅等比缩放做T阈值（只缩小，普通股票不受影响）
+  const volRef = dayInfo.volRef > 0 ? dayInfo.volRef : T_REF_AMP;
+  const volScale = Math.min(1, Math.max(T_VOL_FLOOR, volRef / T_REF_AMP));
   const isSwing = activeForm === 'swing' || activeForm === 'unclear';
 
   // ── 纯竞价阶段：数据不足，不给T位 ──
@@ -271,6 +294,9 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
       buyThHigh = Math.max(0, buyThHigh - 0.2);
       buyThLow = Math.max(buyThHigh + 0.3, buyThLow - 0.3);
     }
+    // 波动率自适应收窄（低波动标的）：等比缩放，保持 sell/buy 不等式关系不变
+    sellThLow *= volScale; sellThHigh *= volScale;
+    buyThHigh *= volScale; buyThLow *= volScale;
     const sellLow = r2(base * (1 + sellThLow / 100));
     const sellHigh = r2(Math.min(bollUp || base * 1.05, base * (1 + sellThHigh / 100)));
     const buyHigh = r2(base * (1 - buyThHigh / 100));
@@ -284,15 +310,15 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
 
   // ── 盘中模式：基准=黄线 ──
   const base = currentAvg > 0 ? currentAvg : lastPrice;
-  // 卖出区
-  const sellThLow = isSwing ? 1.5 : 0.8;
-  const sellThHigh = isSwing ? 2.8 : 1.5;
+  // 卖出区（阈值随波动率自适应缩放）
+  const sellThLow = (isSwing ? 1.5 : 0.8) * volScale;
+  const sellThHigh = (isSwing ? 2.8 : 1.5) * volScale;
   const sellLow = r2(base * (1 + sellThLow / 100));
   const sellHigh = r2(Math.min(bollUp || base * 1.035, base * (1 + sellThHigh / 100)));
   // 买回区：buyLow < buyHigh 始终成立
   // buyThLow > buyThHigh 保证 byDev 的 buyLow < buyHigh；dayLow 仅在严格低于 buyHigh 时做地板
-  const buyThHigh = isSwing ? 0.8 : 0.3;
-  const buyThLow = isSwing ? 1.8 : 1.0;
+  const buyThHigh = (isSwing ? 0.8 : 0.3) * volScale;
+  const buyThLow = (isSwing ? 1.8 : 1.0) * volScale;
   const buyHigh = r2(base * (1 - buyThHigh / 100));
   const buyLowByDev = r2(base * (1 - buyThLow / 100)); // 始终 < buyHigh（thLow > thHigh）
   // dayLow 做地板只在它严格低于 buyHigh 时有意义，否则忽略（避免 buyLow > buyHigh）
@@ -316,7 +342,9 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   const feeRate = isETF ? 0.02 : 0.30;
   const ampWarnTh = isETF ? 0.08 : 0.45;
   const ampCautionTh = isETF ? 0.20 : 0.80;
-  const fp = v => isFinite(v) && v !== null ? Number(v).toFixed(2) : '-';
+  const prec = dayInfo.prec || 2;
+  const fp = v => isFinite(v) && v !== null ? Number(v).toFixed(prec) : '-';
+  const fpp = v => isFinite(v) && v !== null ? Number(v).toFixed(2) : '-'; // 百分比固定 2 位
   const fpct = v => (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%';
   const FORM_LABEL = { uptrend: '上升单边', downtrend: '下降单边', swing: '震荡区间', unclear: '趋势不明' };
   const FORM_EMOJI = { uptrend: '📈', downtrend: '📉', swing: '〰️', unclear: '❓' };
@@ -342,6 +370,10 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   const inSellZone = tPos ? tPos.inSellZone : false;
   const inBuyZone = tPos ? tPos.inBuyZone : false;
   const inNeutral = tPos ? tPos.inNeutral : true;
+  // 实际阈值（用于文案）：随波动率自适应缩放，不能写死
+  const tBase = (tPos && tPos.base > 0) ? tPos.base : (currentAvg > 0 ? currentAvg : lastPrice);
+  const sellDevPct = tBase > 0 ? (sellLow - tBase) / tBase * 100 : 0;
+  const buyDevPct = tBase > 0 ? (tBase - buyHigh) / tBase * 100 : 0;
 
   const L = [];
   L.push(`📊 ${name}（${code.toUpperCase()}）做T参考  ${now}`);
@@ -431,32 +463,32 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     // 轨迹数据：冲高/下探 + 回落/回升
     if (hiFromOpen >= 0.5 || loFromOpen >= 0.5) {
       const trajBits = [];
-      if (hiFromOpen >= 0.5) trajBits.push(`高点较今开冲高 ${fp(hiFromOpen)}%`);
-      if (loFromOpen >= 0.5) trajBits.push(`低点较今开下探 ${fp(loFromOpen)}%`);
-      L.push(`→ 轨迹：${trajBits.join(' / ')}，现价自高点回落 ${fp(pullbackPct)}%（确认阈值 ${fp(confirmTh)}%）`);
-      L.push(`   💡 确认阈值 = max(0.8%, 今日振幅${fp(amplitude)}% × 25%)——波动越大的票，回落要越深才当真`);
+      if (hiFromOpen >= 0.5) trajBits.push(`高点较今开冲高 ${fpp(hiFromOpen)}%`);
+      if (loFromOpen >= 0.5) trajBits.push(`低点较今开下探 ${fpp(loFromOpen)}%`);
+      L.push(`→ 轨迹：${trajBits.join(' / ')}，现价自高点回落 ${fpp(pullbackPct)}%（确认阈值 ${fpp(confirmTh)}%）`);
+      L.push(`   💡 确认阈值 = max(0.8%, 今日振幅${fpp(amplitude)}% × 25%)——波动越大的票，回落要越深才当真`);
     }
     // 场景解读
     switch (openScenario) {
       case 'gap_up_reversal':
-        L.push(`   📍 冲高回落确认：${hiFromOpen >= 1 ? `已冲高 ${fp(hiFromOpen)}%` : '高开后走弱'}，从高点回落 ${fp(pullbackPct)}% ≥ 阈值${fp(confirmTh)}%`);
+        L.push(`   📍 冲高回落确认：${hiFromOpen >= 1 ? `已冲高 ${fpp(hiFromOpen)}%` : '高开后走弱'}，从高点回落 ${fpp(pullbackPct)}% ≥ 阈值${fpp(confirmTh)}%`);
         L.push(`      回落 ${volRatio > 1.5 ? `放量（量比${volRatio.toFixed(1)}）→ 出货真实，T出信号强` : `缩量/平量（量比${volRatio.toFixed(1)}）→ 可能是洗盘，卖出位设高一点`}`);
         L.push(`      若反抽到今开附近，正是T出好时机`);
         break;
       case 'gap_up_momentum':
         L.push(`   🚀 高开续涨：动量延续中，做T踏空风险高`);
-        L.push(`      → 高开后未出现≥${fp(confirmTh)}%的回落，说明还在强势区`);
+        L.push(`      → 高开后未出现≥${fpp(confirmTh)}%的回落，说明还在强势区`);
         L.push(`      追高买入成本太高；T出后若继续涨难以追回`);
         L.push(`      建议：耐心等明显冲高（今开+2%以上）才T出，别急`);
         break;
       case 'gap_down_recovery':
-        L.push(`   🟢 低开企稳：${loFromOpen >= 1 ? `已下探 ${fp(loFromOpen)}% 后回升 ${fp(recoverPct)}%` : '低开后止跌回升'}，恐慌释放，多头在接`);
+        L.push(`   🟢 低开企稳：${loFromOpen >= 1 ? `已下探 ${fpp(loFromOpen)}% 后回升 ${fpp(recoverPct)}%` : '低开后止跌回升'}，恐慌释放，多头在接`);
         L.push(`      回升 ${volRatio < 0.8 ? `缩量（量比${volRatio.toFixed(1)}）→ 抛压枯竭，买回信号强` : `量能尚可（量比${volRatio.toFixed(1)}）→ 等回踩确认`}`);
         L.push(`      若再回踩今开附近且缩量，是T买回的机会`);
         break;
       case 'gap_down_panic':
         L.push(`   🔴 低开续跌中：最危险场景，做T极难`);
-        L.push(`      → 未出现≥${fp(confirmTh)}%的有效回升，买方力量不足`);
+        L.push(`      → 未出现≥${fpp(confirmTh)}%的有效回升，买方力量不足`);
         if (volRatio > 1.5) L.push(`   ⚠️ 放量下跌（量比${volRatio.toFixed(1)}），优先考虑减仓而非做T`);
         else L.push(`   💡 虽缩量但仍在低点附近，别急着抄底，等MACD企稳`);
         break;
@@ -497,11 +529,11 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   }
   // ── 盘中轨迹信号（≥30根后同样适用"先高后走低"）──
   if (!openPhase && !pureAuction && dayHigh > 0 && pullbackPct >= confirmTh && hiFromOpen >= 0.5) {
-    L.push(`→ 📐 轨迹信号：今日高点 ${fp(dayHigh)} 已冲高 ${fp(hiFromOpen)}%，现从高点回落 ${fp(pullbackPct)}%`);
-    L.push(`     回落幅度已超过确认阈值（${fp(confirmTh)}%），若伴随分时MACD死叉/顶背离，是明确的T卖出时机`);
+    L.push(`→ 📐 轨迹信号：今日高点 ${fp(dayHigh)} 已冲高 ${fpp(hiFromOpen)}%，现从高点回落 ${fpp(pullbackPct)}%`);
+    L.push(`     回落幅度已超过确认阈值（${fpp(confirmTh)}%），若伴随分时MACD死叉/顶背离，是明确的T卖出时机`);
   } else if (!openPhase && !pureAuction && dayLow > 0 && recoverPct >= confirmTh && loFromOpen >= 0.5) {
-    L.push(`→ 📐 轨迹信号：今日低点 ${fp(dayLow)} 已下探 ${fp(loFromOpen)}%，现自低点回升 ${fp(recoverPct)}%`);
-    L.push(`     回升幅度已超过确认阈值（${fp(confirmTh)}%），若伴随分时MACD金叉/底背离，是明确的T买回时机`);
+    L.push(`→ 📐 轨迹信号：今日低点 ${fp(dayLow)} 已下探 ${fpp(loFromOpen)}%，现自低点回升 ${fpp(recoverPct)}%`);
+    L.push(`     回升幅度已超过确认阈值（${fpp(confirmTh)}%），若伴随分时MACD金叉/底背离，是明确的T买回时机`);
   }
   L.push('');
   L.push(`日内区间 ${fp(dayLow)} ~ ${fp(dayHigh)}（振幅${amplitude.toFixed(1)}%），当前位于区间 ${dayPosition.toFixed(0)}% 高位`);
@@ -563,7 +595,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
       if (bollLow) L.push(`   ↓ BOLL下轨(${fp(bollLow)}) 是支撑参考`);
     } else {
       L.push(`🔴 卖出参考：${fp(sellLow)} ~ ${fp(sellHigh)}`);
-      L.push(`   理由：反弹到黄线上方（+0.8%），下行趋势中的相对高位`);
+      L.push(`   理由：反弹到黄线上方（+${fpp(sellDevPct)}%），下行趋势中的相对高位`);
       if (ma5) L.push(`   MA5(${fp(ma5)}) 是反弹压力位`);
       L.push('');
       L.push(`🟢 买回参考：${fp(buyLow)} ~ ${fp(buyHigh)}`);
@@ -580,7 +612,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
         : '相对今开的冲高区';
       L.push(`   理由：${sellR}`);
     } else {
-      L.push(`   理由：偏离黄线+1.5%以上（今日持仓者平均亏损，有出货压力）`);
+      L.push(`   理由：偏离黄线+${fpp(sellDevPct)}%以上（今日持仓者平均亏损，有出货压力）`);
     }
     if (bollUp) L.push(`   ↑ BOLL上轨(${fp(bollUp)}) 是强压力`);
     L.push('');
@@ -591,7 +623,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
         : '相对今开的回落区，低吸';
       L.push(`   理由：${buyR}`);
     } else {
-      L.push(`   理由：黄线附近（-0.8%内），持仓者有浮盈，下跌意愿弱`);
+      L.push(`   理由：黄线附近（-${fpp(buyDevPct)}%内），持仓者有浮盈，下跌意愿弱`);
     }
     if (bollLow) L.push(`   ↓ BOLL下轨(${fp(bollLow)}) 是强支撑`);
     L.push('');
@@ -696,7 +728,8 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
   const upC = '#f5222d', downC = '#0aa869';
   const bg = '#ffffff', panel = '#f7f8fa', grid = '#e8eaed', sub = '#8a919c', ink = '#2b2f36';
   const priceCol = chg >= 0 ? upC : downC;
-  const fp = v => isFinite(v) ? Number(v).toFixed(2) : '-';
+  const prec = dayInfo.prec || 2;
+  const fp = v => isFinite(v) ? Number(v).toFixed(prec) : '-';
   // 画布
   const canvas = createCanvas(Math.round(W * 1.2), Math.round(H * 1.2));
   const ctx = canvas.getContext('2d');
@@ -891,6 +924,15 @@ async function cmdT(args) {
   }
   // 日线分析
   const dayInfo = analyzeTDayForm(dayKlines);
+  // 波动率基准（自适应做T阈值）：近10日平均振幅
+  dayInfo.volRef = calcVolRef(dayKlines);
+  // 价格精度：现价有 >2 位有效小数（ETF/低价品种，如 1.203）→ 3 位，否则 2 位（与 /stock 一致）
+  dayInfo.prec = (() => {
+    const ref = (quote && isFinite(quote.price) && Number(quote.price) > 0) ? Number(quote.price) : 0;
+    if (!(ref > 0)) return 2;
+    const sv = String(ref), dot = sv.indexOf('.');
+    return (dot > 0 && sv.slice(dot + 1).replace(/0+$/, '').length > 2) ? 3 : 2;
+  })();
   // 分时分析（无分时/开盘不足30min → openPhase 模式，基准用今开+量比+日线位置）
   let timeInfo;
   if (timeKlines && timeKlines.length >= 2) {
