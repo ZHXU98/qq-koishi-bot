@@ -93,28 +93,36 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
   const r2 = v => Math.round(v * 100) / 100;
   const isSwing = activeForm === 'swing' || activeForm === 'unclear';
 
-  // ── 开盘模式（分时<30min）：基准=今开，T位依据「高开/低开 + 日线结构」 ──
+  // ── 开盘模式（分时<30min）：基准=今开，T位依据「日线形态优先 + 高开/低开辅助」 ──
   if (openPhase) {
     const base = open || prevClose || lastPrice;
     const gap = prevClose > 0 ? (base - prevClose) / prevClose * 100 : 0;
-    // 阈值随高开/低开自适应：高开等冲高回落（卖区上移/买区下移），低开防反抽（卖区略低）
-    let sellThLow, sellThHigh, buyThHigh, buyThLow, buyHighMax;
-    if (gap >= 1) {          // 高开 ≥1%：冲高回落概率大，卖出区设今开上方，买回区设今开下方
-      sellThLow = 0.8; sellThHigh = 2.0;
-      buyThHigh = 1.0; buyThLow = 2.5;
-      buyHighMax = base * (1 - buyThHigh / 100);
-    } else if (gap <= -1) {  // 低开 ≤-1%：存在反抽，卖出区设今开上方；低开恐慌可低吸
-      sellThLow = 0.8; sellThHigh = 2.5;
-      buyThHigh = 0.5; buyThLow = 1.5;
-      buyHighMax = base * (1 - buyThHigh / 100);
-    } else {                 // 平开：常规区间
-      sellThLow = 0.4; sellThHigh = 1.5;
-      buyThHigh = 0.4; buyThLow = 1.5;
-      buyHighMax = base * (1 - buyThHigh / 100);
+    let sellThLow, sellThHigh, buyThHigh, buyThLow;
+    if (activeForm === 'downtrend') {
+      // 单边跌开盘：趋势向下，反弹高度有限，卖出区设在今开附近（别等今开上方太多），
+      // 买回区沿趋势下移（等缩量企稳再分批接），并给出高风险警告
+      sellThLow = 0.0; sellThHigh = 1.2;      // 反弹到今开附近就是相对高位
+      buyThHigh = 1.5; buyThLow = 3.0;        // 沿趋势往下等
+    } else if (activeForm === 'uptrend') {
+      // 单边涨开盘：踏空风险 > T差收益，卖出区抬高（等明显冲高），买回区贴近今开浅回踩
+      sellThLow = 1.5; sellThHigh = 3.0;
+      buyThHigh = 0.3; buyThLow = 1.0;
+    } else {
+      // 震荡/趋势不明：按缺口自适应
+      if (gap >= 1) {          // 高开 ≥1%：冲高回落概率大，卖出区设今开上方，买回区设今开下方
+        sellThLow = 0.8; sellThHigh = 2.0;
+        buyThHigh = 1.0; buyThLow = 2.5;
+      } else if (gap <= -1) {  // 低开 ≤-1%：存在反抽，卖出区设今开上方；低开恐慌可低吸
+        sellThLow = 0.8; sellThHigh = 2.5;
+        buyThHigh = 0.5; buyThLow = 1.5;
+      } else {                 // 平开：常规区间
+        sellThLow = 0.4; sellThHigh = 1.5;
+        buyThHigh = 0.4; buyThLow = 1.5;
+      }
     }
     const sellLow = r2(base * (1 + sellThLow / 100));
     const sellHigh = r2(Math.min(bollUp || base * 1.05, base * (1 + sellThHigh / 100)));
-    const buyHigh = r2(buyHighMax);
+    const buyHigh = r2(base * (1 - buyThHigh / 100));
     const buyLowByDev = r2(base * (1 - buyThLow / 100)); // 始终 < buyHigh
     // dayLow 做地板只在它严格低于 buyHigh 时有意义，否则忽略（避免 buyLow > buyHigh）
     const buyLow = r2(dayLow > 0 && dayLow < buyHigh ? Math.max(dayLow, buyLowByDev) : buyLowByDev);
@@ -252,26 +260,49 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   if (activeForm === 'uptrend') {
     L.push(`⚠️ 上升单边：整体不建议做T（踏空风险大）`);
     L.push(`   趋势股的特征是：涨了还会涨，卖了常常更贵才买回，得不偿失`);
-    L.push(`   如坚持做T：每次T量 ≤ 持仓 20%，买回位设在黄线附近`);
-    L.push('');
-    L.push(`🔴 谨慎卖出：${fp(sellLow)} ~ ${fp(sellHigh)}`);
-    L.push(`   理由：偏离黄线 +0.8% 以上（偏贵区），且量能未明显放大`);
-    L.push(`   ⚠️ 若放量突破 ${fp(sellHigh)} 以上，不建议卖出，观察是否趋势加速`);
-    L.push('');
-    L.push(`🟢 买回位：${fp(buyLow)} ~ ${fp(buyHigh)}`);
-    L.push(`   理由：回踩黄线附近，均线支撑较强；若跌破黄线则无需着急，可等更低`);
+    if (openPhase) {
+      L.push(`   如坚持做T：每次T量 ≤ 持仓 20%，卖出位需等明显冲高（今开 +1.5%~+3%）`);
+      L.push('');
+      L.push(`🔴 谨慎卖出：${fp(sellLow)} ~ ${fp(sellHigh)}`);
+      L.push(`   理由：开盘冲高至明显高位才考虑，避免小反弹就 T 出被甩下车`);
+      L.push(`   ⚠️ 若放量突破 ${fp(sellHigh)}，不建议卖出，观察是否趋势加速`);
+      L.push('');
+      L.push(`🟢 买回位：${fp(buyLow)} ~ ${fp(buyHigh)}`);
+      L.push(`   理由：回踩今开附近（-0.3%~-1%）浅调整即可接回，别等深跌`);
+    } else {
+      L.push(`   如坚持做T：每次T量 ≤ 持仓 20%，买回位设在黄线附近`);
+      L.push('');
+      L.push(`🔴 谨慎卖出：${fp(sellLow)} ~ ${fp(sellHigh)}`);
+      L.push(`   理由：偏离黄线 +0.8% 以上（偏贵区），且量能未明显放大`);
+      L.push(`   ⚠️ 若放量突破 ${fp(sellHigh)} 以上，不建议卖出，观察是否趋势加速`);
+      L.push('');
+      L.push(`🟢 买回位：${fp(buyLow)} ~ ${fp(buyHigh)}`);
+      L.push(`   理由：回踩黄线附近，均线支撑较强；若跌破黄线则无需着急，可等更低`);
+    }
   } else if (activeForm === 'downtrend') {
     L.push(`⚠️ 下降单边：以「反弹T」为主，严控T量（建议 ≤ 持仓 15%）`);
     L.push(`   下行趋势中每次反弹空间有限，做T只能微降均价，无法扭转趋势`);
     L.push(`   重要：若反弹力度超预期，不要因T量过大而被迫高价补仓`);
     L.push('');
-    L.push(`🔴 卖出参考：${fp(sellLow)} ~ ${fp(sellHigh)}`);
-    L.push(`   理由：${openPhase ? '反弹到今开上方' : '反弹到黄线上方（+0.8%）'}，是下降趋势中难得的相对高位`);
-    if (ma5) L.push(`   MA5(${fp(ma5)}) 是反弹压力位，靠近时警惕回落`);
-    L.push('');
-    L.push(`🟢 买回参考：${fp(buyLow)} ~ ${fp(buyHigh)}`);
-    L.push(`   理由：等缩量后的阶段低点；不追杀跌，量不缩不买回`);
-    if (bollLow) L.push(`   BOLL下轨(${fp(bollLow)}) 有支撑，可作为参考`);
+    if (openPhase) {
+      L.push(`🔴 卖出参考：${fp(sellLow)} ~ ${fp(sellHigh)}`);
+      L.push(`   理由：单边下跌，反弹高度有限——今开附近（+0%~+1.2%）即相对高位`);
+      L.push(`   ⚠️ 不要等反弹到今开上方太多，趋势股反抽大概率遇阻回落`);
+      L.push('');
+      L.push(`🟢 买回参考：${fp(buyLow)} ~ ${fp(buyHigh)}`);
+      L.push(`   理由：沿趋势下移（今开 -1.5%~-3%），等缩量企稳再分批接`);
+      if (bollLow) L.push(`   ↓ BOLL下轨(${fp(bollLow)}) 是强支撑，回踩此位量缩可买`);
+      L.push('');
+      L.push(`⚠️ 单边跌开盘：若低开+放量继续走低，做T难度极高，优先考虑减仓而非T`);
+    } else {
+      L.push(`🔴 卖出参考：${fp(sellLow)} ~ ${fp(sellHigh)}`);
+      L.push(`   理由：反弹到黄线上方（+0.8%），是下降趋势中难得的相对高位`);
+      if (ma5) L.push(`   MA5(${fp(ma5)}) 是反弹压力位，靠近时警惕回落`);
+      L.push('');
+      L.push(`🟢 买回参考：${fp(buyLow)} ~ ${fp(buyHigh)}`);
+      L.push(`   理由：等缩量后的阶段低点；不追杀跌，量不缩不买回`);
+      if (bollLow) L.push(`   BOLL下轨(${fp(bollLow)}) 有支撑，可作为参考`);
+    }
   } else {
     // 震荡
     L.push(`🔴 卖出参考：${fp(sellLow)} ~ ${fp(sellHigh)}`);
