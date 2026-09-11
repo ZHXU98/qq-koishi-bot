@@ -3851,8 +3851,10 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     // 固定用1万元仓位估算盈亏（不问持仓，给个直观参考）
     const tDiffPerShare = Math.max(0, sellLow - buyHigh);
     const refPrice = lastPrice > 0 ? lastPrice : tPos.base;
-    const fixedAmt = 10000; // 固定1万元
-    const fixedShares = Math.floor(fixedAmt / refPrice / 100) * 100; // 向下取整到整手
+    const fixedAmt = 10000; // 参考1万元，但最少算1手
+    const fixedShares = Math.max(100, Math.floor(fixedAmt / refPrice / 100) * 100); // 买不到1手就按1手算
+    const refAmt = Math.round(fixedShares * refPrice);
+    const refAmtStr = refAmt >= 10000 ? `约${(refAmt / 10000).toFixed(1)}万元` : `约${refAmt}元`;
     if (fixedShares > 0 && tDiffPerShare > 0) {
       const val = fixedShares * refPrice;
       const fee = isETF
@@ -3861,9 +3863,9 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
       const gross = fixedShares * tDiffPerShare;
       const net = Math.round(gross - fee);
       if (net > 0) {
-        L.push(`   1万元仓位可买约${fixedShares}股，本次T一次净赚约 +${net}元（扣手续费${Math.round(fee)}元）`);
+        L.push(`   ${refAmtStr}/${fixedShares}股，本次T净赚约 +${net}元（扣手续费${Math.round(fee)}元）`);
       } else {
-        L.push(`   1万元仓位可买约${fixedShares}股，本次T差仅${Math.round(gross)}元，还不够手续费${Math.round(fee)}元，亏！`);
+        L.push(`   ${refAmtStr}/${fixedShares}股，T差仅${Math.round(gross)}元，手续费${Math.round(fee)}元，亏！`);
       }
     } else if (tDiffPerShare <= 0) {
       L.push(`   ⚠️ 卖出区与买回区重叠，当前无T差，等振幅扩大再操作`);
