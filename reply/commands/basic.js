@@ -50,7 +50,7 @@ function cmdHelp() {
 function cmdPing() {
   return `🏓 Pong! 服务存活正常（运行 ${uptimeText(Date.now() - STARTED_AT)}，${nowText()}）`;
 }
-async function cmdStatus() {
+async function cmdStatus(wsState) {
   let botLine = '❌ 无法获取机器人信息（HTTP API 异常）';
   try {
     const r = await fetch(NAPCAT_URL + '/get_login_info', {

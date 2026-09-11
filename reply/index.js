@@ -160,7 +160,7 @@ async function handleEvent(ev) {
       await sendImagesSequential(ev, imgs, r.text); // 私聊：先文本，再逐张发图
     }
   } else if (cmd.type === 'status') {
-    await sendReply(ev, await cmdStatus());
+    await sendReply(ev, await cmdStatus(wsState));
   } else if (cmd.type === 'news') {
     // 快讯查询（被动回复，不占主动配额）
     const items = await fetchImportantNews(NEWS_QUERY_LIMIT);

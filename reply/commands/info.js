@@ -2,7 +2,7 @@
 // /info 个股速查 + /etfinfo ETF持仓
 // ============================================================
 const { cacheGet, cacheSet, normStockName, wrapText, f2p } = require('../utils');
-const { emFetchJson, emSecid, fetchStockQuote, EM_UA } = require('../market');
+const { emFetchJson, emSecid, fetchStockQuote, EM_UA, normalizeCode, resolveStockCode } = require('../market');
 
 // 用法：/info <代码或名称> [条数]（公告/新闻各 N 条，默认 8，1-10）
 // 数据源：行情=腾讯 qt.gtimg.cn；公司概况=东财 F10 RPT_F10_BASIC_ORGINFO；公告=东财 np-anotice-stock；新闻=东财 search-api-web

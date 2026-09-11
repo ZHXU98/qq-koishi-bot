@@ -2,6 +2,7 @@
 // /stocks 组合拼图：组合 CRUD + 多股票一图拼图
 // ============================================================
 const path = require('path');
+const fs = require('fs');
 const { NAPCAT_URL, TOKEN, CONFIG } = require('../config');
 const { cacheGet, cacheSet, mapLimit, normStockName } = require('../utils');
 const {
@@ -12,7 +13,7 @@ const {
 
 //       每格为精简走势（无成交量/均线/BOLL），各自价格轴 + 区间起点虚线基准；
 //       涨红跌绿，字号按列数收缩以保证手机端可读。
-const PORTFOLIO_DIR = process.env.PORTFOLIO_DIR || path.join(__dirname, 'data');
+const PORTFOLIO_DIR = process.env.PORTFOLIO_DIR || path.join(__dirname, '..', 'data');
 const PORTFOLIO_PATH = path.join(PORTFOLIO_DIR, 'portfolios.json');
 const PORTFOLIO_MAX = 20;      // 单个组合最多保存的股票数
 const STOCKS_RENDER_MAX = 16;  // 单张拼图最多渲染的股票数
