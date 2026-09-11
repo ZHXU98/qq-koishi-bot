@@ -549,27 +549,39 @@ async function prevTradingAmount(code, nowHHMM) {
       ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 16px cjk';
       ctx.fillText('申万二级行业资金流（主力净流入）', x0 + 18, y + 26);
       const halfW = (cw - 36 - 12) / 2;
-      // 左：流入（行间距 28px，标题到第一行 22px 间隙）
-      ctx.fillStyle = upC; ctx.font = 'bold 14px cjk';
+      const maxIn = Math.max(...data.sw2.inflow.map(r => r.yiyi), 1);
+      const maxOut = Math.max(...data.sw2.outflow.map(r => Math.abs(r.yiyi)), 1);
+      // 中间垂直分割线
+      const divX = x0 + 18 + halfW + 6;
+      ctx.strokeStyle = lineC; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(divX, y + 38); ctx.lineTo(divX, y + swH - 10); ctx.stroke();
+      // 左：流入
+      ctx.fillStyle = upC; ctx.font = 'bold 14px cjk'; ctx.textAlign = 'left';
       ctx.fillText('流入 TOP5', x0 + 18, y + 48);
       data.sw2.inflow.forEach((r, i) => {
-        const ry = y + 72 + i * 28;
-        ctx.fillStyle = ink; ctx.font = '14px cjk'; ctx.textAlign = 'left';
-        ctx.fillText(r.name.length > 9 ? r.name.slice(0, 9) + '…' : r.name, x0 + 18, ry);
-        ctx.fillStyle = upC; ctx.font = 'bold 14px cjk'; ctx.textAlign = 'right';
-        ctx.fillText(`+${r.yiyi.toFixed(1)}亿`, x0 + 18 + halfW - 6, ry);
+        const ry = y + 68 + i * 28;
+        // 占比横条（右对齐，从列右边往左延伸）
+        const bw = Math.round((r.yiyi / maxIn) * (halfW - 16));
+        ctx.fillStyle = 'rgba(245,34,45,0.10)';
+        ctx.beginPath(); ctx.roundRect(x0 + 18 + halfW - 6 - bw, ry - 9, bw, 18, 3); ctx.fill();
+        ctx.fillStyle = ink; ctx.font = '13px cjk'; ctx.textAlign = 'left';
+        ctx.fillText(r.name.length > 7 ? r.name.slice(0, 7) + '…' : r.name, x0 + 20, ry);
+        ctx.fillStyle = upC; ctx.font = 'bold 13px cjk'; ctx.textAlign = 'right';
+        ctx.fillText(`+${r.yiyi.toFixed(1)}亿`, x0 + 18 + halfW - 8, ry);
       });
       // 右：流出
-      const rx2 = x0 + 18 + halfW + 12;
-      ctx.textAlign = 'left';
-      ctx.fillStyle = downC; ctx.font = 'bold 14px cjk';
+      const rx2 = divX + 6;
+      ctx.fillStyle = downC; ctx.font = 'bold 14px cjk'; ctx.textAlign = 'left';
       ctx.fillText('流出 TOP5', rx2, y + 48);
       data.sw2.outflow.forEach((r, i) => {
-        const ry = y + 72 + i * 28;
-        ctx.fillStyle = ink; ctx.font = '14px cjk'; ctx.textAlign = 'left';
-        ctx.fillText(r.name.length > 9 ? r.name.slice(0, 9) + '…' : r.name, rx2, ry);
-        ctx.fillStyle = downC; ctx.font = 'bold 14px cjk'; ctx.textAlign = 'right';
-        ctx.fillText(`${r.yiyi.toFixed(1)}亿`, rx2 + halfW - 6, ry);
+        const ry = y + 68 + i * 28;
+        const bw = Math.round((Math.abs(r.yiyi) / maxOut) * (halfW - 16));
+        ctx.fillStyle = 'rgba(10,168,105,0.10)';
+        ctx.beginPath(); ctx.roundRect(rx2, ry - 9, bw, 18, 3); ctx.fill();
+        ctx.fillStyle = ink; ctx.font = '13px cjk'; ctx.textAlign = 'left';
+        ctx.fillText(r.name.length > 7 ? r.name.slice(0, 7) + '…' : r.name, rx2 + 2, ry);
+        ctx.fillStyle = downC; ctx.font = 'bold 13px cjk'; ctx.textAlign = 'right';
+        ctx.fillText(`${r.yiyi.toFixed(1)}亿`, rx2 + halfW - 8, ry);
       });
     }
 
