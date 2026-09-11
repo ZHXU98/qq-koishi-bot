@@ -39,42 +39,93 @@ function analyzeTDayForm(dayKlines) {
 }
 
 // ── 分时现状分析 ──
+// 开盘阶段（分时 < 30min ≈ 10:00 前）：黄线未成形，基准切换为「今开」，量能用快照量比
 function analyzeTTimeData(timeKlines, quote) {
-  if (!timeKlines || timeKlines.length < 2) return null;
-  const lastPrice = (quote && Number(quote.price) > 0) ? Number(quote.price) : timeKlines[timeKlines.length - 1].close;
+  const hasTime = !!timeKlines && timeKlines.length >= 2;
+  const openPhase = !hasTime || timeKlines.length < 30; // 开盘模式：无分时 或 分时不足30分钟
+  const lastPrice = (quote && Number(quote.price) > 0) ? Number(quote.price)
+    : (hasTime ? timeKlines[timeKlines.length - 1].close : 0);
   const prevClose = (quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : 0;
-  const avgLine = buildAvgLine(timeKlines);
+  const open = (quote && Number(quote.open) > 0) ? Number(quote.open) : prevClose;
+  const avgLine = hasTime ? buildAvgLine(timeKlines) : null;
   const currentAvg = (avgLine && avgLine.length > 0) ? avgLine[avgLine.length - 1] : 0;
-  const avgDev = currentAvg > 0 ? (lastPrice - currentAvg) / currentAvg * 100 : 0;
-  // 日内位置
-  const dayHigh = (quote && Number(quote.high) > 0) ? Number(quote.high) : Math.max(...timeKlines.map(k => k.high));
-  const dayLow = (quote && Number(quote.low) > 0) ? Number(quote.low) : Math.min(...timeKlines.map(k => k.low));
+  // 基准价：开盘用今开（黄线不可靠），盘中用黄线
+  const baseRef = openPhase ? (open || prevClose || lastPrice) : (currentAvg || lastPrice);
+  const avgDev = baseRef > 0 ? (lastPrice - baseRef) / baseRef * 100 : 0; // 开盘=现价vs今开；盘中=现价vs黄线
+  // 日内位置（开盘阶段 high/low 未定型，位置仅供参考）
+  const dayHigh = (quote && Number(quote.high) > 0) ? Number(quote.high)
+    : (hasTime ? Math.max(...timeKlines.map(k => k.high)) : 0);
+  const dayLow = (quote && Number(quote.low) > 0) ? Number(quote.low)
+    : (hasTime ? Math.min(...timeKlines.map(k => k.low)) : 0);
   const range = dayHigh - dayLow;
   const dayPosition = range > 0 ? (lastPrice - dayLow) / range * 100 : 50;
   const amplitude = prevClose > 0 ? range / prevClose * 100 : 0;
-  // 量能节奏：近5分钟 vs 前5分钟均量
-  const dn = timeKlines.length;
-  const rv = timeKlines.slice(-5).map(k => k.vol || 0);
-  const pv = dn >= 10 ? timeKlines.slice(-10, -5).map(k => k.vol || 0) : rv;
-  const recentAvgVol = rv.reduce((a, b) => a + b, 0) / rv.length;
-  const prevAvgVol = pv.reduce((a, b) => a + b, 0) / pv.length;
-  const volRatio = prevAvgVol > 0 ? recentAvgVol / prevAvgVol : 1;
-  // 均价线斜率（近15分钟黄线方向）
+  // 量能：开盘用快照量比（竞价量/5日均量，腾讯实时）；盘中用近5min vs 前5min
+  let volRatio;
+  if (hasTime) {
+    const dn = timeKlines.length;
+    const rv = timeKlines.slice(-5).map(k => k.vol || 0);
+    const pv = dn >= 10 ? timeKlines.slice(-10, -5).map(k => k.vol || 0) : rv;
+    const recentAvgVol = rv.reduce((a, b) => a + b, 0) / rv.length;
+    const prevAvgVol = pv.reduce((a, b) => a + b, 0) / pv.length;
+    volRatio = prevAvgVol > 0 ? recentAvgVol / prevAvgVol : 1;
+  } else {
+    volRatio = (quote && Number(quote.volumeRatio) > 0) ? Number(quote.volumeRatio) : 1;
+  }
+  // 高开/低开幅度（竞价结果，开盘瞬间就有）
+  const gapPct = prevClose > 0 ? (open - prevClose) / prevClose * 100 : 0;
+  // 均价线斜率（近15分钟黄线方向；开盘阶段无意义置 0）
   let avgSlope = 0;
-  if (avgLine && avgLine.length >= 15) {
+  if (!openPhase && avgLine && avgLine.length >= 15) {
     const old = avgLine[avgLine.length - 15];
     avgSlope = old > 0 ? (avgLine[avgLine.length - 1] - old) / old * 100 : 0;
   }
-  return { lastPrice, prevClose, currentAvg, avgDev, dayHigh, dayLow, dayPosition, amplitude, volRatio, avgSlope, avgLine, timeKlines };
+  return {
+    lastPrice, prevClose, open, currentAvg, avgDev, baseRef, openPhase, gapPct,
+    dayHigh, dayLow, dayPosition, amplitude, volRatio, avgSlope, avgLine, timeKlines,
+  };
 }
 
 // ── 计算T位 ──
 function calcTPositions(activeForm, timeInfo, dayInfo) {
-  const { lastPrice, currentAvg, dayLow, dayHigh } = timeInfo;
+  const { lastPrice, currentAvg, dayLow, dayHigh, openPhase, open, prevClose } = timeInfo;
   const { bollUp, bollLow, bollMid } = dayInfo;
   const r2 = v => Math.round(v * 100) / 100;
-  const base = currentAvg > 0 ? currentAvg : lastPrice;
   const isSwing = activeForm === 'swing' || activeForm === 'unclear';
+
+  // ── 开盘模式（分时<30min）：基准=今开，T位依据「高开/低开 + 日线结构」 ──
+  if (openPhase) {
+    const base = open || prevClose || lastPrice;
+    const gap = prevClose > 0 ? (base - prevClose) / prevClose * 100 : 0;
+    // 阈值随高开/低开自适应：高开等冲高回落（卖区上移/买区下移），低开防反抽（卖区略低）
+    let sellThLow, sellThHigh, buyThHigh, buyThLow, buyHighMax;
+    if (gap >= 1) {          // 高开 ≥1%：冲高回落概率大，卖出区设今开上方，买回区设今开下方
+      sellThLow = 0.8; sellThHigh = 2.0;
+      buyThHigh = 1.0; buyThLow = 2.5;
+      buyHighMax = base * (1 - buyThHigh / 100);
+    } else if (gap <= -1) {  // 低开 ≤-1%：存在反抽，卖出区设今开上方；低开恐慌可低吸
+      sellThLow = 0.8; sellThHigh = 2.5;
+      buyThHigh = 0.5; buyThLow = 1.5;
+      buyHighMax = base * (1 - buyThHigh / 100);
+    } else {                 // 平开：常规区间
+      sellThLow = 0.4; sellThHigh = 1.5;
+      buyThHigh = 0.4; buyThLow = 1.5;
+      buyHighMax = base * (1 - buyThHigh / 100);
+    }
+    const sellLow = r2(base * (1 + sellThLow / 100));
+    const sellHigh = r2(Math.min(bollUp || base * 1.05, base * (1 + sellThHigh / 100)));
+    const buyHigh = r2(buyHighMax);
+    const buyLowByDev = r2(base * (1 - buyThLow / 100)); // 始终 < buyHigh
+    // dayLow 做地板只在它严格低于 buyHigh 时有意义，否则忽略（避免 buyLow > buyHigh）
+    const buyLow = r2(dayLow > 0 && dayLow < buyHigh ? Math.max(dayLow, buyLowByDev) : buyLowByDev);
+    const inSellZone = lastPrice >= sellLow;
+    const inBuyZone = lastPrice <= buyHigh;
+    const expectedTDiff = ((sellHigh - buyLow) / base * 100).toFixed(1);
+    return { sellLow, sellHigh, buyLow, buyHigh, inSellZone, inBuyZone, inNeutral: !inSellZone && !inBuyZone, expectedTDiff, base, openPhase };
+  }
+
+  // ── 盘中模式：基准=黄线 ──
+  const base = currentAvg > 0 ? currentAvg : lastPrice;
   // 卖出区
   const sellThLow = isSwing ? 1.5 : 0.8;
   const sellThHigh = isSwing ? 2.8 : 1.5;
@@ -97,7 +148,7 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
 
 // ── 生成文字报告（教学式）──
 function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos) {
-  const { lastPrice, currentAvg, avgDev, dayHigh, dayLow, dayPosition, volRatio, amplitude, avgSlope } = timeInfo;
+  const { lastPrice, currentAvg, avgDev, dayHigh, dayLow, dayPosition, volRatio, amplitude, avgSlope, openPhase, open, gapPct, baseRef } = timeInfo;
   const { ma5, ma10, ma20, bollUp, bollLow, bollMid, bollWidth } = dayInfo;
   const { sellLow, sellHigh, buyLow, buyHigh, inSellZone, inBuyZone, inNeutral, expectedTDiff } = tPos;
   const now = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, hour: '2-digit', minute: '2-digit' });
@@ -153,7 +204,23 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   L.push('');
   // ── 分时现状 ──
   L.push('━━━ 分时现状 ━━━');
-  if (currentAvg > 0) {
+  if (openPhase) {
+    // 开盘模式：黄线未成形，用「今开 + 量比 + 日线位置」判断（开盘瞬间即可用）
+    const gapTxt = gapPct > 1 ? `高开 +${gapPct.toFixed(2)}%` : gapPct < -1 ? `低开 ${gapPct.toFixed(2)}%` : `平开 ${gapPct.toFixed(2)}%`;
+    L.push(`今开 ${fp(open)}（${gapTxt}）  /  现价 ${fp(lastPrice)}  /  量比 ${volRatio.toFixed(1)}`);
+    const vsOpen = baseRef > 0 ? (lastPrice - baseRef) / baseRef * 100 : 0;
+    const dirTxt = vsOpen > 0.5 ? `开盘后走强 +${vsOpen.toFixed(2)}%（相对今开）` : vsOpen < -0.5 ? `开盘后走弱 ${vsOpen.toFixed(2)}%（相对今开）` : '开盘后在今开附近震荡';
+    L.push(`→ ${dirTxt}`);
+    if (gapPct > 1) {
+      L.push(`   💡 高开：竞价资金抢筹。注意冲高回落风险——高开冲高是 T 卖出良机`);
+      if (volRatio > 1.5) L.push(`   🔥 量比 ${volRatio.toFixed(1)} 放量高开，需防冲高回落（开盘前30分钟最容易出货）`);
+    } else if (gapPct < -1) {
+      L.push(`   💡 低开：竞价恐慌低开。若缩量低开往往有修复，是 T 买回良机`);
+      if (volRatio > 1.5) L.push(`   ⚠️ 量比 ${volRatio.toFixed(1)} 放量低开，可能继续下探，买回需等企稳`);
+    } else {
+      L.push(`   💡 平开：无方向性缺口，重点看开盘后走势与量能`);
+    }
+  } else if (currentAvg > 0) {
     L.push(`现价 ${fp(lastPrice)}  /  黄线均价 ${fp(currentAvg)}  /  偏离 ${fpct(avgDev)}`);
     const devLabel = Math.abs(avgDev) < 0.5 ? '均值附近，T的空间有限'
       : avgDev > 2 ? `📍 明显偏贵，处于T卖出窗口区`
@@ -169,9 +236,10 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   L.push(`日内区间 ${fp(dayLow)} ~ ${fp(dayHigh)}（振幅${amplitude.toFixed(1)}%），当前位于区间 ${dayPosition.toFixed(0)}% 高位`);
   L.push(`→ 位置越高上方空间越小；${dayPosition > 65 ? '⚠️ 偏高位，上方空间已不多' : dayPosition < 35 ? '偏低位，下方空间已不多' : '中间位，双向均有空间'}`);
   L.push('');
-  const volDesc = volRatio > 1.5 ? `放量 +${((volRatio - 1) * 100).toFixed(0)}%`
-    : volRatio < 0.7 ? `缩量 -${((1 - volRatio) * 100).toFixed(0)}%` : '量能正常';
-  L.push(`量能节奏：近5分钟 vs 前5分钟  →  ${volDesc}`);
+  const volDesc = openPhase
+    ? (volRatio > 1.5 ? `量比 ${volRatio.toFixed(1)}（放量）` : volRatio < 0.7 ? `量比 ${volRatio.toFixed(1)}（缩量）` : `量比 ${volRatio.toFixed(1)}（正常）`)
+    : (volRatio > 1.5 ? `放量 +${((volRatio - 1) * 100).toFixed(0)}%` : volRatio < 0.7 ? `缩量 -${((1 - volRatio) * 100).toFixed(0)}%` : '量能正常');
+  L.push(`量能节奏：${openPhase ? '竞价量比（vs 5日均量）' : '近5分钟 vs 前5分钟'}  →  ${volDesc}`);
   if (inSellZone && volRatio < 0.8) L.push(`→ 📍 价涨量缩 = 上涨乏力，T的经典卖出信号（没人在追高）`);
   else if (inSellZone && volRatio > 1.4) L.push(`→ ⚠️ 价涨放量 = 有人追筹，可能是趋势突破，T出后可能追不回来`);
   else if (inBuyZone && volRatio < 0.8) L.push(`→ 📍 价跌量缩 = 下跌钝化，T的买回信号（无人继续砸盘）`);
@@ -180,7 +248,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   L.push('');
   // ── T位建议 ──
   const stratLabel = activeForm === 'uptrend' ? '上升单边' : activeForm === 'downtrend' ? '下降单边' : '震荡';
-  L.push(`━━━ T位建议（${stratLabel}模式）━━━`);
+  L.push(`━━━ T位建议（${stratLabel}${openPhase ? '·开盘' : ''}模式）━━━`);
   if (activeForm === 'uptrend') {
     L.push(`⚠️ 上升单边：整体不建议做T（踏空风险大）`);
     L.push(`   趋势股的特征是：涨了还会涨，卖了常常更贵才买回，得不偿失`);
@@ -198,7 +266,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push(`   重要：若反弹力度超预期，不要因T量过大而被迫高价补仓`);
     L.push('');
     L.push(`🔴 卖出参考：${fp(sellLow)} ~ ${fp(sellHigh)}`);
-    L.push(`   理由：反弹到黄线上方（+0.8%），是下降趋势中难得的相对高位`);
+    L.push(`   理由：${openPhase ? '反弹到今开上方' : '反弹到黄线上方（+0.8%）'}，是下降趋势中难得的相对高位`);
     if (ma5) L.push(`   MA5(${fp(ma5)}) 是反弹压力位，靠近时警惕回落`);
     L.push('');
     L.push(`🟢 买回参考：${fp(buyLow)} ~ ${fp(buyHigh)}`);
@@ -207,11 +275,11 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   } else {
     // 震荡
     L.push(`🔴 卖出参考：${fp(sellLow)} ~ ${fp(sellHigh)}`);
-    L.push(`   理由：偏离黄线 +1.5% 以上 = 今日成本偏贵区，此时持有者平均亏损，有出货压力`);
+    L.push(`   理由：${openPhase ? `相对今开 +${(() => { const g = gapPct >= 1 ? '0.8%' : gapPct <= -1 ? '0.8%' : '0.4%'; return g; })()} 以上（开盘冲高区）` : '偏离黄线 +1.5% 以上 = 今日成本偏贵区，此时持有者平均亏损，有出货压力'}`);
     if (bollUp) L.push(`   ↑ BOLL上轨(${fp(bollUp)}) 是强压力，可挂到此位附近`);
     L.push('');
     L.push(`🟢 买回参考：${fp(buyLow)} ~ ${fp(buyHigh)}`);
-    L.push(`   理由：黄线附近（偏低 -0.8% 内）= 今日成本中枢，持有者平均有浮盈，下跌意愿弱`);
+    L.push(`   理由：${openPhase ? '相对今开回落（开盘回落区），低吸机会' : '黄线附近（偏低 -0.8% 内）= 今日成本中枢，持有者平均有浮盈，下跌意愿弱'}`);
     if (bollLow) L.push(`   ↓ BOLL下轨(${fp(bollLow)}) 是强支撑，回踩此位量缩可买`);
     L.push('');
     L.push(`📏 T差参考：卖出${fp(sellLow)} → 买回${fp(buyHigh)}，差${fp(Math.max(0, sellLow - buyHigh))}元/股`);
@@ -445,20 +513,26 @@ async function cmdT(args) {
   }
   // 日线分析
   const dayInfo = analyzeTDayForm(dayKlines);
-  // 分时分析（盘后无分时时用日线末尾数据补充）
+  // 分时分析（无分时/开盘不足30min → openPhase 模式，基准用今开+量比+日线位置）
   let timeInfo;
-  if (timeKlines && timeKlines.length >= 5) {
+  if (timeKlines && timeKlines.length >= 2) {
     timeInfo = analyzeTTimeData(timeKlines, quote);
   } else {
+    // 盘前/盘后无分时：用快照 + 日线末尾补充；开盘模式标志交给 analyzeTTimeData 统一判断
     const last = dayKlines[dayKlines.length - 1], prev = dayKlines[dayKlines.length - 2];
     timeInfo = {
       lastPrice: (quote && Number(quote.price) > 0) ? Number(quote.price) : last.close,
       prevClose: prev ? prev.close : last.close,
+      open: (quote && Number(quote.open) > 0) ? Number(quote.open) : (prev ? prev.close : last.close),
       currentAvg: 0, avgDev: 0,
+      baseRef: (quote && Number(quote.open) > 0) ? Number(quote.open) : last.close,
+      openPhase: true,
+      gapPct: prev ? (((quote && Number(quote.open) > 0) ? Number(quote.open) : prev.close) - prev.close) / prev.close * 100 : 0,
       dayHigh: (quote && Number(quote.high) > 0) ? Number(quote.high) : last.high,
       dayLow: (quote && Number(quote.low) > 0) ? Number(quote.low) : last.low,
       dayPosition: 50, amplitude: prev ? Math.abs(last.close - prev.close) / prev.close * 100 : 0,
-      volRatio: 1, avgSlope: 0, avgLine: null, timeKlines: [],
+      volRatio: (quote && Number(quote.volumeRatio) > 0) ? Number(quote.volumeRatio) : 1,
+      avgSlope: 0, avgLine: null, timeKlines: [],
     };
   }
   // 实际生效的形态
