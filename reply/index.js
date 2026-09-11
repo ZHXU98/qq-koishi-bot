@@ -1482,7 +1482,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
       const refLW = ctx.measureText(refLabel).width + 8;
       ctx.fillStyle = 'rgba(138,145,156,0.85)'; ctx.beginPath(); ctx.roundRect(W - PAD + 2, yRef - 10, refLW, 20, 3); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '11px cjk';
-      ctx.fillText(refLabel, W - PAD + 2 + refLW / 2, yRef + 4);
+      ctx.fillText(refLabel, W - PAD + 2 + refLW / 2, yRef);
     }
     // 价格线颜色：按「昨收」判断（红涨绿跌标准口径）——现价 < 昨收（负收益）必须绿色。
     // 早期曾用「今开」作红绿基准，导致尾盘出现「现价 2904 < 昨收 2910 却仍是红线」的负收益红盘，
