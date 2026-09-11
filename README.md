@@ -440,7 +440,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 
 ## 快讯转发（ths-news）
 
-每 **5 分钟**（`NEWS_INTERVAL=300`）拉取同花顺官方 7×24「重要」快讯，渲染成中文 SVG→PNG 图片卡片推送到 QQ。**「有就发、不丢弃」**——本轮新捞到的「重要」快讯全部立即推送。
+每 **5 分钟**（`NEWS_INTERVAL=300`）拉取同花顺官方 7×24「重要」快讯，渲染成中文 SVG→PNG 图片卡片推送到 QQ。**分级聚合**——命中必推关键词的极重要资讯立即推，其余重要资讯攒够 8 条（`AGG_COUNT`）或到整点/半点（每 30 分钟）再推一批。
 
 ```
 同花顺官方接口（import>0 即「重要」）
@@ -461,6 +461,8 @@ fetch_ths_news.js ── 过滤(import>0) + 去重(state) + 组装条目
 | `NEWS_INTERVAL` | `300` | 拉取间隔（秒） |
 | `THS_STATE` | `/app/state/ths_news_state.json` | 去重状态文件（持久卷 `ths-news-state`） |
 | `IMPORT_ONLY` | `true` | `true` = 仅官方「重要」；`false` = 退化为关键词加权 |
+| `URGENT_KEYWORDS` | 见代码 | 极重要（立即推）必推关键词，逗号分隔，可环境变量覆盖 |
+| `AGG_COUNT` | `8` | 普通重要资讯聚合阈值：攒够该条数即推一批（否则整点/半点推） |
 
 **排障**：
 

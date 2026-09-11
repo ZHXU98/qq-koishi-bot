@@ -5,7 +5,7 @@
 - 数据源：同花顺官方 7×24 接口，每条自带 `import` 字段（`import>0` 即官方标记的「重要」），比关键词加权更准。
 - 渲染：纯 Rust 的 `@resvg/resvg-js` 把 SVG 渲染成 PNG（**无 Chrome / 无 puppeteer 依赖**）。
 - 推送：经 **`official-bot-gateway`**（官方开放平台通道，OneBot 兼容 HTTP）推到 QQ。
-- 自动化：容器内 `start_news_cron.sh` 每 **5 分钟**拉取一次，「**有就发、不丢弃**」——本轮新捞到的所有「重要」快讯立即全推。
+- 自动化：容器内 `start_news_cron.sh` 每 **5 分钟**拉取一次，**分级聚合推送**——命中必推关键词（`URGENT_KEYWORDS`）的极重要资讯立即推；其余重要资讯先入缓冲，攒够 8 条（`AGG_COUNT`）或到整点/半点（每 30 分钟）才推一批。
 - 部署：整个仓库是一个 Docker Compose 项目，克隆后 `docker compose up -d` 即可，**换电脑零环境配置**。
 
 > 历史上推送走 NapCat（个人号），2026-08-26 起改接官方网关；环境变量名沿用 `NAPCAT_URL` 未改。

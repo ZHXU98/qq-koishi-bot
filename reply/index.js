@@ -2256,36 +2256,19 @@ function buildStocksPng(items, meta) {
       ctx.fillStyle = it.lineCol;
       ctx.beginPath(); ctx.arc(px(dn - 1), Y(it.disp[dn - 1].close), 4, 0, Math.PI * 2); ctx.fill();
 
-      // 昨收标签（右上角，虚线上方）：在价格线之后绘制，并按曲线实际 y 做上下避让——
-      // 默认贴虚线上方；右上区域被曲线穿过则移到虚线下方；上下都撞则取离曲线更远的一侧。
-      // 2026-09-11：固定位置时「高开回落/高开的票」曲线必穿标签（英伟达/微软/纽约金实测）。
+      // 昨收标签：与现价标签对角错开——现价涨(右上)则昨收贴右下，现价跌(右下)则昨收贴右上
+      // 灰色底，不抢现价（红绿）的视觉焦点
       if (it.prevText && it.baseline > 0) {
-        const yb = Y(it.baseline);
-        if (yb > chY - 1 && yb < chY + chartH + 1) {
-          const lb = '昨收 ' + it.prevText;
-          ctx.font = `${Math.max(16, F.meta - 2)}px cjk`;
-          const lw = ctx.measureText(lb).width + 8;
-          const lyUp = Math.max(chY, yb - 15);
-          const lyDn = Math.min(chY + chartH - 15, yb + 1);
-          const x0 = chX + chartW - lw; // 标签左缘
-          let hitUp = false, hitDn = false, dUp = Infinity, dDn = Infinity;
-          for (let k = 0; k < dn; k++) {
-            const sx = px(k);
-            if (sx < x0 - 3) continue; // 只看标签横向范围内的曲线段
-            const sy = Y(it.disp[k].close);
-            if (sy >= lyUp - 3 && sy <= lyUp + 18) hitUp = true;
-            if (sy >= lyDn - 3 && sy <= lyDn + 18) hitDn = true;
-            dUp = Math.min(dUp, Math.abs(sy - (lyUp + 7.5)));
-            dDn = Math.min(dDn, Math.abs(sy - (lyDn + 7.5)));
-          }
-          const ly = !hitUp ? lyUp : (!hitDn ? lyDn : (dUp >= dDn ? lyUp : lyDn));
-          ctx.fillStyle = 'rgba(201,206,214,0.92)';
-          ctx.fillRect(chX + chartW - lw, ly, lw, 15);
-          ctx.fillStyle = '#6b7280';
-          ctx.textAlign = 'center';
-          ctx.fillText(lb, chX + chartW - lw / 2, ly + 7.5);
-          ctx.textAlign = 'left';
-        }
+        const lb = '昨收 ' + it.prevText;
+        ctx.font = `${Math.max(16, F.meta - 2)}px cjk`;
+        const lw = ctx.measureText(lb).width + 8;
+        const ly = it.chgPct >= 0 ? (chY + chartH - 15) : (chY + 2);
+        ctx.fillStyle = 'rgba(201,206,214,0.92)';
+        ctx.fillRect(chX + chartW - lw, ly, lw, 15);
+        ctx.fillStyle = '#6b7280';
+        ctx.textAlign = 'center';
+        ctx.fillText(lb, chX + chartW - lw / 2, ly + 7.5);
+        ctx.textAlign = 'left';
       }
     } else {
       // K线：蜡烛（涨红跌绿）
@@ -2303,7 +2286,25 @@ function buildStocksPng(items, meta) {
       }
     }
 
-    // 底部信息行：代码·现价（左） + 区间涨跌幅/振幅（右）；宽度不足时收缩左侧，避免重叠
+    // 现价标签：直接画进走势图（涨红跌绿），不占底部信息行
+    // 分时：涨(红)→右上角、跌(绿)→右下角，与「昨收」标签对角错开；日线固定右上角
+    if (it.livePxTxt && it.livePxTxt !== '-') {
+      const liveTxt = it.livePxTxt;
+      ctx.font = `bold ${Math.max(16, F.meta - 1)}px cjk`;
+      const lw = ctx.measureText(liveTxt).width + 12;
+      const lx = chX + chartW - lw;
+      const ly = meta.period === 'time'
+        ? (it.chgPct >= 0 ? (chY + 2) : (chY + chartH - 22))
+        : (chY + 2);
+      ctx.fillStyle = it.chgPct >= 0 ? UP : DOWN;
+      ctx.fillRect(lx, ly, lw, 20);
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.fillText(liveTxt, lx + lw / 2, ly + 11);
+      ctx.textAlign = 'left';
+    }
+
+    // 底部信息行：代码（左） + 区间涨跌幅/振幅（右）；宽度不足时收缩左侧，避免重叠
     const metaY = cy + PADY + TITLE_ROW + chartH + META_ROW / 2;
     ctx.font = `${F.meta}px cjk`;
     const availM = cwid - PADX * 2;
@@ -2548,9 +2549,7 @@ async function cmdStocks(args, ctx = {}) {
   const cols = stocksGridCols(items.length);
   const baseW = Math.floor((1080 - (cols - 1)) / cols); // 与 buildStocksPng 的列宽算法一致
   // 实测字宽（1080px 画布）：1列可用 1036 / 2列 495 / 3列 327 / 4列 241
-  //   「代码 · 现价 + 区间 xxx%」需 ~400px → 仅 1/2 列放得下
-  //   「代码 + 区间 xxx%」需 ~267px → 3 列可；4 列只能「代码 + xxx%」
-  const showPrice = baseW >= 480;
+  // 现价已改画进走势图（见 buildStocksPng），底部行只保留「代码 + 区间 xxx%」
   const showPrefix = baseW >= 300;
   let up = 0, down = 0, sum = 0, cnt = 0;
   for (const it of items) {
@@ -2582,7 +2581,9 @@ async function cmdStocks(args, ctx = {}) {
     //   价格线压成只剩顶部一小条。单只 /stock -t 在 renderStockPngCanvas/Svg 里
     //   已有同样的 isIndex 守卫（line ~1254/1604），这里补上保持一致。
     const codeShort = it.code.replace(/\.\w+$/, '').toUpperCase();
-    it.metaLeft = showPrice ? `${codeShort} · ${fp(livePx)}` : codeShort;
+    it.livePx = livePx;
+    it.livePxTxt = fp(livePx);
+    it.metaLeft = codeShort;
     it.prevText = (period === 'time' && prevClose > 0) ? fp(prevClose) : ''; // 分时昨收数值（图上标签用）
     if (period === 'time') {
       const hi = Math.max(...disp.map(k => k.high)), lo2 = Math.min(...disp.map(k => k.low));

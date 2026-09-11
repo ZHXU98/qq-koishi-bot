@@ -5,16 +5,17 @@
 //   该接口每条资讯自带 `import` 字段：import=3（或 >0）即同花顺标记为「重要」，
 //   等价于原 RSSHub 的「重要」订阅标签，且为同花顺自带的重要性判定，比关键词加权更准。
 //
-// 流程（「有就发」模式）：
-//   1. 每 10 分钟（容器内 start_news_cron.sh 循环）拉取官方接口，仅保留 import>0（同花顺「重要」标记）的资讯
-//   2. 标签 + 关键词加权打分仅用于重要资讯内部排序，不参与过滤
-//   3. 本地去重（seen 列表）后，本轮新捞到的所有重要资讯「立即全部推送」，不攒批、不丢弃
-//   4. 通过 NapCat 以图片卡片（SVG→PNG，resvg 渲染）推送到 ths_news_targets.json 配置的 QQ 私聊/群；渲染失败时自动回退纯文字
+// 流程（分级聚合模式）：
+//   1. 每 5 分钟（容器内 start_news_cron.sh 循环，NEWS_INTERVAL=300）拉取官方接口，仅保留 import>0（同花顺「重要」标记）的资讯
+//   2. 关键词加权打分用于在「重要」内部再分档（同花顺只有 import>0 一档，细分靠关键词）
+//   3. 命中必推关键词（URGENT_KEYWORDS）→ 极重要，立即推送
+//   4. 其余重要资讯入 pending 缓冲，攒够 AGG_COUNT 条（默认 8）或到整点/半点（每 30 分钟）才推一批
+//   5. 通过官方网关以图片卡片（SVG→PNG，resvg 渲染）推送到 ths_news_targets.json 配置的 QQ 私聊/群；渲染失败时自动回退纯文字
 //     单张卡片最多承载 MAX_PUSH 条，超过则拆成多张卡片发出，保证不丢任何一条
 //
 // 用法：
-//   node fetch_ths_news.js              # 正式模式（每轮有新的重要资讯就立即全推）
-//   node fetch_ths_news.js --dry-run    # 只打印筛选结果，不推送
+//   node fetch_ths_news.js              # 正式模式（极重要立即推 + 其余聚合推）
+//   node fetch_ths_news.js --dry-run    # 只打印筛选结果（标注分级），不推送
 //   node fetch_ths_news.js --force      # 立即推送本轮候选（全部），用于测试
 //
 // 配置：RSS 资讯独立配置 ths_news_targets.json（private / groups / imageWidth / imageScale），
@@ -36,6 +37,9 @@ const DRY = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force'); // 立即推送当前 Top，用于测试
 
 const MAX_PUSH = 8;             // 单条消息最多承载条数（超过则拆成多条发出，全部发送，不丢弃）
+// 聚合推送阈值：重要资讯攒够该条数即推一批。可用环境变量 AGG_COUNT 覆盖。
+const AGG_COUNT = (() => { const n = Number(process.env.AGG_COUNT); return Number.isFinite(n) && n >= 1 ? n : 8; })();
+// 聚合节奏：攒够 AGG_COUNT 条即推，或到整点/半点（每 30 分钟）兑底推。
 // 仅推送同花顺官方「重要」标记（import>0）的资讯；设为 'false' 则退化为关键词加权筛选
 const IMPORT_ONLY = (process.env.IMPORT_ONLY || 'true') !== 'false';
 const SEEN_KEEP = 500;          // 去重记录保留条数
@@ -97,6 +101,17 @@ function scoreNews(item) {
   return s;
 }
 
+// 必推关键词：在「重要」（import>0）资讯内部再分档——命中即「极重要」，立即推送、不聚合。
+// 同花顺只有 import>0 一档「重要」，这里用关键词在内部再分「极重要 / 重要普通」两级。
+// 默认取最重磅的政策/突发词；可用环境变量 URGENT_KEYWORDS 覆盖（逗号分隔）。
+const URGENT_KEYWORDS = (process.env.URGENT_KEYWORDS
+  || '降准,降息,加息,证监会,汇金,关税,美联储,印花税,国家队,特别国债,平准基金,熔断,退市,突发,紧急,黄金,石油')
+  .split(',').map(s => s.trim()).filter(Boolean);
+function isUrgent(item) {
+  const text = (item.title || '') + ' ' + (item.desc || '');
+  return URGENT_KEYWORDS.some(k => text.includes(k));
+}
+
 // ---------- 数据源 ----------
 async function fetchFromOfficial() {
   try {
@@ -126,7 +141,7 @@ function loadState() {
   try {
     if (fs.existsSync(STATE_PATH)) return JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
   } catch (e) { console.log('[state] 读取失败，重建', e.message); }
-  return { seen: [], lastPush: 0 };
+  return { seen: [], pending: [], lastPush: 0, lastAggSlot: '' };
 }
 function saveState(st) {
   try { fs.writeFileSync(STATE_PATH, JSON.stringify(st, null, 2)); }
@@ -349,8 +364,8 @@ async function main() {
 
   if (DRY) {
     console.log('[targets] private=', JSON.stringify(PRIVATE_IDS), 'groups=', JSON.stringify(GROUP_IDS));
-    console.log(`本轮新候选 ${candidates.length} 条（同花顺「重要」+最近72h+未推送）——「有就发」模式将全部推送，不攒批、不丢弃`);
-    candidates.slice(0, 12).forEach((c, i) => console.log(`  ${i + 1}. [重要 import=${c.import}][分${c.score}] ${fmtTime(c.time)} ${c.title}`));
+    console.log(`本轮新候选 ${candidates.length} 条（同花顺「重要」+最近72h+未推送）——极重要(立即推) ${candidates.filter(isUrgent).length} 条 / 普通重要(聚合) ${candidates.filter(c => !isUrgent(c)).length} 条`);
+    candidates.slice(0, 12).forEach((c, i) => console.log(`  ${i + 1}. [${isUrgent(c) ? '⚡极重要' : '聚合'}] [重要 import=${c.import}][分${c.score}] ${fmtTime(c.time)} ${c.title}`));
     return;
   }
 
@@ -368,30 +383,64 @@ async function main() {
     return;
   }
 
-  // 「有就发」：本轮新捞到的所有重要资讯立即全部推送，不攒批、不丢弃
-  if (candidates.length === 0) {
-    saveState(st);
-    console.log('本轮无新重要资讯');
+  // —— 分级：命中必推关键词 → 极重要立即推；其余重要 → 聚合 ——
+  const urgent = candidates.filter(isUrgent);
+  const normal = candidates.filter(c => !isUrgent(c));
+
+  // 1) 极重要：立即推送（命中必推关键词）
+  if (urgent.length > 0) {
+    for (const c of urgent) seenSet.add(c.link);
+    if (await checkLogin()) {
+      const ures = await pushToTargets(urgent, dateStr);
+      if (ures.privateFail > 0) {
+        for (const c of urgent) seenSet.delete(c.link); // 失败回滚，下轮重试
+        console.error(`⚠️ 极重要私聊失败 ${ures.privateFail} 个，回滚 seen 下轮重试`);
+      } else {
+        console.log(`✅ 极重要推送完成，共 ${urgent.length} 条`);
+      }
+    } else {
+      for (const c of urgent) seenSet.delete(c.link); // 登录异常，回滚 seen 下轮重试
+      console.error('登录态异常，极重要资讯暂不推送，下轮重试');
+    }
+  }
+
+  // 2) 重要普通：入缓冲，攒够 AGG_COUNT 条或到整点/半点再推
+  if (normal.length > 0) {
+    for (const c of normal) seenSet.add(c.link);
+    if (!Array.isArray(st.pending)) st.pending = [];
+    st.pending.push(...normal);
+    console.log(`普通重要入缓冲，当前待推 ${st.pending.length} 条`);
+  }
+  st.seen = Array.from(seenSet).slice(-SEEN_KEEP);
+  saveState(st);
+
+  // 3) 聚合判断：攒够 AGG_COUNT 条，或到整点/半点（每 30 分钟一个槽）
+  const now = new Date();
+  const slotKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes() < 30 ? '00' : '30'}`;
+  const pending = Array.isArray(st.pending) ? st.pending : [];
+  const isNewSlot = slotKey !== (st.lastAggSlot || '');
+  const shouldPush = pending.length >= AGG_COUNT || (isNewSlot && pending.length > 0);
+
+  if (!shouldPush) {
+    console.log(`本轮不推聚合（待推 ${pending.length} 条，攒够 ${AGG_COUNT} 条或到整点/半点触发）`);
     return;
   }
 
-  // 登录态异常（多为 NapCat 瞬时不可达）不要自杀退出：本轮跳过、不标记已推送，下轮自动重试，
-  // 避免整个转发循环被一次网络抖动打挂而永久停摆
-  if (!(await checkLogin())) { console.error('登录态异常，暂不推送，下轮重试'); return; }
-  for (const c of candidates) seenSet.add(c.link);
-  st.seen = Array.from(seenSet).slice(-SEEN_KEEP);
-  const res = await pushToTargets(candidates, dateStr);
-  // 私聊（主目标）未送达：回滚 seen 标记，下轮自动重试，避免「以为发了其实没发」且永久丢失
+  if (!(await checkLogin())) { console.error('登录态异常，暂不推聚合，下轮重试'); return; }
+
+  const res = await pushToTargets(pending, dateStr);
   if (res.privateFail > 0) {
-    for (const c of candidates) seenSet.delete(c.link);
-    st.seen = Array.from(seenSet).slice(-SEEN_KEEP);
-    console.error(`⚠️ 私聊推送失败 ${res.privateFail} 个，已回滚 seen 标记，下轮自动重试`);
-  } else if (res.fail > res.privateFail) {
-    console.error(`⚠️ 群推送失败 ${res.fail - res.privateFail} 个（私聊已送达，群权限需用户侧修复）`);
+    console.error(`⚠️ 聚合私聊失败 ${res.privateFail} 个，保留缓冲下轮重试`);
+  } else {
+    st.pending = [];
+    st.lastAggSlot = slotKey;
+    if (res.fail > res.privateFail) {
+      console.error(`⚠️ 聚合群推送失败 ${res.fail - res.privateFail} 个（私聊已送达，群权限需用户侧修复）`);
+    }
   }
   st.lastPush = Date.now();
   saveState(st);
-  console.log(`本轮推送完成，共 ${candidates.length} 条重要资讯`);
+  console.log(`聚合推送完成，共 ${pending.length} 条`);
 }
 
 // 仅当直接运行本文件时才执行主流程；被 require 时仅暴露渲染函数（供验证/复用脚本使用）
