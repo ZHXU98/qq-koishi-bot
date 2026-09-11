@@ -29,9 +29,10 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   const isHK = code.startsWith('hk'); // 港股：字段口径不同，不显示基本面面板
   const isUS = code.startsWith('us');
   const isHF = code.startsWith('hf_'); // 国际商品：接近24h连续交易，分时用索引等距映射
-  const showInfo = !isHK && !isUS && quote && (quote.peTtm > 0 || quote.pb > 0) && quote.mktCap > 0; // 美股无 PE动/静/PB 等字段，同样不显示
+  const hasFund = !!(quote && (quote.peTtm > 0 || quote.pb > 0 || quote.eps > 0)); // 有无个股基本面（ETF 无 PE/PB）
+  const showInfo = !isHK && !isUS && !!quote && quote.mktCap > 0 && (hasFund || quote.open > 0); // 美股无基本面不显示；ETF 无 PE/PB 但有市值/行情，仍显示
   const LEG_H = timeMode ? 30 : ((maPeriods && maPeriods.length > 0) ? 66 : 40);
-  const INFO_H = 74;
+  const INFO_H = hasFund ? 74 : 34; // 个股三行；ETF 一行（市值/昨收/今开/最高/最低/振幅）
   const H = TITLE_H + VOL_H + LEG_H + (showInfo ? INFO_H : 0) + PAD + 8 + 340;
   const n = klines.length;
   const display = timeMode
@@ -364,9 +365,11 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
     ctx.fillStyle = panel; ctx.fillRect(PAD - 8, infoTop - 6, W - PAD * 2 + 16, INFO_H);
     ctx.fillStyle = ink;
     const f = v => isFinite(v) ? v.toFixed(2) : '-';
+    const fpx = v => isFinite(v) ? Number(v).toFixed(prec) : '-'; // 价格按品种精度（ETF 三位小数）
     const yi = s => Number(s) / 1e8;
     // hl: 1=红色加粗（PE动/PB 动态估值），2=深色加粗（今开/最高/最低 突出）
-    const rows = [
+    // 个股：三行全字段；ETF/无基本面：单行市值+行情（避免大量 '-' 空字段）
+    const rows = hasFund ? [
       [
         { l: '市盈率(动)', v: f(quote.peDyn), hl: 1 },
         { l: '市盈率(TTM)', v: f(quote.peTtm) },
@@ -387,9 +390,18 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
         { l: '换手率', v: f(quote.turnover) + '%' },
         { l: '量比', v: f(quote.volumeRatio) },
         { l: '振幅', v: f(quote.amplitude) + '%' },
-        { l: '今开', v: f(quote.open), hl: 2 },
-        { l: '最高', v: f(quote.high), hl: 2 },
-        { l: '最低', v: f(quote.low), hl: 2 },
+        { l: '今开', v: fpx(quote.open), hl: 2 },
+        { l: '最高', v: fpx(quote.high), hl: 2 },
+        { l: '最低', v: fpx(quote.low), hl: 2 },
+      ],
+    ] : [
+      [
+        { l: '总市值', v: f(quote.mktCap) + '亿' },
+        { l: '昨收', v: fpx(quote.prevClose) },
+        { l: '今开', v: fpx(quote.open), hl: 2 },
+        { l: '最高', v: fpx(quote.high), hl: 2 },
+        { l: '最低', v: fpx(quote.low), hl: 2 },
+        { l: '振幅', v: f(quote.amplitude) + '%' },
       ],
     ];
     const colW = (W - PAD * 2) / 6;
@@ -424,10 +436,11 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   const isHK = code.startsWith('hk'); // 港股：字段口径不同，不显示基本面面板
   const isUS = code.startsWith('us');
   const isHF = code.startsWith('hf_'); // 国际商品：接近24h连续交易，分时用索引等距映射
-  const showInfo = !isHK && !isUS && quote && (quote.peTtm > 0 || quote.pb > 0) && quote.mktCap > 0; // 美股无 PE动/静/PB 等字段，同样不显示
+  const hasFund = !!(quote && (quote.peTtm > 0 || quote.pb > 0 || quote.eps > 0)); // 有无个股基本面（ETF 无 PE/PB）
+  const showInfo = !isHK && !isUS && !!quote && quote.mktCap > 0 && (hasFund || quote.open > 0); // 美股无基本面不显示；ETF 无 PE/PB 但有市值/行情，仍显示
   // 分时：图例条占 30px（价格/均价/昨收），需计入否则成交量柱会捅进图例区；日线 66（两行）、分钟线 40（单行）
   const LEG_H = timeMode ? 30 : ((maPeriods && maPeriods.length > 0) ? 66 : 40);
-  const INFO_H = 74; // 基本面三行
+  const INFO_H = hasFund ? 74 : 34; // 个股三行；ETF 一行
   const H = TITLE_H + VOL_H + LEG_H + (showInfo ? INFO_H : 0) + PAD + 8 + 340; // plotH 约 340+，总高自适应
   const n = klines.length;
   // 显示根数：分时=当天全部分钟（≤240）；日线=60 根（3 个月，指数日波动 20 点左右，根数过多会把近期波动压扁）；其余分钟线=120 根
@@ -677,9 +690,11 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
     const infoTop = volTop + volH + 26;
     s += `<rect x="${PAD - 8}" y="${infoTop - 6}" width="${W - PAD * 2 + 16}" height="${INFO_H}" rx="8" fill="${panel}"/>`;
     const f = (v, d = 2) => v && isFinite(v) ? v.toFixed(d) : '-';
+    const fpx = v => (v && isFinite(v)) ? Number(v).toFixed(prec) : '-'; // 价格按品种精度（ETF 三位小数）
     const yi = v => Number(v) > 0 ? (Number(v) / 1e8).toFixed(2) + '亿' : '-'; // 股本股→亿
     const divAmt = quote.divYield > 0 ? quote.divYield * quote.price / 100 : 0;
-    const rows = [
+    // 个股：三行全字段；ETF/无基本面：单行市值+行情（避免大量 '-' 空字段）
+    const rows = hasFund ? [
       // 行1：估值
       [
         `市盈率(动) ${f(quote.peDyn)}`, `市盈率(TTM) ${f(quote.peTtm)}`, `市盈率(静) ${f(quote.peStatic)}`,
@@ -694,7 +709,14 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
       // 行3：交易/行情
       [
         `换手率 ${f(quote.turnover)}%`, `量比 ${f(quote.volumeRatio)}`, `振幅 ${f(quote.amplitude)}%`,
-        `今开 ${f(quote.open)}`, `最高 ${f(quote.high)}`, `最低 ${f(quote.low)}`,
+        `今开 ${fpx(quote.open)}`, `最高 ${fpx(quote.high)}`, `最低 ${fpx(quote.low)}`,
+      ],
+    ] : [
+      // ETF/无基本面：市值 + 行情
+      [
+        `总市值 ${f(quote.mktCap)}亿`, `昨收 ${fpx(quote.prevClose)}`,
+        `今开 ${fpx(quote.open)}`, `最高 ${fpx(quote.high)}`, `最低 ${fpx(quote.low)}`,
+        `振幅 ${f(quote.amplitude)}%`,
       ],
     ];
     const colW = (W - PAD * 2) / 6;
