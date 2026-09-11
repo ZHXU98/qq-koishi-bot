@@ -72,9 +72,8 @@ services:
     depends_on:
       - official-bot-gateway
     volumes:
-      - ./reply/index.js:/app/index.js:ro
-      - ./reply/package.json:/app/package.json:ro
-      - ./reply/config.json:/app/config.json:ro
+      # 2026-09-11：项目已拆分为多文件（config/utils/gateway/market/commands/*），整体挂载 src 目录
+      - ./reply:/app
       # 2026-09-11：/stocks 组合数据（可写，非只读；容器内 /app/data/portfolios.json）
       - ./reply/data:/app/data
       # 2026-08-31：共享 ths-news 的 @resvg/resvg-js 渲染库与中文字体（/stock 图表用，只读）
