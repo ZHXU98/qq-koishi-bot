@@ -1607,9 +1607,9 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
       const col = idx < itemsPerRow ? idx : idx - itemsPerRow;
       const cx = PAD + colW * col + colW / 2;
       const cy = yLegend + 14 + row * 26;
-      ctx.fillStyle = it[1]; ctx.fillRect(cx - colW / 2 + 8, cy - 7, 14, 14);
+      ctx.fillStyle = it[1]; ctx.beginPath(); ctx.arc(cx - colW / 2 + 15, cy, 5, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = ink; ctx.font = '13px cjk';
-      ctx.fillText(`${it[0]} ${it[2] != null ? fp(it[2]) : '-'}`, cx - colW / 2 + 28, cy);
+      ctx.fillText(`${it[0]} ${it[2] != null ? fp(it[2]) : '-'}`, cx - colW / 2 + 26, cy);
     });
   }
 
