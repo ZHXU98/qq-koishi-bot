@@ -3847,29 +3847,26 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push(`   理由：黄线附近（偏低 -0.8% 内）= 今日成本中枢，持有者平均有浮盈，下跌意愿弱`);
     if (bollLow) L.push(`   ↓ BOLL下轨(${fp(bollLow)}) 是强支撑，回踩此位量缩可买`);
     L.push('');
-    L.push(`📏 T差参考：卖出 ${fp(sellLow)} → 买回 ${fp(buyHigh)}`);
-    // 按1手(100股)计算实际利润 vs 手续费，让用户看到具体金额
+    L.push(`📏 T差参考：卖出${fp(sellLow)} → 买回${fp(buyHigh)}，差${fp(Math.max(0, sellLow - buyHigh))}元/股`);
+    // 固定用1万元仓位估算盈亏（不问持仓，给个直观参考）
     const tDiffPerShare = Math.max(0, sellLow - buyHigh);
     const refPrice = lastPrice > 0 ? lastPrice : tPos.base;
-    const lotValue = refPrice * 100; // 1手资金（元）
-    // 手续费/手（含5元最低门槛，个股有效）
-    let feePerLot;
-    if (isETF) {
-      feePerLot = lotValue * 0.0002; // 万0.1双向，免五
-    } else {
-      const buyFee = Math.max(lotValue * 0.0008, 5);
-      const sellFee = Math.max(lotValue * 0.0008, 5) + lotValue * 0.001 + lotValue * 0.0004;
-      feePerLot = buyFee + sellFee;
-    }
-    const feePerShare = feePerLot / 100;
-    const netPerLot = Math.round(tDiffPerShare * 100 - feePerLot);
-    const lotCapStr = `1手(100股，约${(lotValue / 10000).toFixed(1)}万元)`;
-    if (tDiffPerShare <= feePerShare) {
-      L.push(`   约 ${fp(tDiffPerShare)}元/股，手续费(${feeDesc})约 ${fp(feePerShare)}元/股`);
-      L.push(`   ⚠️ T差不够覆盖手续费，做T必亏！等振幅更大再操作`);
-    } else {
-      L.push(`   约 ${fp(tDiffPerShare)}元/股，手续费约 ${fp(feePerShare)}元/股`);
-      L.push(`   ${lotCapStr} 净利润 ≈ +${netPerLot}元（手续费已扣）`);
+    const fixedAmt = 10000; // 固定1万元
+    const fixedShares = Math.floor(fixedAmt / refPrice / 100) * 100; // 向下取整到整手
+    if (fixedShares > 0 && tDiffPerShare > 0) {
+      const val = fixedShares * refPrice;
+      const fee = isETF
+        ? val * 0.0002
+        : Math.max(val * 0.0008, 5) + Math.max(val * 0.0008, 5) + val * 0.001 + val * 0.0004;
+      const gross = fixedShares * tDiffPerShare;
+      const net = Math.round(gross - fee);
+      if (net > 0) {
+        L.push(`   1万元仓位可买约${fixedShares}股，本次T一次净赚约 +${net}元（扣手续费${Math.round(fee)}元）`);
+      } else {
+        L.push(`   1万元仓位可买约${fixedShares}股，本次T差仅${Math.round(gross)}元，还不够手续费${Math.round(fee)}元，亏！`);
+      }
+    } else if (tDiffPerShare <= 0) {
+      L.push(`   ⚠️ 卖出区与买回区重叠，当前无T差，等振幅扩大再操作`);
     }
   }
   L.push('');
