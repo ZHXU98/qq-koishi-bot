@@ -3847,10 +3847,30 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push(`   理由：黄线附近（偏低 -0.8% 内）= 今日成本中枢，持有者平均有浮盈，下跌意愿弱`);
     if (bollLow) L.push(`   ↓ BOLL下轨(${fp(bollLow)}) 是强支撑，回踩此位量缩可买`);
     L.push('');
-    L.push(`📏 预期T差：约 ${expectedTDiff}%`);
-    L.push(`   双边手续费（${feeDesc}）`);
-    const net = (parseFloat(expectedTDiff) - feeRate).toFixed(2);
-    L.push(`   扣除手续费后净赚空间：约 ${net}%`);
+    L.push(`📏 T差参考：卖出 ${fp(sellLow)} → 买回 ${fp(buyHigh)}`);
+    // 按1手(100股)计算实际利润 vs 手续费，让用户看到具体金额
+    const tDiffPerShare = Math.max(0, sellLow - buyHigh);
+    const refPrice = lastPrice > 0 ? lastPrice : tPos.base;
+    const lotValue = refPrice * 100; // 1手资金（元）
+    // 手续费/手（含5元最低门槛，个股有效）
+    let feePerLot;
+    if (isETF) {
+      feePerLot = lotValue * 0.0002; // 万0.1双向，免五
+    } else {
+      const buyFee = Math.max(lotValue * 0.0008, 5);
+      const sellFee = Math.max(lotValue * 0.0008, 5) + lotValue * 0.001 + lotValue * 0.0004;
+      feePerLot = buyFee + sellFee;
+    }
+    const feePerShare = feePerLot / 100;
+    const netPerLot = Math.round(tDiffPerShare * 100 - feePerLot);
+    const lotCapStr = `1手(100股，约${(lotValue / 10000).toFixed(1)}万元)`;
+    if (tDiffPerShare <= feePerShare) {
+      L.push(`   约 ${fp(tDiffPerShare)}元/股，手续费(${feeDesc})约 ${fp(feePerShare)}元/股`);
+      L.push(`   ⚠️ T差不够覆盖手续费，做T必亏！等振幅更大再操作`);
+    } else {
+      L.push(`   约 ${fp(tDiffPerShare)}元/股，手续费约 ${fp(feePerShare)}元/股`);
+      L.push(`   ${lotCapStr} 净利润 ≈ +${netPerLot}元（手续费已扣）`);
+    }
   }
   L.push('');
   // ── 当前操作建议 ──
@@ -4232,8 +4252,7 @@ async function handleEvent(ev) {
     const r = await cmdEtfInfo(cmd.args);
     await sendReply(ev, r.text || '⚠️ ETF 信息获取失败');
   } else if (cmd.type === 't') {
-    // /t 做T参谋：先发文字分析，再发图（两条消息，避免等图时用户以为没反应）
-    await sendReply(ev, '⏳ 正在拉取分时+日线数据，分析中...');
+    // /t 做T参谋：直接发文字分析，再发图
     const r = await cmdT(cmd.args);
     if (!r.ok) {
       await sendReply(ev, r.text || '⚠️ 做T分析失败');
