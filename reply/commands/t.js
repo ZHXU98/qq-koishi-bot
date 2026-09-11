@@ -825,17 +825,17 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
     const mtxt = mState
       ? `MACD DIFF ${fp(macdData.dif)}  DEA ${fp(macdData.dea)}  ${mState.hist >= 0 ? '红柱' : '绿柱'}${mState.histTrend === 'expand' ? '↑' : '↓'} ${mState.cross === 'gold' ? '金叉' : mState.cross === 'dead' ? '死叉' : ''}${mState.divergence === 'top' ? ' ⚠顶部背离' : mState.divergence === 'bottom' ? ' 底部背离' : ''}`
       : 'MACD 数据不足';
-    ctx.fillText(mtxt, PAD + 4, macdTop + macdH + 8);
+    ctx.fillText(mtxt, PAD + 4, macdTop + macdH + 12);
   } else {
     ctx.fillStyle = sub; ctx.font = '11px cjk'; ctx.textAlign = 'left';
-    ctx.fillText('MACD 数据不足', PAD + 4, macdTop + macdH + 8);
+    ctx.fillText('MACD 数据不足', PAD + 4, macdTop + macdH + 12);
   }
   // X轴时间标签（价格区下方）
   ctx.textAlign = 'center'; ctx.fillStyle = sub; ctx.font = '12px cjk';
   const xlabels = isHF ? [] : [[0, '09:30'], [59, '10:30'], [119, '11:30'], [180, '14:00'], [TOT - 1, '15:00']];
   xlabels.forEach(([tm, lb]) => ctx.fillText(lb, PAD + (tm / TOT) * plotW, volTop + 16));
   // 图例（最底部）
-  const yLeg = volYBase + MACD_H - 16;
+  const yLeg = volYBase + MACD_H + 8;
   ctx.fillStyle = panel; ctx.fillRect(PAD - 8, yLeg, W - PAD * 2 + 16, 26);
   const lgItems = [[`价格 ${fp(lastPrice)}`, priceCol]];
   if (avgLine) lgItems.push([`均价(黄线) ${fp(avgLine[dn - 1])}`, '#f0b90b']);
