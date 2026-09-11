@@ -462,10 +462,15 @@ async function prevTradingAmount(code, nowHHMM) {
       const c = comp(it.curYuan, it.prevAmt);
       const chgCol = it.chg >= 0 ? upC : downC;
       rrect(x0, y, cw, cardH, 14, panel);
+      // 左侧渐变 accent 竖条（涨=红渐变，跌=绿渐变）
+      const cardAccGrad = ctx.createLinearGradient(x0 + 14, y + 28, x0 + 14, y + cardH - 28);
+      cardAccGrad.addColorStop(0, chgCol);
+      cardAccGrad.addColorStop(1, it.chg >= 0 ? '#ff7875' : '#4cd8a8');
+      ctx.fillStyle = cardAccGrad; ctx.fillRect(x0 + 14, y + 28, 4, cardH - 56);
       ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 18px cjk';
-      ctx.fillText(it.name, x0 + 18, y + 28);
+      ctx.fillText(it.name, x0 + 26, y + 28);
       ctx.fillStyle = sub; ctx.font = '13px cjk';
-      ctx.fillText(String(it.code).slice(2), x0 + 152, y + 28);
+      ctx.fillText(String(it.code).slice(2), x0 + 160, y + 28);
       // 现价 + 涨跌（价格 40px 中心 y+66，分隔线下移到 y+92 避免交叉）
       ctx.fillStyle = chgCol; ctx.font = 'bold 40px cjk';
       ctx.fillText(f2(it.price), x0 + 18, y + 66);
@@ -562,7 +567,7 @@ async function prevTradingAmount(code, nowHHMM) {
         const ry = y + 68 + i * 28;
         // 占比横条（右对齐，从列右边往左延伸）
         const bw = Math.round((r.yiyi / maxIn) * (halfW - 16));
-        ctx.fillStyle = 'rgba(245,34,45,0.10)';
+        ctx.fillStyle = 'rgba(245,34,45,0.18)';
         ctx.beginPath(); ctx.roundRect(x0 + 18 + halfW - 6 - bw, ry - 9, bw, 18, 3); ctx.fill();
         ctx.fillStyle = ink; ctx.font = '13px cjk'; ctx.textAlign = 'left';
         ctx.fillText(r.name.length > 7 ? r.name.slice(0, 7) + '…' : r.name, x0 + 20, ry);
@@ -576,7 +581,7 @@ async function prevTradingAmount(code, nowHHMM) {
       data.sw2.outflow.forEach((r, i) => {
         const ry = y + 68 + i * 28;
         const bw = Math.round((Math.abs(r.yiyi) / maxOut) * (halfW - 16));
-        ctx.fillStyle = 'rgba(10,168,105,0.10)';
+        ctx.fillStyle = 'rgba(10,168,105,0.18)';
         ctx.beginPath(); ctx.roundRect(rx2, ry - 9, bw, 18, 3); ctx.fill();
         ctx.fillStyle = ink; ctx.font = '13px cjk'; ctx.textAlign = 'left';
         ctx.fillText(r.name.length > 7 ? r.name.slice(0, 7) + '…' : r.name, rx2 + 2, ry);
