@@ -444,9 +444,12 @@ async function prevTradingAmount(code, nowHHMM) {
     const mmdd = data.t.slice(5, 10);
 
     let y = 18;
-    // 标题
+    // 标题：左侧渐变 accent 竖条
+    const ssGrad = ctx.createLinearGradient(PAD, y + 4, PAD, y + 40);
+    ssGrad.addColorStop(0, '#f5222d'); ssGrad.addColorStop(1, '#ff7875');
+    ctx.fillStyle = ssGrad; ctx.fillRect(PAD, y + 4, 5, 36);
     ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 26px cjk';
-    ctx.fillText('指数行情' + (data.closed ? '（已收盘）' : ''), PAD, y + 22);
+    ctx.fillText('指数行情' + (data.closed ? '（已收盘）' : ''), PAD + 16, y + 22);
     ctx.fillStyle = data.closed ? sub : upC; ctx.textAlign = 'right'; ctx.font = '15px cjk';
     ctx.fillText((data.closed ? '已收盘' : '盘中') + ' ' + mmdd + ' ' + data.nowHHMM, W - PAD, y + 22);
     y += 44;
@@ -2342,6 +2345,19 @@ function buildStocksPng(items, meta) {
       const px = i2 => it.mkt === 'hf'
         ? chX + (dn <= 1 ? 0 : (i2 / (dn - 1)) * chartW)
         : chX + (tmin(it.disp[i2].t) / TOT) * chartW;
+      // 渐变填充（价格线下方半透明区域）
+      const fillRgb = it.chgPct >= 0 ? '245,34,45' : '10,168,105';
+      const fillGrad = ctx.createLinearGradient(0, chY, 0, chY + chartH);
+      fillGrad.addColorStop(0, `rgba(${fillRgb},0.15)`);
+      fillGrad.addColorStop(1, `rgba(${fillRgb},0)`);
+      ctx.fillStyle = fillGrad;
+      ctx.beginPath();
+      ctx.moveTo(px(0), chY + chartH);
+      for (let k = 0; k < dn; k++) ctx.lineTo(px(k), Y(it.disp[k].close));
+      ctx.lineTo(px(dn - 1), chY + chartH);
+      ctx.closePath();
+      ctx.fill();
+      // 价格线
       ctx.beginPath();
       for (let k = 0; k < dn; k++) { const x = px(k), y = Y(it.disp[k].close); k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
       ctx.strokeStyle = it.lineCol; ctx.lineWidth = 2.2; ctx.stroke();
