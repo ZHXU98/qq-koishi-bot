@@ -327,14 +327,12 @@ function renderCardCanvas(dateStr, items) {
     return [...all.slice(0, 2), last + '…'];
   };
 
-  // 先计算总高度
+  // 先计算总高度（与渲染逻辑同步：badge 26 + 标题行×28 + 摘要行×25 + 上下 padding 各 14）
   let yCalc = PAD + 34 + 12 + 18 + 22 + 2 + 24;
-  items.forEach((it, idx) => {
-    if (idx > 0) yCalc += 10 + 16;
-    const titleLines = wrap('【' + fmtTime(it.time) + '】' + it.title, 25, INNER);
-    yCalc += titleLines.length * 30 + 10;
-    const descLines = clipDesc(it.desc || '');
-    yCalc += descLines.length * 28 + 6;
+  items.forEach((it) => {
+    const titleLns = wrap(it.title, 22, INNER);
+    const descLns = clipDesc(it.desc || '');
+    yCalc += 14 + 26 + titleLns.length * 28 + (descLns.length ? 8 + descLns.length * 25 : 0) + 14;
   });
   const H = yCalc + PAD;
 
@@ -347,8 +345,10 @@ function renderCardCanvas(dateStr, items) {
   ctx.beginPath(); ctx.roundRect(0, 0, CARD_W, H, 20); ctx.fill();
 
   let y = PAD;
-  // 标题栏
-  ctx.fillStyle = '#c0392b'; ctx.fillRect(PAD, y, 6, 34);
+  // 标题栏：左侧渐变 accent 竖条
+  const hGrad = ctx.createLinearGradient(PAD, y, PAD, y + 34);
+  hGrad.addColorStop(0, '#f5222d'); hGrad.addColorStop(1, '#ff7875');
+  ctx.fillStyle = hGrad; ctx.fillRect(PAD, y, 6, 34);
   ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 30px cjk';
   ctx.fillText('同花顺重要金融资讯', PAD + 20, y + 28);
   y += 34 + 12;
@@ -357,23 +357,45 @@ function renderCardCanvas(dateStr, items) {
   ctx.fillText(`${dateStr} · 同花顺官方「重要」·共 ${items.length} 条`, PAD, y + 18);
   y += 18 + 22;
 
-  ctx.strokeStyle = '#eeeeee'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
+  ctx.strokeStyle = '#eeeeee'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CARD_W, y); ctx.stroke();
   y += 24;
 
   items.forEach((it, idx) => {
-    if (idx > 0) {
-      y += 10;
-      ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
-      y += 16;
+    // 奇偶行交替背景
+    const rowBg = idx % 2 === 0 ? '#f8fafc' : '#ffffff';
+    const titleLns = wrap(it.title, 22, INNER);
+    const descLns = clipDesc(it.desc || '');
+    const rowH = 14 + 26 + titleLns.length * 28 + (descLns.length ? 8 + descLns.length * 25 : 0) + 14;
+    ctx.fillStyle = rowBg; ctx.fillRect(0, y, CARD_W, rowH);
+    y += 14;
+
+    // 时间 badge
+    const timeTxt = fmtTime(it.time);
+    ctx.font = '13px cjk';
+    const badgeW = ctx.measureText(timeTxt).width + 14;
+    ctx.fillStyle = '#edf0f4'; ctx.beginPath(); ctx.roundRect(PAD, y, badgeW, 20, 4); ctx.fill();
+    ctx.fillStyle = '#8b919e'; ctx.textAlign = 'center';
+    ctx.fillText(timeTxt, PAD + badgeW / 2, y + 13.5);
+    ctx.textAlign = 'left';
+    y += 26; // badge 20 + 间距 6
+
+    // 标题（去掉时间戳，字号稍收）
+    ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 22px cjk';
+    for (const ln of titleLns) { ctx.fillText(ln, PAD, y + 20); y += 28; }
+
+    // 摘要
+    if (descLns.length) {
+      y += 8;
+      ctx.fillStyle = '#6b7280'; ctx.font = '18px cjk';
+      for (const ln of descLns) { ctx.fillText(ln, PAD, y + 18); y += 25; }
     }
-    ctx.fillStyle = '#222222'; ctx.font = 'bold 25px cjk';
-    const titleLines = wrap('【' + fmtTime(it.time) + '】' + it.title, 25, INNER);
-    for (const ln of titleLines) { ctx.fillText(ln, PAD, y + 22); y += 30; }
-    y += 10;
-    ctx.fillStyle = '#666666'; ctx.font = '19px cjk';
-    const descLines = clipDesc(it.desc || '');
-    for (const ln of descLines) { ctx.fillText(ln, PAD, y + 20); y += 28; }
-    y += 6;
+    y += 14;
+
+    // 分隔线（最后一条不加）
+    if (idx < items.length - 1) {
+      ctx.strokeStyle = '#edf0f3'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CARD_W, y); ctx.stroke();
+    }
   });
 
   return canvas.toBuffer('image/png');
@@ -423,18 +445,34 @@ function buildCardSvg(dateStr, items) {
   blocks.push(`<line x1="${PAD}" y1="${y}" x2="${CARD_W - PAD}" y2="${y}" stroke="#eeeeee" stroke-width="2"/>`);
   y += 24;
   items.forEach((it, idx) => {
-    // 条目间分隔线（首条不加）
-    if (idx > 0) {
-      y += 10;
-      blocks.push(`<line x1="${PAD}" y1="${y}" x2="${CARD_W - PAD}" y2="${y}" stroke="#f0f0f0" stroke-width="1"/>`);
-      y += 16;
+    // 奇偶行交替背景（从 y 起到本条末尾，先占位后续再精算）
+    const rowBg = idx % 2 === 0 ? '#f8fafc' : '#ffffff';
+    // 估算本条高度（时间行20 + 标题行×30 + 摘要行×26 + 内边距）
+    const estTitleLines = wrap(it.title, 23, INNER).length;
+    const estDescLines = Math.min(3, wrap(it.desc || '', 18, INNER).length);
+    const estH = 20 + estTitleLines * 30 + (estDescLines > 0 ? 8 + estDescLines * 26 : 0) + 20;
+    blocks.push(`<rect x="0" y="${y}" width="${CARD_W}" height="${estH}" fill="${rowBg}"/>`);
+    y += 12;
+    // 时间戳 badge
+    const timeTxt = fmtTime(it.time);
+    const timeBadgeW = timeTxt.length * 11 + 14;
+    blocks.push(`<rect x="${PAD}" y="${y}" width="${timeBadgeW}" height="20" rx="4" fill="#f0f2f5"/>`);
+    blocks.push(`<text x="${PAD + timeBadgeW / 2}" y="${y + 14}" text-anchor="middle" font-family="CJK" font-size="13" fill="#8b919e">${x(timeTxt)}</text>`);
+    y += 26; // badge 高20 + 间距6
+    // 标题（无时间戳，字号稍小）
+    const titleLines = wrap(it.title, 23, INNER);
+    for (const ln of titleLines) { blocks.push(`<text x="${PAD}" y="${y + 20}" font-family="CJK" font-size="23" font-weight="700" fill="#1a1a1a">${x(ln)}</text>`); y += 28; }
+    // 摘要
+    if (it.desc) {
+      y += 6;
+      const { lines: descLines } = clipDesc(it.desc);
+      for (const ln of descLines) { blocks.push(`<text x="${PAD}" y="${y + 18}" font-family="CJK" font-size="18" fill="#6b7280">${x(ln)}</text>`); y += 24; }
     }
-    const titleLines = wrap('【' + fmtTime(it.time) + '】' + it.title, 25, INNER);
-    for (const ln of titleLines) { blocks.push(`<text x="${PAD}" y="${y + 22}" font-family="CJK" font-size="25" font-weight="700" fill="#222222">${x(ln)}</text>`); y += 30; }
-    y += 10; // 标题↔摘要呼吸
-    const { lines: descLines } = clipDesc(it.desc || '');
-    for (const ln of descLines) { blocks.push(`<text x="${PAD}" y="${y + 20}" font-family="CJK" font-size="19" fill="#666666">${x(ln)}</text>`); y += 28; }
-    y += 6; // 条目尾部留白（条目间的较大间距由分隔线段承担）
+    y += 12;
+    // 条目间分隔线
+    if (idx < items.length - 1) {
+      blocks.push(`<line x1="0" y1="${y}" x2="${CARD_W}" y2="${y}" stroke="#edf0f3" stroke-width="1"/>`);
+    }
   });
   const H = y + PAD;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${H}" viewBox="0 0 ${CARD_W} ${H}"><rect x="0" y="0" width="${CARD_W}" height="${H}" rx="20" fill="#ffffff"/>${blocks.join('')}</svg>`;

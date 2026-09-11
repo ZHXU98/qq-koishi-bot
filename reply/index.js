@@ -2224,11 +2224,15 @@ function buildStocksPng(items, meta) {
   // —— 顶部汇总栏 ——
   ctx.fillStyle = PANEL; ctx.fillRect(0, 0, W, HEADER_H);
   const MX = 30;
+  // 左侧渐变 accent 竖条（与 THS 卡风格统一）
+  const hGrad = ctx.createLinearGradient(MX, 28, MX, 72);
+  hGrad.addColorStop(0, '#f5222d'); hGrad.addColorStop(1, '#ff7875');
+  ctx.fillStyle = hGrad; ctx.fillRect(MX, 28, 5, 44);
   ctx.textAlign = 'left';
   ctx.fillStyle = INK; ctx.font = 'bold 36px cjk';
-  ctx.fillText(meta.title, MX, 50);
+  ctx.fillText(meta.title, MX + 16, 50);
   ctx.fillStyle = SUB; ctx.font = '23px cjk';
-  ctx.fillText(meta.sub, MX, 92);
+  ctx.fillText(meta.sub, MX + 16, 92);
   ctx.textAlign = 'right';
   ctx.fillStyle = meta.avgCol; ctx.font = 'bold 40px cjk';
   ctx.fillText(meta.avgTxt, W - MX, 50);
