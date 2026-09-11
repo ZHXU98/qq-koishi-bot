@@ -44,7 +44,19 @@ const AGG_COUNT = (() => { const n = Number(process.env.AGG_COUNT); return Numbe
 const IMPORT_ONLY = (process.env.IMPORT_ONLY || 'true') !== 'false';
 const SEEN_KEEP = 500;          // 去重记录保留条数
 const NEWS_CAPTION = '📌 同花顺重要金融资讯（同花顺官方「重要」标记）';
-const FONT_PATH = process.env.THS_FONT || '/app/fonts/cjk.ttc'; // 容器内挂载的中文字体（方案A）
+// 字体路径：容器内 /app/fonts/cjk.ttc → ths-news/fonts 相对路径 → macOS 系统字体（本地开发）
+const FONT_PATH = (() => {
+  if (process.env.THS_FONT) return process.env.THS_FONT;
+  const candidates = [
+    path.join(__DIR, 'fonts', 'cjk.ttc'),       // 项目内置 WQY（优先）
+    '/app/fonts/cjk.ttc',                        // 容器旧挂载路径（兼容）
+    '/System/Library/Fonts/PingFang.ttc',        // macOS 本地开发 fallback
+    '/System/Library/Fonts/Hiragino Sans GB.ttc',
+    '/System/Library/Fonts/STHeiti Light.ttc',
+  ];
+  for (const p of candidates) { if (fs.existsSync(p)) return p; }
+  return candidates[0];
+})();
 const CARD_W = 640;             // 卡片宽度
 
 // ---------- 配置读取（热加载：每个推送周期重新读盘，改 ths_news_targets.json 无需重启容器即可生效）----------
@@ -266,10 +278,105 @@ async function buildMessageSegs(batch, dateStr) {
 }
 
 function renderCard(dateStr, items) {
-  const { Resvg } = require('@resvg/resvg-js'); // 延迟 require，避免宿主无此模块时脚本加载失败
-  const svg = buildCardSvg(dateStr, items);
-  const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: CARD_W }, font: { fontFiles: [FONT_PATH] } });
-  return resvg.render().asPng();
+  // 优先 resvg（容器，字体确认存在时）；fallback @napi-rs/canvas（本地开发）
+  if (fs.existsSync(FONT_PATH)) {
+    try {
+      const { Resvg } = require('@resvg/resvg-js');
+      const svg = buildCardSvg(dateStr, items);
+      const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: CARD_W }, font: { fontFiles: [FONT_PATH] } });
+      return resvg.render().asPng();
+    } catch (e) {
+      console.error('[renderCard] resvg 失败，尝试 canvas:', e.message);
+    }
+  }
+  return renderCardCanvas(dateStr, items);
+}
+
+function renderCardCanvas(dateStr, items) {
+  const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
+  // 优先注册项目内置 WQY；再补充系统字体作 fallback
+  const fontCandidates = [
+    path.join(__DIR, 'fonts', 'cjk.ttc'),        // 项目内置 WQY（最优先）
+    '/app/fonts/cjk.ttc',                        // 容器旧挂载路径（兼容）
+    '/System/Library/Fonts/PingFang.ttc',
+    '/System/Library/Fonts/Hiragino Sans GB.ttc',
+    '/System/Library/Fonts/STHeiti Light.ttc',
+  ];
+  for (const fp of fontCandidates) {
+    if (fs.existsSync(fp)) { try { GlobalFonts.registerFromPath(fp, 'cjk'); } catch (_) {} }
+  }
+
+  const PAD = 36, INNER = CARD_W - PAD * 2;
+  const isHalf = ch => /[A-Za-z0-9 .,:%''""\-/…]/.test(ch);
+  const cwOf = (ch, fs) => isHalf(ch) ? fs * 0.55 : fs;
+  const wrap = (text, fs, maxW) => {
+    const lines = []; let line = '', w = 0;
+    for (const ch of String(text)) {
+      const cw = cwOf(ch, fs);
+      if (w + cw > maxW && line) { lines.push(line); line = ch; w = cw; }
+      else { line += ch; w += cw; }
+    }
+    if (line) lines.push(line);
+    return lines;
+  };
+  const clipDesc = (text) => {
+    const all = wrap(text || '', 19, INNER);
+    if (all.length <= 3) return all;
+    let last = all[2];
+    while (last.length > 1 && cwOf('…', 19) + last.split('').reduce((s, c) => s + cwOf(c, 19), 0) > INNER) last = last.slice(0, -1);
+    return [...all.slice(0, 2), last + '…'];
+  };
+
+  // 先计算总高度
+  let yCalc = PAD + 34 + 12 + 18 + 22 + 2 + 24;
+  items.forEach((it, idx) => {
+    if (idx > 0) yCalc += 10 + 16;
+    const titleLines = wrap('【' + fmtTime(it.time) + '】' + it.title, 25, INNER);
+    yCalc += titleLines.length * 30 + 10;
+    const descLines = clipDesc(it.desc || '');
+    yCalc += descLines.length * 28 + 6;
+  });
+  const H = yCalc + PAD;
+
+  const canvas = createCanvas(CARD_W, H);
+  const ctx = canvas.getContext('2d');
+  ctx.textBaseline = 'alphabetic';
+
+  // 背景
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.roundRect(0, 0, CARD_W, H, 20); ctx.fill();
+
+  let y = PAD;
+  // 标题栏
+  ctx.fillStyle = '#c0392b'; ctx.fillRect(PAD, y, 6, 34);
+  ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 30px cjk';
+  ctx.fillText('同花顺重要金融资讯', PAD + 20, y + 28);
+  y += 34 + 12;
+
+  ctx.fillStyle = '#888888'; ctx.font = '20px cjk';
+  ctx.fillText(`${dateStr} · 同花顺官方「重要」·共 ${items.length} 条`, PAD, y + 18);
+  y += 18 + 22;
+
+  ctx.strokeStyle = '#eeeeee'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
+  y += 24;
+
+  items.forEach((it, idx) => {
+    if (idx > 0) {
+      y += 10;
+      ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
+      y += 16;
+    }
+    ctx.fillStyle = '#222222'; ctx.font = 'bold 25px cjk';
+    const titleLines = wrap('【' + fmtTime(it.time) + '】' + it.title, 25, INNER);
+    for (const ln of titleLines) { ctx.fillText(ln, PAD, y + 22); y += 30; }
+    y += 10;
+    ctx.fillStyle = '#666666'; ctx.font = '19px cjk';
+    const descLines = clipDesc(it.desc || '');
+    for (const ln of descLines) { ctx.fillText(ln, PAD, y + 20); y += 28; }
+    y += 6;
+  });
+
+  return canvas.toBuffer('image/png');
 }
 
 function buildCardSvg(dateStr, items) {

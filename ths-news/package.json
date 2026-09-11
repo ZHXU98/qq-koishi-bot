@@ -1,0 +1,12 @@
+{
+  "name": "ths-news",
+  "version": "1.0.0",
+  "private": true,
+  "description": "同花顺重要金融资讯推送（图片卡片）",
+  "main": "fetch_ths_news.js",
+  "engines": { "node": ">=21" },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@napi-rs/canvas": "^0.1.68"
+  }
+}

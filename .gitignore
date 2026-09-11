@@ -8,10 +8,11 @@ napcat/QQ_config/
 .codeflicker
 
 # ===== ths-news 服务 =====
-# 中文字体（22MB+ 且涉及字体授权，不入库；用 setup_fonts.sh 从本机系统复制）
-ths-news/fonts/*.ttc
+# 中文字体：cjk.ttc（WQY 微米黑，开源，~5MB）随项目入库，其余字体文件不入库
 ths-news/fonts/*.ttf
 ths-news/fonts/*.otf
+# cjk.ttc 允许入库（!例外规则必须在通配符之后声明）
+!ths-news/fonts/cjk.ttc
 # 真实推送目标（含真实 QQ 号，勿提交；用 .example 模板）
 ths-news/ths_news_targets.json
 # 运行日志
