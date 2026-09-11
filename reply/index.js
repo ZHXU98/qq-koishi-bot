@@ -2385,14 +2385,15 @@ function buildStocksPng(items, meta) {
       // 灰色底，不抢现价（红绿）的视觉焦点
       if (it.prevText && it.baseline > 0) {
         const lb = '昨收 ' + it.prevText;
-        ctx.font = `${Math.max(16, F.meta - 2)}px cjk`;
-        const lw = ctx.measureText(lb).width + 8;
-        const ly = it.chgPct >= 0 ? (chY + chartH - 15) : (chY + 2);
-        ctx.fillStyle = 'rgba(201,206,214,0.92)';
-        ctx.fillRect(chX + chartW - lw, ly, lw, 15);
+        ctx.font = `${Math.max(15, F.meta - 3)}px cjk`;
+        const lw = ctx.measureText(lb).width + 10;
+        const lh = 18;
+        const ly = it.chgPct >= 0 ? (chY + chartH - lh - 2) : (chY + 2);
+        ctx.fillStyle = 'rgba(201,206,214,0.88)';
+        ctx.beginPath(); ctx.roundRect(chX + chartW - lw, ly, lw, lh, 4); ctx.fill();
         ctx.fillStyle = '#6b7280';
         ctx.textAlign = 'center';
-        ctx.fillText(lb, chX + chartW - lw / 2, ly + 7.5);
+        ctx.fillText(lb, chX + chartW - lw / 2, ly + lh / 2);
         ctx.textAlign = 'left';
       }
     } else {
