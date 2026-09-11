@@ -38,28 +38,42 @@ function analyzeTDayForm(dayKlines) {
   return { ma5, ma10, ma20, bollUp, bollLow, bollMid, bollWidth, form, ma20Dev, lastClose };
 }
 
-// ── 分时MACD（基于1分钟分时K线收盘价，EMA12/26 + DEA9）──
-// 返回最新值+完整序列；数据不足20根返回 null（预热不足仅供参考）
-function calcMACD(closes) {
+// ── 分时MACD（与同花顺一致）──
+// 计算方式：1分钟K线收盘价，EMA12/26 + DEA9
+// 种子：前一日收盘价作为EMA初始值（同花顺分时MACD做法），从第1根分时起即可计算
+// 返回最新值+完整序列；无分时数据时返回 null
+function calcMACD(closes, prevClose) {
   const arr = (closes || []).filter(v => isFinite(v) && v > 0);
-  if (arr.length < 20) return null;
+  if (!arr.length) return null;
+  // 种子：昨收（若无昨收数据则退化为首根收盘价）
+  const seed = (isFinite(prevClose) && prevClose > 0) ? prevClose : arr[0];
   const calcEMA = (data, period) => {
     const k = 2 / (period + 1);
-    const out = [data[0]];
-    for (let i = 1; i < data.length; i++) out.push(data[i] * k + out[i - 1] * (1 - k));
+    const out = [];
+    let prev = seed;
+    for (let i = 0; i < data.length; i++) {
+      prev = data[i] * k + prev * (1 - k);
+      out.push(prev);
+    }
     return out;
   };
   const ema12 = calcEMA(arr, 12);
   const ema26 = calcEMA(arr, 26);
   const dif = arr.map((_, i) => ema12[i] - ema26[i]);
-  const dea = calcEMA(dif, 9);
+  // DEA 的种子用 0（昨收时 DIF=EMA12-EMA26=0），与同花顺一致
+  const k9 = 2 / (9 + 1);
+  const dea = [];
+  let prevDea = 0;
+  for (let i = 0; i < dif.length; i++) {
+    prevDea = dif[i] * k9 + prevDea * (1 - k9);
+    dea.push(prevDea);
+  }
   const hist = dif.map((d, i) => (d - dea[i]) * 2);
   const last = arr.length - 1;
   return {
     dif: dif[last], dea: dea[last], hist: hist[last],
     prevHist: hist[last - 1] ?? 0,
     series: { dif, dea, hist },
-    warmup: arr.length < 35, // <35根时EMA26/DEA9预热不足，仅供参考
   };
 }
 
@@ -179,9 +193,10 @@ function analyzeTTimeData(timeKlines, quote) {
   const recoverPct = dayLow > 0 ? (lastPrice - dayLow) / dayLow * 100 : 0;
   // ── 振幅自适应确认阈值：波动越大，"冲高回落/低开企稳"的确认门槛越高 ──
   const confirmTh = Math.max(0.8, amplitude * 0.25);
-  // ── 分时MACD（1分钟K线） ──
-  const macd = hasTime ? calcMACD(timeKlines.map(k => Number(k.close) || 0)) : null;
-  const macdState = macd ? analyzeMACDState(macd, timeKlines.map(k => Number(k.close) || 0)) : null;
+  // ── 分时MACD（1分钟K线，昨收做种子，从第1根即可计算）──
+  const closesArr = hasTime ? timeKlines.map(k => Number(k.close) || 0) : [];
+  const macd = calcMACD(closesArr, prevClose);
+  const macdState = macd ? analyzeMACDState(macd, closesArr) : null;
   // 开盘场景（纯竞价阶段暂无意义）
   const openScenario = (!pureAuction && openPhase) ? _openScenario({ gapPct, openDirPct, pullbackPct, recoverPct, confirmTh, hiFromOpen, loFromOpen }) : null;
   // 黄线斜率（近15分钟；开盘阶段无意义）
@@ -317,7 +332,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   const userFormLabel = userFormRaw === 'swing' ? '震荡' : userFormRaw === 'trend' ? '单边趋势' : null;
   const activeForm = userFormRaw === 'swing' ? 'swing' : userFormRaw === 'trend' ?
     (autoForm === 'downtrend' ? 'downtrend' : 'uptrend') : autoForm;
-  const hasEnoughTimeData = !!timeInfo.timeKlines && timeInfo.timeKlines.length >= 20;
+  const hasTData = !!timeInfo.timeKlines && timeInfo.timeKlines.length >= 2;
 
   // 仅在有T位时解构
   const sellLow = tPos ? tPos.sellLow : 0;
@@ -398,7 +413,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push('');
     L.push(`⏰ 当前分时数据：仅 ${candleCount} 根（9:30起约${candleCount}分钟），方向尚未确认`);
     L.push(`   ⚠️ 暂不给T位——等开盘5分钟后（约9:35）再查，系统将根据走势自动给出动态T位`);
-    L.push(`   📉 分时MACD：需≥20根1分钟K线才有参考意义，当前仍在预热`);
+    L.push(`   📉 分时MACD：开盘后即可计算（与同花顺一致，昨收做种子）`);
     L.push('');
     L.push(`📈 图表分析正在生成...`);
     L.push(`⚠️ 非投资建议，仅供参考，请结合自身判断操作`);
@@ -474,11 +489,11 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     const zoneTxt = macdState.zeroAbove ? '零轴上方' : '零轴下方';
     const histTxt = macdState.hist >= 0 ? '红柱' : '绿柱';
     const histDir = macdState.histTrend === 'expand' ? '放大' : '收敛';
-    L.push(`→ 📉 分时MACD：DIFF ${fp(macd.dif)} / DEA ${fp(macd.dea)} / ${histTxt}${histDir}，${zoneTxt}，${crossTxt}${macd.warmup ? '（预热中，参考值）' : ''}`);
+    L.push(`→ 📉 分时MACD：DIFF ${fp(macd.dif)} / DEA ${fp(macd.dea)} / ${histTxt}${histDir}，${zoneTxt}，${crossTxt}`);
     if (macdState.divergence === 'top') L.push(`   ⚠️ 顶背离：价格创新高但MACD未跟上 → 冲高回落前兆，卖出信号加强！`);
     else if (macdState.divergence === 'bottom') L.push(`   🟢 底背离：价格创新低但MACD未跟跌 → 跌势衰竭，买回信号加强！`);
-  } else if (hasEnoughTimeData) {
-    L.push(`→ 📉 分时MACD：数据不足（需≥20根1分钟K线），暂不判断`);
+  } else if (hasTData) {
+    L.push(`→ 📉 分时MACD：分时数据过少，暂不判断`);
   }
   // ── 盘中轨迹信号（≥30根后同样适用"先高后走低"）──
   if (!openPhase && !pureAuction && dayHigh > 0 && pullbackPct >= confirmTh && hiFromOpen >= 0.5) {
@@ -676,7 +691,7 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
   const mapX = isHF ? (i => PAD + (i / (dn - 1)) * plotW) : (i => PAD + (tmin(display[i].t) / TOT) * plotW);
   // 分时MACD小面板数据
   const closes = display.map(k => Number(k.close) || 0);
-  const macdData = calcMACD(closes);
+  const macdData = calcMACD(closes, prevClose);
   // 配色
   const upC = '#f5222d', downC = '#0aa869';
   const bg = '#ffffff', panel = '#f7f8fa', grid = '#e8eaed', sub = '#8a919c', ink = '#2b2f36';
@@ -808,12 +823,12 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
     ctx.fillStyle = sub; ctx.font = '11px cjk'; ctx.textAlign = 'left';
     const mState = analyzeMACDState(macdData, closes);
     const mtxt = mState
-      ? `MACD DIFF ${fp(macdData.dif)}  DEA ${fp(macdData.dea)}  ${mState.hist >= 0 ? '红柱' : '绿柱'}${mState.histTrend === 'expand' ? '↑' : '↓'} ${mState.cross === 'gold' ? '金叉' : mState.cross === 'dead' ? '死叉' : ''}${mState.divergence === 'top' ? ' ⚠顶部背离' : mState.divergence === 'bottom' ? ' 底部背离' : ''}${macdData.warmup ? '（预热）' : ''}`
+      ? `MACD DIFF ${fp(macdData.dif)}  DEA ${fp(macdData.dea)}  ${mState.hist >= 0 ? '红柱' : '绿柱'}${mState.histTrend === 'expand' ? '↑' : '↓'} ${mState.cross === 'gold' ? '金叉' : mState.cross === 'dead' ? '死叉' : ''}${mState.divergence === 'top' ? ' ⚠顶部背离' : mState.divergence === 'bottom' ? ' 底部背离' : ''}`
       : 'MACD 数据不足';
     ctx.fillText(mtxt, PAD + 4, macdTop + macdH + 8);
   } else {
     ctx.fillStyle = sub; ctx.font = '11px cjk'; ctx.textAlign = 'left';
-    ctx.fillText('MACD 数据不足（需≥20根1分钟K线）', PAD + 4, macdTop + macdH + 8);
+    ctx.fillText('MACD 数据不足', PAD + 4, macdTop + macdH + 8);
   }
   // X轴时间标签（价格区下方）
   ctx.textAlign = 'center'; ctx.fillStyle = sub; ctx.font = '12px cjk';
