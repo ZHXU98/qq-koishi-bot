@@ -1,7 +1,7 @@
 // ============================================================
 // /zj 行业资金流：排行 / 分时曲线 / 日级流入
 // ============================================================
-const { cacheGet, cacheSet, fmtAmountWan, fmtAmountYuan } = require('../utils');
+const { cacheGet, cacheSet, fmtAmountWan, fmtAmountYuan, esc } = require('../utils');
 const { emFetchJson } = require('../market');
 
 // 数据源：腾讯板块行情 getRank（hy=申万一级 31 个、hy2=申万二级 124 个），字段 zljlr=主力净流入（万）
@@ -190,6 +190,7 @@ function renderZjPng(data, levelLabel) {
   catch (e) { console.error('[zj] canvas 渲染失败，fallback resvg:', e.message); return renderZjPngSvg(data, levelLabel); }
 }
 
+// 排行图：沿用 /ss 内嵌「申万二级行业资金流」块的视觉——圆角面板 + 左右双列 + 占比横条
 function renderZjPngCanvas(data, levelLabel) {
   const W = 720, PAD = 22;
   const bg = '#ffffff', panel = '#f7f8fa', ink = '#2b2f36', sub = '#8a919e', lineC = '#e8eaed';
@@ -197,48 +198,59 @@ function renderZjPngCanvas(data, levelLabel) {
   const now = new Date();
   const mmdd = `${now.getMonth() + 1}/${now.getDate()}`;
   const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  const H = 430;
+  const rows = Math.max(data.inflow.length, data.outflow.length);
+  const ROW_H = 28;
+  const x0 = PAD, cw = W - PAD * 2;
+  const swH = 66 + rows * ROW_H;   // 面板高（标题+列头+rows 行）
+  const H = 18 + swH + 30;         // 顶部留白 + 面板 + 底部生成时间
   const { createCanvas } = require('@napi-rs/canvas');
-  const canvas = createCanvas(Math.round(W * 1.2), Math.round(H * 1.2)); // 1.2x 分辨率，兼顾清晰与生成速度
+  const canvas = createCanvas(Math.round(W * 1.2), Math.round(H * 1.2)); // 1.2x 分辨率
   const ctx = canvas.getContext('2d');
   ctx.scale(1.2, 1.2);
   ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
   ctx.textBaseline = 'middle';
-  // 标题
-  ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 26px cjk';
-  ctx.fillText(`${levelLabel}行业资金流`, PAD, 40);
-  ctx.fillStyle = sub; ctx.font = '14px cjk';
-  ctx.fillText(`主力净流入 · ${mmdd} ${hhmm}`, PAD, 62);
-  // 列头
-  const yHead = 96;
-  const halfW = (W - PAD * 2 - 12) / 2;
-  ctx.fillStyle = upC; ctx.fillRect(PAD, yHead - 14, 14, 14);
-  ctx.font = 'bold 15px cjk'; ctx.textAlign = 'left';
-  ctx.fillText('流入 TOP10', PAD + 20, yHead);
-  ctx.fillStyle = downC; ctx.fillRect(PAD + 12 + halfW + 12, yHead - 14, 14, 14);
-  ctx.fillText('流出 TOP10', PAD + 12 + halfW + 12 + 20, yHead);
-  // 分隔线
-  ctx.strokeStyle = lineC; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(PAD, yHead + 16); ctx.lineTo(W - PAD, yHead + 16); ctx.stroke();
-  // 两列各 10 行
-  for (let i = 0; i < 10; i++) {
-    const ry = yHead + 34 + i * 28;
-    const draw = (list, xBase, col, sign) => {
-      const r = list[i];
-      if (!r) return;
-      const name = r.name.length > 8 ? r.name.slice(0, 8) + '…' : r.name;
-      ctx.fillStyle = sub; ctx.font = '11px cjk'; ctx.textAlign = 'left';
-      ctx.fillText(String(i + 1), xBase - 14, ry);
-      ctx.fillStyle = ink; ctx.font = '14px cjk';
-      ctx.fillText(name, xBase, ry);
-      ctx.fillStyle = col; ctx.font = 'bold 14px cjk'; ctx.textAlign = 'right';
-      ctx.fillText(`${sign}${r.yiyi.toFixed(1)}亿`, xBase + halfW - 12, ry);
-    };
-    draw(data.inflow, PAD + 14 + 16, upC, '+');
-    draw(data.outflow, PAD + 14 + halfW + 12 + 16, downC, '');
-  }
+  const y = 18;                    // 面板顶部
+  const rrect = (x, yy, w, h, r, fill) => { ctx.fillStyle = fill; ctx.beginPath(); ctx.roundRect(x, yy, w, h, r); ctx.fill(); };
+  rrect(x0, y, cw, swH, 14, panel);
+  ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 16px cjk';
+  ctx.fillText(`${levelLabel}行业资金流 · 主力净流入`, x0 + 18, y + 26);
+  const halfW = (cw - 36 - 12) / 2;
+  const maxIn = Math.max(...data.inflow.map(r => r.yiyi), 1);
+  const maxOut = Math.max(...data.outflow.map(r => Math.abs(r.yiyi)), 1);
+  // 中间垂直分割线
+  const divX = x0 + 18 + halfW + 6;
+  ctx.strokeStyle = lineC; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(divX, y + 38); ctx.lineTo(divX, y + swH - 10); ctx.stroke();
+  // 左：流入（横条右对齐、向左延伸）
+  ctx.fillStyle = upC; ctx.font = 'bold 14px cjk'; ctx.textAlign = 'left';
+  ctx.fillText(`流入 TOP${data.inflow.length}`, x0 + 18, y + 48);
+  data.inflow.forEach((r, i) => {
+    const ry = y + 68 + i * ROW_H;
+    const bw = Math.max(2, Math.round((r.yiyi / maxIn) * (halfW - 16)));
+    ctx.fillStyle = 'rgba(245,34,45,0.18)';
+    ctx.beginPath(); ctx.roundRect(x0 + 18 + halfW - 6 - bw, ry - 9, bw, 18, 3); ctx.fill();
+    ctx.fillStyle = ink; ctx.font = '13px cjk'; ctx.textAlign = 'left';
+    ctx.fillText(r.name.length > 8 ? r.name.slice(0, 8) + '…' : r.name, x0 + 20, ry);
+    ctx.fillStyle = upC; ctx.font = 'bold 13px cjk'; ctx.textAlign = 'right';
+    ctx.fillText(`+${r.yiyi.toFixed(1)}亿`, x0 + 18 + halfW - 8, ry);
+  });
+  // 右：流出（横条左对齐、向右延伸）
+  const rx2 = divX + 6;
+  ctx.fillStyle = downC; ctx.font = 'bold 14px cjk'; ctx.textAlign = 'left';
+  ctx.fillText(`流出 TOP${data.outflow.length}`, rx2, y + 48);
+  data.outflow.forEach((r, i) => {
+    const ry = y + 68 + i * ROW_H;
+    const bw = Math.max(2, Math.round((Math.abs(r.yiyi) / maxOut) * (halfW - 16)));
+    ctx.fillStyle = 'rgba(10,168,105,0.18)';
+    ctx.beginPath(); ctx.roundRect(rx2, ry - 9, bw, 18, 3); ctx.fill();
+    ctx.fillStyle = ink; ctx.font = '13px cjk'; ctx.textAlign = 'left';
+    ctx.fillText(r.name.length > 8 ? r.name.slice(0, 8) + '…' : r.name, rx2 + 2, ry);
+    ctx.fillStyle = downC; ctx.font = 'bold 13px cjk'; ctx.textAlign = 'right';
+    ctx.fillText(`${r.yiyi.toFixed(1)}亿`, rx2 + halfW - 8, ry);
+  });
   // 生成时间
   ctx.fillStyle = sub; ctx.textAlign = 'right'; ctx.font = '11px cjk';
-  ctx.fillText('生成 ' + hhmm, W - PAD, H - 14);
+  ctx.fillText(`生成 ${mmdd} ${hhmm}`, W - PAD, H - 12);
   return 'base64://' + canvas.toBuffer('image/png').toString('base64');
 }
 
@@ -249,38 +261,42 @@ function renderZjPngSvg(data, levelLabel) {
   const now = new Date();
   const mmdd = `${now.getMonth() + 1}/${now.getDate()}`;
   const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-  const H = 430;
+  const rows = Math.max(data.inflow.length, data.outflow.length);
+  const ROW_H = 28;
+  const x0 = PAD, cw = W - PAD * 2;
+  const swH = 66 + rows * ROW_H;   // 面板高
+  const H = 18 + swH + 30;         // 顶部留白 + 面板 + 底部生成时间
+  const y = 18;                    // 面板顶部
+  const halfW = (cw - 36 - 12) / 2;
+  const maxIn = Math.max(...data.inflow.map(r => r.yiyi), 1);
+  const maxOut = Math.max(...data.outflow.map(r => Math.abs(r.yiyi)), 1);
+  const divX = x0 + 18 + halfW + 6;
+  const rx2 = divX + 6;
+  const nm = n => esc(n.length > 8 ? n.slice(0, 8) + '…' : n);
   let s = '';
-  // 标题
-  s += `<text x="${PAD}" y="40" font-family="PingFang SC,cjk" font-size="26" font-weight="bold" fill="${ink}">${levelLabel}行业资金流</text>`;
-  s += `<text x="${PAD}" y="62" font-family="PingFang SC,cjk" font-size="14" fill="${sub}">主力净流入 · ${mmdd} ${hhmm}</text>`;
-  // 列头
-  const yHead = 96;
-  const halfW = (W - PAD * 2 - 12) / 2;
-  s += `<rect x="${PAD}" y="${yHead - 14}" width="14" height="14" rx="3" fill="${upC}"/><text x="${PAD + 20}" y="${yHead}" font-family="PingFang SC,cjk" font-size="15" font-weight="bold" fill="${upC}">流入 TOP10</text>`;
-  s += `<rect x="${PAD + 12 + halfW + 12}" y="${yHead - 14}" width="14" height="14" rx="3" fill="${downC}"/><text x="${PAD + 12 + halfW + 12 + 20}" y="${yHead}" font-family="PingFang SC,cjk" font-size="15" font-weight="bold" fill="${downC}">流出 TOP10</text>`;
-  // 两列各 10 行
-  for (let i = 0; i < 10; i++) {
-    const ry = yHead + 34 + i * 28;
-    const draw = (list, xBase, col, sign) => {
-      const r = list[i];
-      if (!r) return;
-      const name = r.name.length > 8 ? r.name.slice(0, 8) + '…' : r.name;
-      s += `<text x="${xBase}" y="${ry}" font-family="PingFang SC,cjk" font-size="14" fill="${ink}">${esc(name)}</text>`;
-      const amt = `${sign}${r.yiyi.toFixed(1)}亿`;
-      s += `<text x="${xBase + halfW - 12}" y="${ry}" text-anchor="end" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${col}">${amt}</text>`;
-      // 序号
-      s += `<text x="${xBase - 14}" y="${ry}" font-family="PingFang SC,cjk" font-size="11" fill="${sub}">${i + 1}</text>`;
-    };
-    draw(data.inflow, PAD + 14 + 16, upC, '+');
-    draw(data.outflow, PAD + 14 + halfW + 12 + 16, downC, '');
-  }
-  // 分隔线
-  s += `<line x1="${PAD}" y1="${yHead + 16}" x2="${W - PAD}" y2="${yHead + 16}" stroke="${lineC}" stroke-width="1"/>`;
-
+  s += `<rect x="${x0}" y="${y}" width="${cw}" height="${swH}" rx="14" fill="${panel}"/>`;
+  s += `<text x="${x0 + 18}" y="${y + 26}" dominant-baseline="middle" font-family="PingFang SC,cjk" font-size="16" font-weight="bold" fill="${ink}">${esc(levelLabel)}行业资金流 · 主力净流入</text>`;
+  s += `<line x1="${divX}" y1="${y + 38}" x2="${divX}" y2="${y + swH - 10}" stroke="${lineC}" stroke-width="1"/>`;
+  // 左：流入（横条右对齐、向左延伸）
+  s += `<text x="${x0 + 18}" y="${y + 48}" dominant-baseline="middle" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${upC}">流入 TOP${data.inflow.length}</text>`;
+  data.inflow.forEach((r, i) => {
+    const ry = y + 68 + i * ROW_H;
+    const bw = Math.max(2, Math.round((r.yiyi / maxIn) * (halfW - 16)));
+    s += `<rect x="${x0 + 18 + halfW - 6 - bw}" y="${ry - 9}" width="${bw}" height="18" rx="3" fill="rgba(245,34,45,0.18)"/>`;
+    s += `<text x="${x0 + 20}" y="${ry}" dominant-baseline="middle" font-family="PingFang SC,cjk" font-size="13" fill="${ink}">${nm(r.name)}</text>`;
+    s += `<text x="${x0 + 18 + halfW - 8}" y="${ry}" text-anchor="end" dominant-baseline="middle" font-family="PingFang SC,cjk" font-size="13" font-weight="bold" fill="${upC}">+${r.yiyi.toFixed(1)}亿</text>`;
+  });
+  // 右：流出（横条左对齐、向右延伸）
+  s += `<text x="${rx2}" y="${y + 48}" dominant-baseline="middle" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${downC}">流出 TOP${data.outflow.length}</text>`;
+  data.outflow.forEach((r, i) => {
+    const ry = y + 68 + i * ROW_H;
+    const bw = Math.max(2, Math.round((Math.abs(r.yiyi) / maxOut) * (halfW - 16)));
+    s += `<rect x="${rx2}" y="${ry - 9}" width="${bw}" height="18" rx="3" fill="rgba(10,168,105,0.18)"/>`;
+    s += `<text x="${rx2 + 2}" y="${ry}" dominant-baseline="middle" font-family="PingFang SC,cjk" font-size="13" fill="${ink}">${nm(r.name)}</text>`;
+    s += `<text x="${rx2 + halfW - 8}" y="${ry}" text-anchor="end" dominant-baseline="middle" font-family="PingFang SC,cjk" font-size="13" font-weight="bold" fill="${downC}">${r.yiyi.toFixed(1)}亿</text>`;
+  });
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-<rect x="0" y="0" width="${W}" height="${H}" rx="18" fill="${bg}"/>${s}<text x="${W - PAD}" y="${H - 14}" text-anchor="end" font-family="PingFang SC,cjk" font-size="11" fill="${sub}">生成 ${hhmm}</text></svg>`;
+<rect x="0" y="0" width="${W}" height="${H}" rx="18" fill="${bg}"/>${s}<text x="${W - PAD}" y="${H - 12}" text-anchor="end" font-family="PingFang SC,cjk" font-size="11" fill="${sub}">生成 ${mmdd} ${hhmm}</text></svg>`;
   try {
     const { Resvg } = require('@resvg/resvg-js');
     const r = new Resvg(svg, { fitTo: { mode: 'width', value: W }, font: { fontFiles: ['/app/fonts/cjk_sub.ttf'], loadSystemFonts: false, defaultFontFamily: 'PingFang SC' } });

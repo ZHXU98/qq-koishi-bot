@@ -2,7 +2,7 @@
 // /ss 指数行情：上证/沪深300/深证综指 + 成交额对比 + 申万二级资金流
 // ============================================================
 const { NAPCAT_URL, TOKEN } = require('../config');
-const { cacheGet, cacheSet, fmtAmountWan, fmtAmountYuan, estFullDayAmount, isTradingDay, normStockName } = require('../utils');
+const { cacheGet, cacheSet, fmtAmountWan, fmtAmountYuan, estFullDayAmount, isTradingDay, normStockName, esc } = require('../utils');
 const { emFetchJson } = require('../market');
 
 // ---------- 指数行情（/ss：上证指数 + 沪深300，2026-08-31 新增） ----------
@@ -282,7 +282,7 @@ async function prevTradingAmount(code, nowHHMM) {
       const swH = 206;
       rrect(x0, y, cw, swH, 14, panel);
       ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 16px cjk';
-      ctx.fillText('申万二级行业资金流（主力净流入）', x0 + 18, y + 26);
+      ctx.fillText('申万二级行业资金流 · 主力净流入', x0 + 18, y + 26);
       const halfW = (cw - 36 - 12) / 2;
       const maxIn = Math.max(...data.sw2.inflow.map(r => r.yiyi), 1);
       const maxOut = Math.max(...data.sw2.outflow.map(r => Math.abs(r.yiyi)), 1);
@@ -427,7 +427,7 @@ async function prevTradingAmount(code, nowHHMM) {
     if (data.sw2 && data.sw2.inflow.length) {
       const swH = 206;
       s += `<rect x="${x0}" y="${y}" width="${cw}" height="${swH}" rx="14" fill="${panel}"/>`;
-      s += `<text x="${x0 + 18}" y="${y + 26}" font-family="PingFang SC,cjk" font-size="16" font-weight="bold" fill="${ink}">申万二级行业资金流（主力净流入）</text>`;
+      s += `<text x="${x0 + 18}" y="${y + 26}" font-family="PingFang SC,cjk" font-size="16" font-weight="bold" fill="${ink}">申万二级行业资金流 · 主力净流入</text>`;
       const halfW = (cw - 36 - 12) / 2;
       // 左：流入 TOP5（行间距 28px，标题到第一行 22px 间隙）
       s += `<text x="${x0 + 18}" y="${y + 48}" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${upC}">流入 TOP5</text>`;
