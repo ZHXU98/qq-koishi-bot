@@ -3734,6 +3734,15 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   const { ma5, ma10, ma20, bollUp, bollLow, bollMid, bollWidth } = dayInfo;
   const { sellLow, sellHigh, buyLow, buyHigh, inSellZone, inBuyZone, inNeutral, expectedTDiff } = tPos;
   const now = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, hour: '2-digit', minute: '2-digit' });
+  // 手续费：ETF万0.1双边（免五，无印花税无过户费）≈0.02%；个股万0.8双边+千1印花税+沪市过户费万0.2双向≈0.30%
+  const isETF = /^(sh51|sz159)/.test(code);
+  const feeRate = isETF ? 0.02 : 0.30;
+  const feeDesc = isETF
+    ? '买+卖万0.1（免五，无印花税）≈ 0.02%'
+    : '买+卖万0.8 + 卖出印花税千1 + 沪市过户费万0.2双向 ≈ 0.30%';
+  // 振幅告警阈值：费率的约1.5倍为有效做T最低门槛
+  const ampWarnTh = isETF ? 0.08 : 0.45;
+  const ampCautionTh = isETF ? 0.20 : 0.80;
   const fp = v => isFinite(v) && v !== null ? Number(v).toFixed(2) : '-';
   const fpct = v => (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%';
   const FORM_LABEL = { uptrend: '上升单边', downtrend: '下降单边', swing: '震荡区间', unclear: '趋势不明' };
@@ -3839,8 +3848,8 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     if (bollLow) L.push(`   ↓ BOLL下轨(${fp(bollLow)}) 是强支撑，回踩此位量缩可买`);
     L.push('');
     L.push(`📏 预期T差：约 ${expectedTDiff}%`);
-    L.push(`   双边手续费（买+卖万3 + 卖出印花税千1 + 过户费万0.2）≈ 0.16%`);
-    const net = (parseFloat(expectedTDiff) - 0.16).toFixed(1);
+    L.push(`   双边手续费（${feeDesc}）`);
+    const net = (parseFloat(expectedTDiff) - feeRate).toFixed(2);
     L.push(`   扣除手续费后净赚空间：约 ${net}%`);
   }
   L.push('');
@@ -3862,10 +3871,10 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push(`   · 等跌到 ${fp(buyHigh)} 以下 → 准备分批买回`);
     L.push(`   · 现阶段不操作，等更好的点位`);
   }
-  if (amplitude < 0.5) {
+  if (amplitude < ampWarnTh) {
     L.push('');
-    L.push(`⚠️ 今日振幅仅 ${amplitude.toFixed(1)}%，低于手续费成本（0.16%），做T意义不大，建议观望`);
-  } else if (amplitude < 1.0) {
+    L.push(`⚠️ 今日振幅仅 ${amplitude.toFixed(1)}%，低于手续费成本（${feeRate}%），做T意义不大，建议观望`);
+  } else if (amplitude < ampCautionTh) {
     L.push('');
     L.push(`💡 今日振幅 ${amplitude.toFixed(1)}%，T差空间偏小，建议精准挂单，别强求`);
   }
