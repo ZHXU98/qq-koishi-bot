@@ -1404,26 +1404,28 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
 
   // 标题区
   ctx.fillStyle = panel; ctx.fillRect(0, 0, W, TITLE_H);
+  // 左侧渐变 accent 竖条
+  const titleAccGrad = ctx.createLinearGradient(PAD, 14, PAD, 52);
+  titleAccGrad.addColorStop(0, '#f5222d'); titleAccGrad.addColorStop(1, '#ff7875');
+  ctx.fillStyle = titleAccGrad; ctx.fillRect(PAD, 14, 5, 38);
   ctx.fillStyle = ink;
   ctx.textAlign = 'left';
   ctx.font = 'bold 24px cjk';
-  ctx.fillText(name, PAD, 34);
+  ctx.fillText(name, PAD + 16, 34);
   ctx.fillStyle = sub; ctx.font = '16px cjk';
-  ctx.fillText(code.toUpperCase(), PAD + name.length * 24 + 8, 34);
+  ctx.fillText(code.toUpperCase(), PAD + 16 + name.length * 24 + 8, 34);
   ctx.fillStyle = sub; ctx.font = '13px cjk';
-  ctx.fillText(periodLabel, PAD, 54);
-  // 标题右侧今日价：颜色分时按今开（用户要求），其他周期按昨收；涨跌额/涨跌幅数字一律按昨收（标准收益率口径）
+  ctx.fillText(periodLabel, PAD + 16, 54);
+  // 标题右侧：现价 + 涨跌（去掉「今日价格」文字标签）
   ctx.textAlign = 'right';
-  ctx.fillStyle = sub; ctx.font = '14px cjk';
-  ctx.fillText('今日价格', W - PAD, 30);
-  const dCol = chgCol; // 右上角颜色与收益率统一按昨收（红涨绿跌标准口径）
+  const dCol = chgCol;
   const numChg = chg;
   const numPct = chgPct;
-  ctx.fillStyle = dCol; ctx.font = 'bold 26px cjk';
-  ctx.fillText(fp(lastPrice), W - PAD, 52);
+  ctx.fillStyle = dCol; ctx.font = 'bold 28px cjk';
+  ctx.fillText(fp(lastPrice), W - PAD, 38);
   ctx.font = '15px cjk';
-  const chgTxt = `${numChg >= 0 ? '+' : ''}${fp(numChg)} (${numPct >= 0 ? '+' : ''}${numPct.toFixed(2)}%)`;
-  ctx.fillText(chgTxt, W - PAD, 70);
+  const chgTxt = `${numChg >= 0 ? '+' : ''}${fp(numChg)}  (${numPct >= 0 ? '+' : ''}${numPct.toFixed(2)}%)`;
+  ctx.fillText(chgTxt, W - PAD, 58);
 
   // 网格 + Y 轴
   const gridN = 5;
@@ -1473,22 +1475,42 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
     // 昨收基准
     if (prevCloseRef) {
       const yRef = Y(prevCloseRef);
-      ctx.strokeStyle = sub; ctx.lineWidth = 1.1; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(PAD, yRef); ctx.lineTo(W - PAD, yRef); ctx.stroke(); ctx.setLineDash([]);
-      ctx.fillStyle = sub; ctx.fillRect(PAD - 6, yRef - 10, 70, 20);
+      ctx.strokeStyle = 'rgba(138,145,156,0.5)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(PAD, yRef); ctx.lineTo(W - PAD, yRef); ctx.stroke(); ctx.setLineDash([]);
+      // 昨收标签：改为右侧轴外小标注
+      const refLabel = '昨 ' + fp(prevCloseRef);
+      ctx.font = '11px cjk';
+      const refLW = ctx.measureText(refLabel).width + 8;
+      ctx.fillStyle = 'rgba(138,145,156,0.85)'; ctx.beginPath(); ctx.roundRect(W - PAD + 2, yRef - 10, refLW, 20, 3); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '11px cjk';
-      ctx.fillText('昨收 ' + fp(prevCloseRef), PAD + 29, yRef + 4);
+      ctx.fillText(refLabel, W - PAD + 2 + refLW / 2, yRef + 4);
     }
     // 价格线颜色：按「昨收」判断（红涨绿跌标准口径）——现价 < 昨收（负收益）必须绿色。
     // 早期曾用「今开」作红绿基准，导致尾盘出现「现价 2904 < 昨收 2910 却仍是红线」的负收益红盘，
     // 2026-09-11 用户纠正为按昨收。与标题右上角 chgCol 保持一致。
     const priceCol = chg >= 0 ? upC : downC;
     if (dn > 0) {
+      // 渐变填充（价格线下方半透明区域）
+      const fillGrad = ctx.createLinearGradient(0, TITLE_H, 0, TITLE_H + plotH);
+      const fillRgb = chg >= 0 ? '245,34,45' : '10,168,105';
+      fillGrad.addColorStop(0, `rgba(${fillRgb},0.18)`);
+      fillGrad.addColorStop(0.7, `rgba(${fillRgb},0.05)`);
+      fillGrad.addColorStop(1, `rgba(${fillRgb},0)`);
+      ctx.fillStyle = fillGrad;
+      ctx.beginPath();
+      const yBase = TITLE_H + plotH;
+      ctx.moveTo(mapX(0), yBase);
+      for (let i = 0; i < dn; i++) ctx.lineTo(mapX(i), Y(display[i].close));
+      ctx.lineTo(mapX(dn - 1), yBase);
+      ctx.closePath();
+      ctx.fill();
+      // 价格线
       ctx.strokeStyle = priceCol; ctx.lineWidth = 2; ctx.beginPath();
       for (let i = 0; i < dn; i++) {
         const px = mapX(i);
         if (i === 0) ctx.moveTo(px, Y(display[i].close)); else ctx.lineTo(px, Y(display[i].close));
       }
       ctx.stroke();
+      // 均价线
       if (avgSeries) {
         ctx.strokeStyle = '#f0b90b'; ctx.lineWidth = 1.4; ctx.beginPath();
         for (let i = 0; i < dn; i++) {
@@ -1506,9 +1528,10 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
     ctx.textAlign = 'left';
     lg.forEach((it, i) => {
       const cx = PAD + 60 + i * 220;
-      ctx.fillStyle = it[1]; ctx.fillRect(cx - 60, yLegend + 7, 14, 14);
+      // 圆点替代方块
+      ctx.fillStyle = it[1]; ctx.beginPath(); ctx.arc(cx - 53, yLegend + 14, 5, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = ink; ctx.font = '13px cjk';
-      ctx.fillText(it[0], cx - 40, yLegend + 14);
+      ctx.fillText(it[0], cx - 42, yLegend + 14);
     });
   } else {
     // 非分时：BOLL + MA + K线 + 最新价标注 + 图例
