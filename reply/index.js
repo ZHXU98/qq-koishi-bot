@@ -383,6 +383,29 @@ async function prevTradingAmount(code, nowHHMM) {
     ].join('\n');
   }
 
+  // ---------- 全市场涨跌家数（/ss 内嵌，2026-09-11 新增） ----------
+  // 数据源：东财 ulist，f104=上涨家数 f105=下跌家数 f106=平盘家数；上证(1.000001)+深证综指(0.399106)=沪深两市全量
+  const EM_UP_DOWN = 'https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&fields=f104,f105,f106&secids=1.000001,0.399106';
+  async function fetchUpDownCount() {
+    const cached = cacheGet('updown');
+    if (cached) return cached;
+    // 复用 emFetchJson：东财会阻断部分 IP 的主站节点，需按「上次成功节点优先」轮换到 push2delay
+    const j = await emFetchJson(EM_UP_DOWN);
+    const diff = j?.data?.diff;
+    if (!Array.isArray(diff) || diff.length < 2) return null;
+    const up = diff.reduce((s, x) => s + (Number(x.f104) || 0), 0);
+    const down = diff.reduce((s, x) => s + (Number(x.f105) || 0), 0);
+    const flat = diff.reduce((s, x) => s + (Number(x.f106) || 0), 0);
+    const result = { up, down, flat };
+    cacheSet('updown', result, 30000); // 30 秒缓存
+    return result;
+  }
+  // 文本版涨跌家数
+  function udText(ud) {
+    if (!ud) return null;
+    return `🔴 上涨 ${ud.up} 家　🟢 下跌 ${ud.down} 家　⚪ 平盘 ${ud.flat} 家`;
+  }
+
   // ---------- /ss 指数行情图（白底竖版卡片，手机阅读友好，2026-08-31 新增） ----------
   // data: { closed, nowHHMM, t, indices:[{code,name,price,open,chg,chgPct,high,low,amountWan,est,curYuan,prevAmt}],
   //         mkt:{amountWan,est,curYuan,prevYuan}, sw2:{inflow,outflow}|null }
@@ -394,7 +417,7 @@ async function prevTradingAmount(code, nowHHMM) {
   function renderSSPngCanvas(data) {
     const W = 720, PAD = 22;
     const bg = '#ffffff', panel = '#f7f8fa', ink = '#2b2f36', sub = '#8a919e', lineC = '#e8eaed';
-    const upC = '#e0483e', downC = '#2aa36b'; // A股：涨红跌绿
+    const upC = '#f5222d', downC = '#0aa869'; // A股：涨红跌绿
     const f2 = v => (isFinite(v) ? v.toFixed(2) : '-');
     const f1 = v => (isFinite(v) ? v.toFixed(1) : '-');
     const comp = (cur, prev) => {
@@ -411,7 +434,7 @@ async function prevTradingAmount(code, nowHHMM) {
       return [txt, col];
     };
     // 计算总高度（与 SVG 版布局一致）
-    let H = 18 + 44 + (data.indices.length * (206 + 12)) + 104 + 12 + (data.sw2 && data.sw2.inflow.length ? 206 + 12 : 0) + 16;
+    let H = 18 + 44 + (data.indices.length * (206 + 12)) + 132 + 12 + (data.sw2 && data.sw2.inflow.length ? 206 + 12 : 0) + 16;
     const { createCanvas } = require('@napi-rs/canvas');
     const canvas = createCanvas(Math.round(W * 1.2), Math.round(H * 1.2)); // 1.2x 分辨率，兼顾清晰与生成速度
     const ctx = canvas.getContext('2d');
@@ -440,21 +463,21 @@ async function prevTradingAmount(code, nowHHMM) {
       ctx.fillText(it.name, x0 + 18, y + 28);
       ctx.fillStyle = sub; ctx.font = '13px cjk';
       ctx.fillText(String(it.code).slice(2), x0 + 152, y + 28);
-      // 现价 + 涨跌
+      // 现价 + 涨跌（价格 40px 中心 y+66，分隔线下移到 y+92 避免交叉）
       ctx.fillStyle = chgCol; ctx.font = 'bold 40px cjk';
-      ctx.fillText(f2(it.price), x0 + 18, y + 72);
+      ctx.fillText(f2(it.price), x0 + 18, y + 66);
       const chgTxt = `${it.chg >= 0 ? '+' : ''}${f2(it.chg)}  ${it.chgPct >= 0 ? '+' : ''}${f2(it.chgPct)}%`;
       ctx.textAlign = 'right'; ctx.font = 'bold 19px cjk';
-      ctx.fillText(chgTxt, x0 + cw - 18, y + 70);
-      // 分隔线
-      ctx.strokeStyle = lineC; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x0 + 18, y + 86); ctx.lineTo(x0 + cw - 18, y + 86); ctx.stroke();
+      ctx.fillText(chgTxt, x0 + cw - 18, y + 66);
+      // 分隔线（y+92，安全低于 40px 字体下边缘 y+86）
+      ctx.strokeStyle = lineC; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x0 + 18, y + 92); ctx.lineTo(x0 + cw - 18, y + 92); ctx.stroke();
       // 三列：今开/最高/最低
       const colW3 = (cw - 36) / 3;
       ctx.textAlign = 'left';
       [['今开', f2(it.open)], ['最高', f2(it.high)], ['最低', f2(it.low)]].forEach((c2, i) => {
         const cx = x0 + 18 + colW3 * i;
         ctx.fillStyle = sub; ctx.font = '12px cjk';
-        ctx.fillText(c2[0], cx, y + 106);
+        ctx.fillText(c2[0], cx, y + 108);
         ctx.fillStyle = ink; ctx.font = 'bold 17px cjk';
         ctx.fillText(c2[1], cx, y + 126);
       });
@@ -468,34 +491,52 @@ async function prevTradingAmount(code, nowHHMM) {
         ctx.fillStyle = sub; ctx.font = '12px cjk';
         ctx.fillText(c2[0], cx, y + 148);
         ctx.fillStyle = ink; ctx.font = 'bold 16px cjk';
-        ctx.fillText(c2[1], cx, y + 168);
+        ctx.fillText(c2[1], cx, y + 166);
       });
-      // 放量缩量条
+      // 放量缩量条（bar top y+178，h=24）
       const [ct, cc] = compLine(c, !data.closed);
-      const barA = cc === upC ? 'rgba(224,72,62,0.08)' : cc === downC ? 'rgba(42,163,107,0.08)' : 'rgba(138,145,158,0.08)';
-      ctx.fillStyle = barA; ctx.beginPath(); ctx.roundRect(x0 + 18, y + 178, cw - 36, 28, 8); ctx.fill();
+      const barA = cc === upC ? 'rgba(245,34,45,0.08)' : cc === downC ? 'rgba(10,168,105,0.08)' : 'rgba(138,145,158,0.08)';
+      ctx.fillStyle = barA; ctx.beginPath(); ctx.roundRect(x0 + 18, y + 178, cw - 36, 24, 8); ctx.fill();
       ctx.fillStyle = cc; ctx.textAlign = 'left'; ctx.font = 'bold 14px cjk';
-      ctx.fillText(ct, x0 + 32, y + 196);
+      ctx.fillText(ct, x0 + 32, y + 190);
       y += cardH + 12;
     }
 
     // 全市场卡片
     const mc = comp(data.mkt.curYuan, data.mkt.prevYuan);
-    const mktH = 104;
+    const mktH = 132;
     rrect(x0, y, cw, mktH, 14, panel);
     ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 18px cjk';
     ctx.fillText('全市场（沪深两市合计）', x0 + 18, y + 28);
     ctx.font = 'bold 30px cjk';
-    ctx.fillText(`${f1(data.mkt.amountWan / 10000)}亿`, x0 + 18, y + 68);
+    ctx.fillText(`${f1(data.mkt.amountWan / 10000)}亿`, x0 + 18, y + 64);
     if (!data.closed) {
       ctx.fillStyle = sub; ctx.textAlign = 'right'; ctx.font = '15px cjk';
-      ctx.fillText(`预计全天 ${f1(data.mkt.est / 10000)}亿`, x0 + cw - 18, y + 66);
+      ctx.fillText(`预计全天 ${f1(data.mkt.est / 10000)}亿`, x0 + cw - 18, y + 62);
+    }
+    // 涨跌家数：醒目横条（三段等宽色块：上涨红 / 下跌绿 / 平盘灰）
+    if (data.ud) {
+      const segW = (cw - 36) / 3, barH = 24;
+      const segs = [
+        { label: `上涨 ${data.ud.up}`, col: upC },
+        { label: `下跌 ${data.ud.down}`, col: downC },
+        { label: `平盘 ${data.ud.flat}`, col: sub },
+      ];
+      segs.forEach((seg, i) => {
+        const sx = x0 + 18 + segW * i;
+        ctx.fillStyle = seg.col;
+        ctx.beginPath(); ctx.roundRect(sx, y + 78, segW - 5, barH, 6); ctx.fill();
+        ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.font = 'bold 14px cjk';
+        // textBaseline='middle'，垂直中心正好在横条中央，不加额外偏移
+        ctx.fillText(seg.label, sx + (segW - 5) / 2, y + 78 + barH / 2);
+      });
+      ctx.textAlign = 'left';
     }
     const [mt, mcol] = compLine(mc, !data.closed);
-    ctx.fillStyle = mcol === upC ? 'rgba(224,72,62,0.08)' : mcol === downC ? 'rgba(42,163,107,0.08)' : 'rgba(138,145,158,0.08)';
-    ctx.beginPath(); ctx.roundRect(x0 + 18, y + 76, cw - 36, 26, 8); ctx.fill();
+    ctx.fillStyle = mcol === upC ? 'rgba(245,34,45,0.08)' : mcol === downC ? 'rgba(10,168,105,0.08)' : 'rgba(138,145,158,0.08)';
+    ctx.beginPath(); ctx.roundRect(x0 + 18, y + 104, cw - 36, 26, 8); ctx.fill();
     ctx.fillStyle = mcol; ctx.textAlign = 'left'; ctx.font = 'bold 13px cjk';
-    ctx.fillText(mt, x0 + 32, y + 93);
+    ctx.fillText(mt, x0 + 32, y + 121);
     y += mktH + 12;
 
     // 申万二级行业资金流
@@ -503,13 +544,13 @@ async function prevTradingAmount(code, nowHHMM) {
       const swH = 206;
       rrect(x0, y, cw, swH, 14, panel);
       ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 16px cjk';
-      ctx.fillText('申万二级行业资金流（主力净流入）', x0 + 18, y + 28);
+      ctx.fillText('申万二级行业资金流（主力净流入）', x0 + 18, y + 26);
       const halfW = (cw - 36 - 12) / 2;
-      // 左：流入
+      // 左：流入（行间距 28px，标题到第一行 22px 间隙）
       ctx.fillStyle = upC; ctx.font = 'bold 14px cjk';
-      ctx.fillText('流入 TOP5', x0 + 18, y + 54);
+      ctx.fillText('流入 TOP5', x0 + 18, y + 48);
       data.sw2.inflow.forEach((r, i) => {
-        const ry = y + 54 + 14 + i * 26;
+        const ry = y + 72 + i * 28;
         ctx.fillStyle = ink; ctx.font = '14px cjk'; ctx.textAlign = 'left';
         ctx.fillText(r.name.length > 9 ? r.name.slice(0, 9) + '…' : r.name, x0 + 18, ry);
         ctx.fillStyle = upC; ctx.font = 'bold 14px cjk'; ctx.textAlign = 'right';
@@ -519,9 +560,9 @@ async function prevTradingAmount(code, nowHHMM) {
       const rx2 = x0 + 18 + halfW + 12;
       ctx.textAlign = 'left';
       ctx.fillStyle = downC; ctx.font = 'bold 14px cjk';
-      ctx.fillText('流出 TOP5', rx2, y + 54);
+      ctx.fillText('流出 TOP5', rx2, y + 48);
       data.sw2.outflow.forEach((r, i) => {
-        const ry = y + 54 + 14 + i * 26;
+        const ry = y + 72 + i * 28;
         ctx.fillStyle = ink; ctx.font = '14px cjk'; ctx.textAlign = 'left';
         ctx.fillText(r.name.length > 9 ? r.name.slice(0, 9) + '…' : r.name, rx2, ry);
         ctx.fillStyle = downC; ctx.font = 'bold 14px cjk'; ctx.textAlign = 'right';
@@ -539,7 +580,7 @@ async function prevTradingAmount(code, nowHHMM) {
   function renderSSPngSvg(data) {
     const W = 720, PAD = 22;
     const bg = '#ffffff', panel = '#f7f8fa', ink = '#2b2f36', sub = '#8a919e', lineC = '#e8eaed';
-    const upC = '#e0483e', downC = '#2aa36b'; // A股：涨红跌绿
+    const upC = '#f5222d', downC = '#0aa869'; // A股：涨红跌绿
     const f2 = v => (isFinite(v) ? v.toFixed(2) : '-');
     const f1 = v => (isFinite(v) ? v.toFixed(1) : '-');
     const comp = (cur, prev) => {
@@ -555,7 +596,7 @@ async function prevTradingAmount(code, nowHHMM) {
       const txt = `较上一交易日${sameTime ? '同时刻 ' : ''}${c.dir} ${(Math.abs(c.diff) / 1e8).toFixed(1)}亿（${c.pct >= 0 ? '+' : ''}${c.pct.toFixed(1)}%）`;
       return [txt, col];
     };
-    const barBg = col => col === upC ? 'rgba(224,72,62,0.08)' : col === downC ? 'rgba(42,163,107,0.08)' : 'rgba(138,145,158,0.08)';
+    const barBg = col => col === upC ? 'rgba(245,34,45,0.08)' : col === downC ? 'rgba(10,168,105,0.08)' : 'rgba(138,145,158,0.08)';
 
     let y = 18, s = '';
     const mmdd = data.t.slice(5, 10);
@@ -575,16 +616,16 @@ async function prevTradingAmount(code, nowHHMM) {
       s += `<rect x="${x0}" y="${y}" width="${cw}" height="${cardH}" rx="14" fill="${panel}"/>`;
       s += `<text x="${x0 + 18}" y="${y + 28}" font-family="PingFang SC,cjk" font-size="18" font-weight="bold" fill="${ink}">${esc(it.name)}</text>`;
       s += `<text x="${x0 + 152}" y="${y + 28}" font-family="PingFang SC,cjk" font-size="13" fill="${sub}">${String(it.code).slice(2)}</text>`;
-      // 现价 + 涨跌
-      s += `<text x="${x0 + 18}" y="${y + 72}" font-family="PingFang SC,cjk" font-size="40" font-weight="bold" fill="${chgCol}">${f2(it.price)}</text>`;
+      // 现价 + 涨跌（价格 40px 中心 y+66，分隔线下移到 y+92 避免交叉）
+      s += `<text x="${x0 + 18}" y="${y + 66}" font-family="PingFang SC,cjk" font-size="40" font-weight="bold" fill="${chgCol}">${f2(it.price)}</text>`;
       const chgTxt = `${it.chg >= 0 ? '+' : ''}${f2(it.chg)}  ${it.chgPct >= 0 ? '+' : ''}${f2(it.chgPct)}%`;
-      s += `<text x="${x0 + cw - 18}" y="${y + 70}" text-anchor="end" font-family="PingFang SC,cjk" font-size="19" font-weight="bold" fill="${chgCol}">${chgTxt}</text>`;
-      s += `<line x1="${x0 + 18}" y1="${y + 86}" x2="${x0 + cw - 18}" y2="${y + 86}" stroke="${lineC}" stroke-width="1"/>`;
+      s += `<text x="${x0 + cw - 18}" y="${y + 66}" text-anchor="end" font-family="PingFang SC,cjk" font-size="19" font-weight="bold" fill="${chgCol}">${chgTxt}</text>`;
+      s += `<line x1="${x0 + 18}" y1="${y + 92}" x2="${x0 + cw - 18}" y2="${y + 92}" stroke="${lineC}" stroke-width="1"/>`;
       // 三列：今开/最高/最低
       const colW3 = (cw - 36) / 3;
       [['今开', f2(it.open)], ['最高', f2(it.high)], ['最低', f2(it.low)]].forEach((c2, i) => {
         const cx = x0 + 18 + colW3 * i;
-        s += `<text x="${cx}" y="${y + 106}" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">${c2[0]}</text>`;
+        s += `<text x="${cx}" y="${y + 108}" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">${c2[0]}</text>`;
         s += `<text x="${cx}" y="${y + 126}" font-family="PingFang SC,cjk" font-size="17" font-weight="bold" fill="${ink}">${c2[1]}</text>`;
       });
       // 两列：成交额 / 预计全天（收盘态：全天成交额 / 较上一交易日）
@@ -595,47 +636,61 @@ async function prevTradingAmount(code, nowHHMM) {
       amtCols.forEach((c2, i) => {
         const cx = x0 + 18 + colW2 * i;
         s += `<text x="${cx}" y="${y + 148}" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">${c2[0]}</text>`;
-        s += `<text x="${cx}" y="${y + 168}" font-family="PingFang SC,cjk" font-size="16" font-weight="bold" fill="${ink}">${esc(c2[1])}</text>`;
+        s += `<text x="${cx}" y="${y + 166}" font-family="PingFang SC,cjk" font-size="16" font-weight="bold" fill="${ink}">${esc(c2[1])}</text>`;
       });
-      // 放量缩量条
+      // 放量缩量条（bar top y+178，h=24）
       const [ct, cc] = compLine(c, !data.closed);
-      s += `<rect x="${x0 + 18}" y="${y + 178}" width="${cw - 36}" height="28" rx="8" fill="${barBg(cc)}"/>`;
-      s += `<text x="${x0 + 32}" y="${y + 196}" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${cc}">${esc(ct)}</text>`;
+      s += `<rect x="${x0 + 18}" y="${y + 178}" width="${cw - 36}" height="24" rx="8" fill="${barBg(cc)}"/>`;
+      s += `<text x="${x0 + 32}" y="${y + 190}" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${cc}">${esc(ct)}</text>`;
       y += cardH + 12;
     }
 
     // 全市场卡片
     const mc = comp(data.mkt.curYuan, data.mkt.prevYuan);
-    const mktH = 104;
+    const mktH = 132;
     s += `<rect x="${x0}" y="${y}" width="${cw}" height="${mktH}" rx="14" fill="${panel}"/>`;
     s += `<text x="${x0 + 18}" y="${y + 28}" font-family="PingFang SC,cjk" font-size="18" font-weight="bold" fill="${ink}">全市场（沪深两市合计）</text>`;
-    s += `<text x="${x0 + 18}" y="${y + 68}" font-family="PingFang SC,cjk" font-size="30" font-weight="bold" fill="${ink}">${f1(data.mkt.amountWan / 10000)}亿</text>`;
+    s += `<text x="${x0 + 18}" y="${y + 64}" font-family="PingFang SC,cjk" font-size="30" font-weight="bold" fill="${ink}">${f1(data.mkt.amountWan / 10000)}亿</text>`;
     if (!data.closed) {
-      s += `<text x="${x0 + cw - 18}" y="${y + 66}" text-anchor="end" font-family="PingFang SC,cjk" font-size="15" fill="${sub}">预计全天 ${f1(data.mkt.est / 10000)}亿</text>`;
+      s += `<text x="${x0 + cw - 18}" y="${y + 62}" text-anchor="end" font-family="PingFang SC,cjk" font-size="15" fill="${sub}">预计全天 ${f1(data.mkt.est / 10000)}亿</text>`;
+    }
+    // 涨跌家数：醒目横条（三段等宽色块：上涨红 / 下跌绿 / 平盘灰）
+    if (data.ud) {
+      const segW = (cw - 36) / 3, barH = 24;
+      const segs = [
+        { label: `上涨 ${data.ud.up}`, col: upC },
+        { label: `下跌 ${data.ud.down}`, col: downC },
+        { label: `平盘 ${data.ud.flat}`, col: sub },
+      ];
+      segs.forEach((seg, i) => {
+        const sx = x0 + 18 + segW * i;
+        s += `<rect x="${sx}" y="${y + 78}" width="${segW - 5}" height="${barH}" rx="6" fill="${seg.col}"/>`;
+        s += `<text x="${sx + (segW - 5) / 2}" y="${y + 78 + barH / 2 + 5}" text-anchor="middle" dominant-baseline="middle" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="#ffffff">${esc(seg.label)}</text>`;
+      });
     }
     const [mt, mcol] = compLine(mc, !data.closed);
-    s += `<rect x="${x0 + 18}" y="${y + 76}" width="${cw - 36}" height="26" rx="8" fill="${barBg(mcol)}"/>`;
-    s += `<text x="${x0 + 32}" y="${y + 93}" font-family="PingFang SC,cjk" font-size="13" font-weight="bold" fill="${mcol}">${esc(mt)}</text>`;
+    s += `<rect x="${x0 + 18}" y="${y + 104}" width="${cw - 36}" height="26" rx="8" fill="${barBg(mcol)}"/>`;
+    s += `<text x="${x0 + 32}" y="${y + 121}" font-family="PingFang SC,cjk" font-size="13" font-weight="bold" fill="${mcol}">${esc(mt)}</text>`;
     y += mktH + 12;
 
     // 申万二级行业资金流
     if (data.sw2 && data.sw2.inflow.length) {
       const swH = 206;
       s += `<rect x="${x0}" y="${y}" width="${cw}" height="${swH}" rx="14" fill="${panel}"/>`;
-      s += `<text x="${x0 + 18}" y="${y + 28}" font-family="PingFang SC,cjk" font-size="16" font-weight="bold" fill="${ink}">申万二级行业资金流（主力净流入）</text>`;
+      s += `<text x="${x0 + 18}" y="${y + 26}" font-family="PingFang SC,cjk" font-size="16" font-weight="bold" fill="${ink}">申万二级行业资金流（主力净流入）</text>`;
       const halfW = (cw - 36 - 12) / 2;
-      // 左：流入 TOP5
-      s += `<text x="${x0 + 18}" y="${y + 54}" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${upC}">流入 TOP5</text>`;
+      // 左：流入 TOP5（行间距 28px，标题到第一行 22px 间隙）
+      s += `<text x="${x0 + 18}" y="${y + 48}" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${upC}">流入 TOP5</text>`;
       data.sw2.inflow.forEach((r, i) => {
-        const ry = y + 54 + 14 + i * 26;
+        const ry = y + 72 + i * 28;
         s += `<text x="${x0 + 18}" y="${ry}" font-family="PingFang SC,cjk" font-size="14" fill="${ink}">${esc(r.name.length > 9 ? r.name.slice(0, 9) + '…' : r.name)}</text>`;
         s += `<text x="${x0 + 18 + halfW - 6}" y="${ry}" text-anchor="end" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${upC}">+${r.yiyi.toFixed(1)}亿</text>`;
       });
       // 右：流出 TOP5
       const rx2 = x0 + 18 + halfW + 12;
-      s += `<text x="${rx2}" y="${y + 54}" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${downC}">流出 TOP5</text>`;
+      s += `<text x="${rx2}" y="${y + 48}" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${downC}">流出 TOP5</text>`;
       data.sw2.outflow.forEach((r, i) => {
-        const ry = y + 54 + 14 + i * 26;
+        const ry = y + 72 + i * 28;
         s += `<text x="${rx2}" y="${ry}" font-family="PingFang SC,cjk" font-size="14" fill="${ink}">${esc(r.name.length > 9 ? r.name.slice(0, 9) + '…' : r.name)}</text>`;
         s += `<text x="${rx2 + halfW - 6}" y="${ry}" text-anchor="end" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${downC}">${r.yiyi.toFixed(1)}亿</text>`;
       });
@@ -745,19 +800,21 @@ async function prevTradingAmount(code, nowHHMM) {
   }
   lines.push('');
 
-  // —— 申万二级行业资金流（流入/流出前5）——
-  const sw2 = await fetchSw2Flow();
+  // —— 申万二级行业资金流（流入/流出前5）+ 全市场涨跌家数 ——
+  const [sw2, ud] = await Promise.all([fetchSw2Flow(), fetchUpDownCount()]);
 
   const t = now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
   const header = `${closed ? '🏁' : '📊'} 指数行情 ${closed ? '（已收盘）' : ''}${t.slice(5, 16)}`;
 
   // 主路径：渲染竖版白底卡片图（手机友好）
-  const img = renderSSPng({ closed, nowHHMM, t, indices, mkt, sw2 });
+  const img = renderSSPng({ closed, nowHHMM, t, indices, mkt, sw2, ud });
   if (img) return { ok: true, text: header, img };
 
   // 渲染失败 → 文本 fallback
   const st = sw2Text(sw2);
   if (st) lines.push(st);
+  const ut = udText(ud);
+  if (ut) lines.push(ut);
   return { ok: false, text: [header, ...lines].join('\n').trim() };
 }
 
@@ -1309,7 +1366,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   const cw = timeMode ? (isHF ? Math.max(1.5, plotW / dn * 0.7) : Math.max(1.5, plotW / TOT * 0.7)) : Math.max(2, Math.min(8, step * 0.6));
 
   // 配色
-  const upC = '#e0483e', downC = '#12a05c';
+  const upC = '#f5222d', downC = '#0aa869';
   const bg = '#ffffff', panel = '#f7f8fa', grid = '#e8eaed';
   const ink = '#2b2f36', sub = '#8a919c';
   const maCols = ['#333333', '#f56c6c', '#409eff', '#9b59b6', '#2ecc71', '#e67e22', '#95a5a6'];
@@ -1349,7 +1406,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   ctx.fillStyle = panel; ctx.fillRect(0, 0, W, TITLE_H);
   ctx.fillStyle = ink;
   ctx.textAlign = 'left';
-  ctx.font = '24px cjk';
+  ctx.font = 'bold 24px cjk';
   ctx.fillText(name, PAD, 34);
   ctx.fillStyle = sub; ctx.font = '16px cjk';
   ctx.fillText(code.toUpperCase(), PAD + name.length * 24 + 8, 34);
@@ -1370,6 +1427,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
 
   // 网格 + Y 轴
   const gridN = 5;
+  ctx.setLineDash([4, 4]); // 虚线网格（更柔和）
   for (let i = 0; i <= gridN; i++) {
     const p = yMin + (yMax - yMin) * i / gridN;
     const y = Y(p);
@@ -1377,6 +1435,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
     ctx.fillStyle = sub; ctx.font = '12px cjk'; ctx.textAlign = 'right';
     ctx.fillText(fp(p), PAD - 10, y + 4);
   }
+  ctx.setLineDash([]);
 
   // X 轴时间标签：画在主图底部内侧（分时精确对齐曲线时刻 tmin 映射，无人工偏移；
   // 11:30 与 13:00 在连续映射下相邻仅 1 格≈3.6px，13:00 不重复标注避免重叠与错位）
@@ -1480,7 +1539,14 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
       ctx.strokeStyle = col; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(x, Y(k.high)); ctx.lineTo(x, Y(k.low)); ctx.stroke();
       const top = Math.min(Y(k.open), Y(k.close)), hgt = Math.max(1.2, Math.abs(Y(k.open) - Y(k.close)));
-      ctx.fillStyle = col; ctx.fillRect(x - cw / 2, top, cw, hgt);
+      if (up) {
+        // 涨：空心红（白底 + 红描边，A股习惯）
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(x - cw / 2, top, cw, hgt);
+        ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.strokeRect(x - cw / 2, top, cw, hgt);
+      } else {
+        // 跌：实心绿
+        ctx.fillStyle = col; ctx.fillRect(x - cw / 2, top, cw, hgt);
+      }
     }
     // 最新价横虚线 + 色块标签
     const yLast = Y(lastPrice);
@@ -1526,7 +1592,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
       const vh = Math.min(volOf(k, i), volBase * 2) / volBase * volH;
       const col = k.close >= (i > 0 ? display[i - 1].close : k.close) ? upC : downC;
       const xk = timeMode ? mapX(i) : X(i);
-      ctx.fillStyle = col; ctx.globalAlpha = 0.5;
+      ctx.fillStyle = col; ctx.globalAlpha = 0.4;
       ctx.fillRect(xk - cw / 2, volTop + volH - vh, cw, vh);
       ctx.globalAlpha = 1;
     }
@@ -1662,7 +1728,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   const cw = timeMode ? (isHF ? Math.max(1.5, plotW / dn * 0.7) : Math.max(1.5, plotW / TOT * 0.7)) : Math.max(2, Math.min(8, step * 0.6)); // K线/分时柱宽
 
   // 白底配色
-  const upCol = '#e0483e', downCol = '#12a05c'; // A股红涨绿跌
+  const upCol = '#f5222d', downCol = '#0aa869'; // A股红涨绿跌
   const bg = '#ffffff', panel = '#f7f8fa', grid = '#e8eaed';
   const ink = '#2b2f36', sub = '#8a919c';
   const maCols = ['#333333', '#f56c6c', '#409eff', '#9b59b6', '#2ecc71', '#e67e22', '#95a5a6']; // MA5 黑线（用户指定），其余保持
@@ -1704,7 +1770,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   for (let i = 0; i <= gridN; i++) {
     const p = yMin + (yMax - yMin) * i / gridN;
     const y = Y(p);
-    s += `<line x1="${PAD}" y1="${y}" x2="${W - PAD}" y2="${y}" stroke="${grid}" stroke-width="1"/>`;
+    s += `<line x1="${PAD}" y1="${y}" x2="${W - PAD}" y2="${y}" stroke="${grid}" stroke-width="1" stroke-dasharray="4 4"/>`;
     s += `<text x="${PAD - 10}" y="${y + 5}" text-anchor="end" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">${fp(p)}</text>`;
   }
   // X 轴时间标签：分时精确对齐曲线时刻 tmin 映射（12:00/13:00 相邻不重复标）；商品取首/中/末；其余取首/中/末
@@ -1790,7 +1856,11 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
     const yO = Y(k.open), yC = Y(k.close);
     s += `<line x1="${x}" y1="${yHi}" x2="${x}" y2="${yLo}" stroke="${col}" stroke-width="1"/>`;
     const top = Math.min(yO, yC), hgt = Math.max(1.2, Math.abs(yO - yC));
-    s += `<rect x="${x - cw / 2}" y="${top}" width="${cw}" height="${hgt}" fill="${col}" rx="1"/>`;
+    if (up) {
+      s += `<rect x="${x - cw / 2}" y="${top}" width="${cw}" height="${hgt}" fill="#ffffff" stroke="${col}" stroke-width="1" rx="1"/>`;
+    } else {
+      s += `<rect x="${x - cw / 2}" y="${top}" width="${cw}" height="${hgt}" fill="${col}" rx="1"/>`;
+    }
   }
 
   // 最新价标注：横虚线 + 右侧色块标签（分时按今开红绿，其他周期按昨收）
@@ -1839,7 +1909,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
       const vh = Math.min(volOf(k, i), volBase * 2) / volBase * volH;
       const col = k.close >= (i > 0 ? display[i - 1].close : k.close) ? upCol : downCol;
       const xk = timeMode ? mapX(i) : X(i);
-      s += `<rect x="${xk - cw / 2}" y="${volTop + volH - vh}" width="${cw}" height="${vh}" fill="${col}" opacity="0.5" rx="1"/>`;
+      s += `<rect x="${xk - cw / 2}" y="${volTop + volH - vh}" width="${cw}" height="${vh}" fill="${col}" opacity="0.4" rx="1"/>`;
     }
   }
   s += `<text x="${PAD}" y="${volTop + volH + 16}" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">成交量</text>`;
@@ -2113,7 +2183,7 @@ function stocksWindow(it, period) {
 // 渲染组合拼图 → 'base64://...'
 function buildStocksPng(items, meta) {
   const { createCanvas } = require('@napi-rs/canvas');
-  const UP = '#e0483e', DOWN = '#12a05c';
+  const UP = '#f5222d', DOWN = '#0aa869';
   const BG = '#ffffff', PANEL = '#f7f8fa', LINE = '#e8eaed', GRIDL = '#f1f3f6';
   const INK = '#2b2f36', SUB = '#8a919c', FAINT = '#a9aeb8', BASE = '#c9ced6';
   const AVG = '#f0b90b';
@@ -2277,12 +2347,18 @@ function buildStocksPng(items, meta) {
       for (let k = 0; k < dn; k++) {
         const d = it.disp[k];
         const xx = chX + (k + 0.5) * step;
-        const col = d.close >= d.open ? UP : DOWN;
+        const up = d.close >= d.open;
+        const col = up ? UP : DOWN;
         ctx.strokeStyle = col; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(xx, Y(d.high)); ctx.lineTo(xx, Y(d.low)); ctx.stroke();
         const yT = Y(Math.max(d.open, d.close));
         const bh = Math.max(1, Y(Math.min(d.open, d.close)) - yT);
-        ctx.fillStyle = col; ctx.fillRect(xx - bw / 2, yT, bw, bh);
+        if (up) {
+          ctx.fillStyle = '#ffffff'; ctx.fillRect(xx - bw / 2, yT, bw, bh);
+          ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.strokeRect(xx - bw / 2, yT, bw, bh);
+        } else {
+          ctx.fillStyle = col; ctx.fillRect(xx - bw / 2, yT, bw, bh);
+        }
       }
     }
 
@@ -2572,7 +2648,7 @@ async function cmdStocks(args, ctx = {}) {
 
     it.disp = disp;
     it.chgPct = chgPct;
-    it.lineCol = chgPct >= 0 ? '#e0483e' : '#12a05c'; // 分时价格线红绿按昨收涨跌（与单只 /stock 一致）
+    it.lineCol = chgPct >= 0 ? '#f5222d' : '#0aa869'; // 分时价格线红绿按昨收涨跌（与单只 /stock 一致）
     it.baseline = period === 'time' ? (prevClose > 0 ? prevClose : 0) : (first || 0);
     it.avgLine = (period === 'time' && !/^(sh000|sz399|hkHSI|usDJI|usINX)/.test(it.code))
       ? buildAvgLine(disp) : null;
@@ -2593,7 +2669,7 @@ async function cmdStocks(args, ctx = {}) {
     } else {
       const rp = (first > 0) ? (last - first) / first * 100 : 0;
       it.metaRight = `${showPrefix ? '区间 ' : ''}${rp >= 0 ? '+' : ''}${rp.toFixed(2)}%`;
-      it.metaCol = rp >= 0 ? '#e0483e' : '#12a05c';
+      it.metaCol = rp >= 0 ? '#f5222d' : '#0aa869';
     }
     if (Number.isFinite(chgPct)) { sum += chgPct; cnt++; chgPct >= 0 ? up++ : down++; }
   }
@@ -2619,7 +2695,7 @@ async function cmdStocks(args, ctx = {}) {
     period, title,
     sub: `${STOCKS_PERIOD_LABEL[period]} · ${today} ${hhmm}`,
     avgTxt: `${avg >= 0 ? '+' : ''}${avg.toFixed(2)}%`,
-    avgCol: avg >= 0 ? '#e0483e' : '#12a05c',
+    avgCol: avg >= 0 ? '#f5222d' : '#0aa869',
     statsTxt: `${valid.length} 只 · ${up} 涨 ${down} 跌`,
     footer,
   });
@@ -2740,7 +2816,7 @@ function renderInfoPngCanvas(data) {
   const { createCanvas } = require('@napi-rs/canvas');
   const W = 720, PAD = 20;
   const bg = '#ffffff', panel = '#f7f8fa', ink = '#2b2f36', sub = '#8a919e', lineC = '#e8eaed';
-  const upC = '#e0483e', downC = '#2aa36b';
+  const upC = '#f5222d', downC = '#0aa869';
   const f2 = v => (isFinite(v) ? v.toFixed(2) : '-');
   // 预排版计算高度
   const ctx0 = createCanvas(W, 100).getContext('2d');
@@ -2786,7 +2862,7 @@ function renderInfoPngCanvas(data) {
   const q = data.quote;
   if (q) {
     const chgCol = q.chgPct >= 0 ? upC : downC;
-    ctx.fillStyle = panel; ctx.beginPath(); ctx.roundRect(PAD, y, W - PAD * 2, 92, 12); ctx.fill();
+    ctx.fillStyle = panel; ctx.beginPath(); ctx.roundRect(PAD, y, W - PAD * 2, 92, 14); ctx.fill();
     ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 22px cjk';
     ctx.fillText(f2(q.price), PAD + 16, y + 26);
     ctx.fillStyle = chgCol; ctx.font = 'bold 16px cjk';
@@ -2847,7 +2923,7 @@ function renderInfoPngCanvas(data) {
   y += 8;
 
   // 新闻
-  sectionTitle(`最近新闻（${data.news.length}条）`, '#2aa36b');
+  sectionTitle(`最近新闻（${data.news.length}条）`, '#0aa869');
   y += 24;
   data.news.slice(0, data.nNews).forEach(nw => {
     ctx.fillStyle = sub; ctx.font = '12px cjk';
@@ -3097,7 +3173,7 @@ const ZJ_LEVEL_LABEL = { hy: '申万一级', hy2: '申万二级', hy3: '申万�
 const EM_BOARD_LIST = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14,f62';
 const EM_BOARD_FF_MIN = 'https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?lmt=0&klt=1&secid=90.%s&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56';
 const EM_BOARD_FF_DAY = 'https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?lmt=120&klt=101&secid=90.%s&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56';
-const ZJ_PALETTE = ['#e0483e', '#2aa36b', '#409eff', '#f56c6c', '#9b59b6', '#e67e22', '#2ecc71', '#3498db', '#e74c3c', '#1abc9c', '#f39c12', '#8e44ad', '#2980b9', '#c0392b', '#27ae60', '#d35400', '#16a085', '#7f8c8d', '#d68910', '#34495e'];
+const ZJ_PALETTE = ['#f5222d', '#0aa869', '#409eff', '#f56c6c', '#9b59b6', '#e67e22', '#2ecc71', '#3498db', '#e74c3c', '#1abc9c', '#f39c12', '#8e44ad', '#2980b9', '#c0392b', '#27ae60', '#d35400', '#16a085', '#7f8c8d', '#d68910', '#34495e'];
 
 // 东财行业列表（按当前主力净流入排序），返回 [{code,name,zljlr(元)}...]
 async function fetchEmBoards() {
@@ -3150,7 +3226,7 @@ function renderZjCurveCanvas(series, mode, levelLabel) {
   const ctx = canvas.getContext('2d');
   ctx.scale(1.2, 1.2);
   const bg = '#ffffff', ink = '#2b2f36', sub = '#8a919e', grid = '#e8eaed';
-  const upC = '#e0483e', downC = '#2aa36b';
+  const upC = '#f5222d', downC = '#0aa869';
   ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
   ctx.textBaseline = 'middle';
   const now = new Date();
@@ -3277,7 +3353,7 @@ function renderZjPng(data, levelLabel) {
 function renderZjPngCanvas(data, levelLabel) {
   const W = 720, PAD = 22;
   const bg = '#ffffff', panel = '#f7f8fa', ink = '#2b2f36', sub = '#8a919e', lineC = '#e8eaed';
-  const upC = '#e0483e', downC = '#2aa36b'; // 流入红 / 流出绿（A股红涨绿跌）
+  const upC = '#f5222d', downC = '#0aa869'; // 流入红 / 流出绿（A股红涨绿跌）
   const now = new Date();
   const mmdd = `${now.getMonth() + 1}/${now.getDate()}`;
   const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -3329,7 +3405,7 @@ function renderZjPngCanvas(data, levelLabel) {
 function renderZjPngSvg(data, levelLabel) {
   const W = 720, PAD = 22;
   const bg = '#ffffff', panel = '#f7f8fa', ink = '#2b2f36', sub = '#8a919e', lineC = '#e8eaed';
-  const upC = '#e0483e', downC = '#2aa36b'; // 流入红 / 流出绿（A股红涨绿跌）
+  const upC = '#f5222d', downC = '#0aa869'; // 流入红 / 流出绿（A股红涨绿跌）
   const now = new Date();
   const mmdd = `${now.getMonth() + 1}/${now.getDate()}`;
   const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
