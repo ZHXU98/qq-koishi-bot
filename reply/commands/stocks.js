@@ -4,7 +4,8 @@
 const path = require('path');
 const fs = require('fs');
 const { NAPCAT_URL, TOKEN, CONFIG } = require('../config');
-const { cacheGet, cacheSet, mapLimit, normStockName } = require('../utils');
+const { cacheGet, cacheSet, mapLimit, normStockName, nowText } = require('../utils');
+const { isOwnerCtx, ownerDeniedMsg } = require('../gateway'); // 组合编辑闸门（拆分后漏引入 → -add/-update/-del 曾 ReferenceError）
 const {
   STOCK_QUOTE, STOCK_PERIOD_LABEL, normalizeCode, GLOBAL_ALIAS, GLOBAL_TEXT, EM_IDX_SECID,
   resolveStockCode, calcSMA, calcBOLL, buildAvgLine,
@@ -55,6 +56,14 @@ function savePortfolios(obj) {
     fs.renameSync(tmp, PORTFOLIO_PATH);
     return true;
   } catch (e) { console.error('[stocks] portfolios 写入失败:', e.message); return false; }
+}
+// 组合名查找：忽略大小写（用户不愿每次区分 a/A）→ 返回实际存在的键，找不到返回 ''
+function findPortfolioKey(pf, target) {
+  const t = String(target || '').trim();
+  if (!t || !pf) return '';
+  if (pf[t]) return t;
+  const tl = t.toLowerCase();
+  return Object.keys(pf).find(k => k.toLowerCase() === tl) || '';
 }
 
 // 列数自适应（2026-09-11 用户调整阈值）：1 只→1 列；≤4 只→2 列；5-9 只→3 列；≥10 只→4 列
@@ -387,7 +396,7 @@ async function cmdStocks(args, ctx = {}) {
   }
 
   // —— 列出组合（所有人）——
-  // 默认只给「名称 + 只数」的紧凑清单（组合多时不刷屏）；看某个组合成分：/stocks -list <组合名>
+  // 默认一次性列出全部组合及其成分（组合名匹配不分大小写）；只看某一个：/stocks -list <组合名>
   if (mode === 'list') {
     const pf = loadPortfolios(), keys = Object.keys(pf);
     if (!keys.length) return { ok: false, text: `📋 还没有保存任何组合\n\n${STOCKS_USAGE}` };
@@ -395,7 +404,7 @@ async function cmdStocks(args, ctx = {}) {
     // 详情模式：/stocks -list <组合名> → 只列该组合的成分
     if (operands.length) {
       const target = operands[0];
-      const hit = keys.find(k => k === target) || keys.find(k => k.toLowerCase() === target.toLowerCase());
+      const hit = findPortfolioKey(pf, target);
       if (!hit) return { ok: false, text: `⚠️ 没有找到组合【${target}】\n现有组合：${keys.sort().join('、')}` };
       const st = (pf[hit] && Array.isArray(pf[hit].stocks)) ? pf[hit].stocks : [];
       const names = st.map(s => s.name || s.code).join('、') || '（空）';
@@ -407,26 +416,18 @@ async function cmdStocks(args, ctx = {}) {
       ].join('\n') };
     }
 
-    // 紧凑清单：每行贪心排 2~3 个「名称 N只」，不列成分、不带更新时间
-    const items = keys.sort().map(k => {
+    // 全部组合：每个组合一行「名称 N只：成分…」（成分不截断，一次看全）
+    const sorted = keys.sort();
+    const total = sorted.reduce((n, k) => n + (((pf[k] && Array.isArray(pf[k].stocks)) ? pf[k].stocks.length : 0)), 0);
+    const L = [`📋 已保存的组合（${sorted.length} 个，共 ${total} 只）`];
+    sorted.forEach(k => {
       const st = (pf[k] && Array.isArray(pf[k].stocks)) ? pf[k].stocks : [];
-      return `${k} ${st.length}只`;
+      const names = st.map(s => s.name || s.code).join('、') || '（空）';
+      L.push(`${k} ${st.length}只：${names}`);
     });
-    const total = keys.reduce((n, k) => n + (((pf[k] && Array.isArray(pf[k].stocks)) ? pf[k].stocks.length : 0)), 0);
-    const lines = [];
-    let cur = '';
-    for (const it of items) {
-      const cand = cur ? `${cur}　${it}` : it;
-      if (cur && cand.length > 26) { lines.push(cur); cur = it; }
-      else cur = cand;
-    }
-    if (cur) lines.push(cur);
-    return { ok: true, text: [
-      `📋 已保存的组合（${keys.length} 个，共 ${total} 只）`,
-      ...lines,
-      '',
-      '出图：/stocks -d <组合名>　看成分：/stocks -list <组合名>',
-    ].join('\n') };
+    L.push('');
+    L.push('出图：/stocks -d <组合名>　单看一个：/stocks -list <组合名>');
+    return { ok: true, text: L.join('\n') };
   }
 
   // —— 新建 / 整组覆盖（-add，仅主人） ——
@@ -438,18 +439,19 @@ async function cmdStocks(args, ctx = {}) {
     const { okList, bad } = await resolveStockArgs(operands);
     if (!okList.length) return { ok: false, text: `⚠️ 没有解析出有效股票，组合未改动${bad.length ? `\n${bad.join('、')}` : ''}` };
     const pf = loadPortfolios();
-    const existed = !!pf[name];
-    pf[name] = {
-      owner: String((existed && pf[name].owner) || ctx.uid || ''),
-      created: existed ? (pf[name].created || nowText()) : nowText(),
+    const key = findPortfolioKey(pf, name) || name; // 已有同名（忽略大小写）则复用原键，避免建出重复组合
+    const existed = !!pf[key];
+    pf[key] = {
+      owner: String((existed && pf[key].owner) || ctx.uid || ''),
+      created: existed ? (pf[key].created || nowText()) : nowText(),
       updated: nowText(),
       stocks: okList,
     };
     if (!savePortfolios(pf)) return { ok: false, text: '⚠️ 组合保存失败（服务端写盘异常），请查看容器日志' };
-    const L = [`${existed ? '♻️ 已覆盖组合' : '✅ 已保存组合'}【${name}】${okList.length} 只`,
+    const L = [`${existed ? '♻️ 已覆盖组合' : '✅ 已保存组合'}【${key}】${okList.length} 只`,
       `　${okList.map(s => s.name).join('、')}`];
     if (bad.length) L.push(`⚠️ 已跳过：${bad.join('、')}`);
-    L.push(`→ /stocks -d ${name}`);
+    L.push(`→ /stocks -d ${key}`);
     return { ok: true, text: L.join('\n') };
   }
 
@@ -469,7 +471,8 @@ async function cmdStocks(args, ctx = {}) {
       return { ok: false, text: `⚠️ 单个组合最多 ${PORTFOLIO_MAX} 只（本次给了 ${stockArgs.length} 只），组合未改动` };
     }
     const pf = loadPortfolios();
-    if (!pf[target]) {
+    const hitKey = findPortfolioKey(pf, target); // 组合名忽略大小写
+    if (!hitKey) {
       const keys = Object.keys(pf);
       return {
         ok: false,
@@ -481,10 +484,10 @@ async function cmdStocks(args, ctx = {}) {
     const { okList, bad } = await resolveStockArgs(stockArgs);
     // 边界：全解析失败时保持原组合不动，避免「手滑打错名字把组合清空」
     if (!okList.length) return { ok: false, text: `⚠️ 没有解析出有效股票，组合未改动${bad.length ? `\n${bad.join('、')}` : ''}` };
-    const before = (Array.isArray(pf[target].stocks) ? pf[target].stocks : []).map(s => s.name || s.code);
-    pf[target] = {
-      owner: String(pf[target].owner || ctx.uid || ''),
-      created: pf[target].created || nowText(),
+    const before = (Array.isArray(pf[hitKey].stocks) ? pf[hitKey].stocks : []).map(s => s.name || s.code);
+    pf[hitKey] = {
+      owner: String(pf[hitKey].owner || ctx.uid || ''),
+      created: pf[hitKey].created || nowText(),
       updated: nowText(),
       stocks: okList,
     };
@@ -494,12 +497,12 @@ async function cmdStocks(args, ctx = {}) {
     const afterNames = okList.map(s => s.name);
     const added = afterNames.filter(x => !beforeSet.has(x));
     const removed = before.filter(x => !new Set(afterNames).has(x));
-    const L = [`✏️ 已更新组合【${target}】：${before.length} 只 → ${okList.length} 只`];
+    const L = [`✏️ 已更新组合【${hitKey}】：${before.length} 只 → ${okList.length} 只`];
     if (added.length) L.push(`　＋ 新增：${added.join('、')}`);
     if (removed.length) L.push(`　－ 移除：${removed.join('、')}`);
     L.push(`　当前：${afterNames.join('、')}`);
     if (bad.length) L.push(`⚠️ 已跳过：${bad.join('、')}`);
-    L.push(`→ /stocks -d ${target}`);
+    L.push(`→ /stocks -d ${hitKey}`);
     return { ok: true, text: L.join('\n') };
   }
 
@@ -508,14 +511,15 @@ async function cmdStocks(args, ctx = {}) {
     const target = (name || operands.join('')).trim();
     if (!target) return { ok: false, text: `⚠️ 请指定要删除的组合名，例：/stocks -del 我的持仓` };
     const pf = loadPortfolios();
-    if (!pf[target]) {
+    const hitKey = findPortfolioKey(pf, target); // 组合名忽略大小写
+    if (!hitKey) {
       const keys = Object.keys(pf);
       return { ok: false, text: `⚠️ 没有找到组合【${target}】${keys.length ? `\n现有组合：${keys.join('、')}` : ''}` };
     }
-    const cnt = (Array.isArray(pf[target].stocks) ? pf[target].stocks : []).length;
-    delete pf[target];
+    const cnt = (Array.isArray(pf[hitKey].stocks) ? pf[hitKey].stocks : []).length;
+    delete pf[hitKey];
     if (!savePortfolios(pf)) return { ok: false, text: '⚠️ 删除失败（服务端写盘异常），组合未改动' };
-    return { ok: true, text: `🗑️ 已删除组合【${target}】（${cnt} 只）` };
+    return { ok: true, text: `🗑️ 已删除组合【${hitKey}】（${cnt} 只）` };
   }
 
   // —— 出图 ——
@@ -527,11 +531,12 @@ async function cmdStocks(args, ctx = {}) {
   const pf = loadPortfolios();
   const notes = [];
   let title = '自选股', targets = [];
-  if (operands.length === 1 && pf[operands[0]]) {
-    const st = Array.isArray(pf[operands[0]].stocks) ? pf[operands[0]].stocks : [];
-    if (!st.length) return { ok: false, text: `⚠️ 组合【${operands[0]}】是空的，请重新用 -add 保存` };
+  const comboKey = (operands.length === 1) ? findPortfolioKey(pf, operands[0]) : ''; // 组合名忽略大小写
+  if (comboKey) {
+    const st = Array.isArray(pf[comboKey].stocks) ? pf[comboKey].stocks : [];
+    if (!st.length) return { ok: false, text: `⚠️ 组合【${comboKey}】是空的，请重新用 -add 保存` };
     targets = st.slice(0, STOCKS_RENDER_MAX).map(s => ({ code: s.code, hint: s.name }));
-    title = operands[0];
+    title = comboKey;
     if (st.length > targets.length) notes.push(`组合共 ${st.length} 只，仅显示前 ${targets.length} 只`);
   } else {
     const qs = operands.slice(0, STOCKS_RENDER_MAX);

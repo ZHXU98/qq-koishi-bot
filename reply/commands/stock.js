@@ -1,7 +1,7 @@
 // ============================================================
 // /stock 单只股票K线/分时图 + 行情速查
 // ============================================================
-const { cacheGet, cacheSet, esc, normStockName } = require('../utils');
+const { cacheGet, cacheSet, esc, normStockName, f2p } = require('../utils');
 const {
   STOCK_QUOTE, STOCK_FQKLINE, STOCK_MINUTE, STOCK_TIMELINE, STOCK_PERIODS, STOCK_PERIOD_LABEL, STOCK_LONG,
   normalizeCode, GLOBAL_ALIAS, GLOBAL_TEXT, EM_IDX_SECID, resolveStockCode,
