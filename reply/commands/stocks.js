@@ -27,7 +27,8 @@ const STOCKS_USAGE = [
   '出图：/stocks <周期> <组合名 或 股票...>',
   '　　周期（单选）：-t 分时 | -d 日线 | -w 周线 | -m 月线（不写默认日线）',
   '　　例：/stocks -d 我的持仓　/stocks -t 600519 000858　/stocks -w 贵州茅台 宁德时代',
-  '组合：/stocks -list　列出已保存组合',
+  '组合：/stocks -list　组合清单（只列名称+只数）',
+  '　　　/stocks -list <组合名>　查看某个组合的成分',
   '编辑（仅机器人主人）：',
   '　/stocks -add <股票...> -name <组合名>　新建 / 整组覆盖',
   '　/stocks -update <组合名> <股票...>　　 用新名单整组替换（组合须已存在）',
@@ -385,20 +386,47 @@ async function cmdStocks(args, ctx = {}) {
     return { ok: false, text: `⚠️ -${mode} 是编辑指令，不接受周期参数\n想看行情请单独发：/stocks <周期> <组合名>` };
   }
 
-  // —— 列出组合（所有人） ——
+  // —— 列出组合（所有人）——
+  // 默认只给「名称 + 只数」的紧凑清单（组合多时不刷屏）；看某个组合成分：/stocks -list <组合名>
   if (mode === 'list') {
     const pf = loadPortfolios(), keys = Object.keys(pf);
     if (!keys.length) return { ok: false, text: `📋 还没有保存任何组合\n\n${STOCKS_USAGE}` };
-    const L = [`📋 已保存的组合（${keys.length} 个）`];
-    keys.sort().forEach(k => {
+
+    // 详情模式：/stocks -list <组合名> → 只列该组合的成分
+    if (operands.length) {
+      const target = operands[0];
+      const hit = keys.find(k => k === target) || keys.find(k => k.toLowerCase() === target.toLowerCase());
+      if (!hit) return { ok: false, text: `⚠️ 没有找到组合【${target}】\n现有组合：${keys.sort().join('、')}` };
+      const st = (pf[hit] && Array.isArray(pf[hit].stocks)) ? pf[hit].stocks : [];
+      const names = st.map(s => s.name || s.code).join('、') || '（空）';
+      return { ok: true, text: [
+        `📋 【${hit}】${st.length} 只　更新 ${pf[hit].updated || pf[hit].created || '-'}`,
+        names,
+        '',
+        `出图：/stocks -d ${hit}`,
+      ].join('\n') };
+    }
+
+    // 紧凑清单：每行贪心排 2~3 个「名称 N只」，不列成分、不带更新时间
+    const items = keys.sort().map(k => {
       const st = (pf[k] && Array.isArray(pf[k].stocks)) ? pf[k].stocks : [];
-      const shown = st.slice(0, 10).map(s => s.name || s.code).join('、');
-      L.push('');
-      L.push(`【${k}】${st.length} 只　更新 ${pf[k].updated || pf[k].created || '-'}`);
-      L.push(`　${shown}${st.length > 10 ? ` 等 ${st.length} 只` : ''}`);
-      L.push(`　→ /stocks -d ${k}`);
+      return `${k} ${st.length}只`;
     });
-    return { ok: true, text: L.join('\n') };
+    const total = keys.reduce((n, k) => n + (((pf[k] && Array.isArray(pf[k].stocks)) ? pf[k].stocks.length : 0)), 0);
+    const lines = [];
+    let cur = '';
+    for (const it of items) {
+      const cand = cur ? `${cur}　${it}` : it;
+      if (cur && cand.length > 26) { lines.push(cur); cur = it; }
+      else cur = cand;
+    }
+    if (cur) lines.push(cur);
+    return { ok: true, text: [
+      `📋 已保存的组合（${keys.length} 个，共 ${total} 只）`,
+      ...lines,
+      '',
+      '出图：/stocks -d <组合名>　看成分：/stocks -list <组合名>',
+    ].join('\n') };
   }
 
   // —— 新建 / 整组覆盖（-add，仅主人） ——

@@ -21,7 +21,7 @@ function cmdHelp() {
     '/stocks <周期> <组合名 或 股票...>   股票组合拼图（一图多看）',
     '        周期（单选）：-t 分时 / -d 日线 / -w 周线 / -m 月线（不写默认日线）',
     '        例：/stocks -d 我的持仓　/stocks -t 600519 000858　/stocks -w 贵州茅台 宁德时代',
-    '/stocks -list   列出已保存组合',
+    '/stocks -list   组合清单（只列名称+只数；-list <组合名> 看成分）',
     '        编辑类（仅机器人主人）：-add 新建/覆盖　-update 整组替换　-del 删除',
     '        例：/stocks -add 600519 300750 -name 我的持仓',
     '        　　/stocks -update 我的持仓 600519 300750 002594',
