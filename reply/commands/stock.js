@@ -1,7 +1,7 @@
 // ============================================================
 // /stock 单只股票K线/分时图 + 行情速查
 // ============================================================
-const { cacheGet, cacheSet, esc, normStockName, f2p } = require('../utils');
+const { cacheGet, cacheSet, esc, normStockName, f2p, isFundCode } = require('../utils');
 const {
   STOCK_QUOTE, STOCK_FQKLINE, STOCK_MINUTE, STOCK_TIMELINE, STOCK_PERIODS, STOCK_PERIOD_LABEL, STOCK_LONG,
   normalizeCode, GLOBAL_ALIAS, GLOBAL_TEXT, EM_IDX_SECID, resolveStockCode,
@@ -801,13 +801,16 @@ async function cmdStock(args) {
   const isTime = period === 'time';
   const maPeriods = (isDay || period === 'week' || period === 'month') ? [5, 10, 20] : []; // 日/周/月线保留 5/10/20 均线
   const last = kline[kline.length - 1];
-  // 价格精度：普通股票 2 位，部分 ETF/品种价格三位小数 → 按真实现价判断（勿扫 qfq 历史价，前复权会产生 3 位假小数）
-  let prec = 2;
-  const ref = (quote && isFinite(quote.price) && Number(quote.price) > 0) ? Number(quote.price) : (isFinite(last.close) ? Number(last.close) : 0);
-  if (ref > 0) {
-    const sv = String(ref);
-    const dot = sv.indexOf('.');
-    if (dot > 0 && sv.slice(dot + 1).replace(/0+$/, '').length > 2) prec = 3;
+  // 价格精度：场内基金（ETF/LOF）固定 3 位（最小变动价位 0.001）；普通股票 2 位；
+  //           其余低价品种按真实现价判断（勿扫 qfq 历史价，前复权会产生 3 位假小数）
+  let prec = isFundCode(code) ? 3 : 2;
+  if (prec === 2) {
+    const ref = (quote && isFinite(quote.price) && Number(quote.price) > 0) ? Number(quote.price) : (isFinite(last.close) ? Number(last.close) : 0);
+    if (ref > 0) {
+      const sv = String(ref);
+      const dot = sv.indexOf('.');
+      if (dot > 0 && sv.slice(dot + 1).replace(/0+$/, '').length > 2) prec = 3;
+    }
   }
   const img = renderStockPng(code, name, periodLabel, kline, { maPeriods, boll: isDay || !isTime, timeMode: isTime, prec }, quote);
   if (!img) return { ok: false, text: '⚠️ 图表渲染失败（服务端缺少字体/渲染库）' };

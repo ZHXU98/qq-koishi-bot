@@ -47,6 +47,12 @@ function normStockName(s) {
   return /^[\u4e00-\u9fa5\s]+$/.test(v) ? v.replace(/\s+/g, '') : v;
 }
 
+// 场内基金（ETF/LOF）判定：沪市 5xxxxx、深市 15xxxx / 16xxxx。
+// 场内基金最小变动价位 0.001 → 价格应固定 3 位小数（不能只看现价字符串，现价恰为 1.21 时会误判成 2 位）
+function isFundCode(code) {
+  return /^(sh5|sz15|sz16)/.test(String(code || '').toLowerCase());
+}
+
 function esc(x) { return String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
 async function mapLimit(items, limit, fn) {
@@ -105,5 +111,5 @@ function fmtSize(n) {
 
 module.exports = {
   uptimeText, nowText, sleep, fmtAmountWan, fmtAmountYuan, estFullDayAmount, isTradingDay,
-  cacheGet, cacheSet, normStockName, esc, mapLimit, wrapText, extractMagnet, fmtSize, f2p,
+  cacheGet, cacheSet, normStockName, isFundCode, esc, mapLimit, wrapText, extractMagnet, fmtSize, f2p,
 };

@@ -4,7 +4,7 @@
 const path = require('path');
 const fs = require('fs');
 const { NAPCAT_URL, TOKEN, CONFIG } = require('../config');
-const { cacheGet, cacheSet, mapLimit, normStockName, nowText } = require('../utils');
+const { cacheGet, cacheSet, mapLimit, normStockName, nowText, isFundCode } = require('../utils');
 const { isOwnerCtx, ownerDeniedMsg } = require('../gateway'); // 组合编辑闸门（拆分后漏引入 → -add/-update/-del 曾 ReferenceError）
 const {
   STOCK_QUOTE, STOCK_PERIOD_LABEL, normalizeCode, GLOBAL_ALIAS, GLOBAL_TEXT, EM_IDX_SECID,
@@ -585,10 +585,12 @@ async function cmdStocks(args, ctx = {}) {
     const chgPct = (q && isFinite(q.chgPct) && q.chgPct !== 0) ? Number(q.chgPct)
       : (prevClose > 0 ? (livePx - prevClose) / prevClose * 100 : 0);
 
-    // 价格精度：现价三位小数（ETF/部分品种）则保留 3 位
-    let prec = 2;
-    const sv = String(livePx), dot = sv.indexOf('.');
-    if (dot > 0 && sv.slice(dot + 1).replace(/0+$/, '').length > 2) prec = 3;
+    // 价格精度：场内基金（ETF/LOF）固定 3 位；否则现价有三位小数时保留 3 位
+    let prec = isFundCode(it.code) ? 3 : 2;
+    if (prec === 2) {
+      const sv = String(livePx), dot = sv.indexOf('.');
+      if (dot > 0 && sv.slice(dot + 1).replace(/0+$/, '').length > 2) prec = 3;
+    }
     const fp = v => isFinite(v) ? Number(v).toFixed(prec) : '-';
 
     it.disp = disp;

@@ -1,7 +1,7 @@
 // ============================================================
 // /t 做T参谋：形态判断 + 分时黄线分析 + T位建议（原理见 T_GUIDE.md）
 // ============================================================
-const { cacheGet, cacheSet, normStockName } = require('../utils');
+const { cacheGet, cacheSet, normStockName, isFundCode } = require('../utils');
 const { resolveStockCode, normalizeCode, fetchStockKline, fetchStockQuote, buildAvgLine, calcSMA, calcBOLL } = require('../market');
 const { renderStockPng } = require('./stock');
 
@@ -926,8 +926,9 @@ async function cmdT(args) {
   const dayInfo = analyzeTDayForm(dayKlines);
   // 波动率基准（自适应做T阈值）：近10日平均振幅
   dayInfo.volRef = calcVolRef(dayKlines);
-  // 价格精度：现价有 >2 位有效小数（ETF/低价品种，如 1.203）→ 3 位，否则 2 位（与 /stock 一致）
+  // 价格精度：场内基金（ETF/LOF）固定 3 位（最小变动价位 0.001）；其余按现价有效小数 >2 位判定
   dayInfo.prec = (() => {
+    if (isFundCode(code)) return 3;
     const ref = (quote && isFinite(quote.price) && Number(quote.price) > 0) ? Number(quote.price) : 0;
     if (!(ref > 0)) return 2;
     const sv = String(ref), dot = sv.indexOf('.');
