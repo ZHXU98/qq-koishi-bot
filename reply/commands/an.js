@@ -111,27 +111,74 @@ function detectDivergence(closes, macd) {
   return null;
 }
 
-function calcRecentLevels(ks, close) {
+function calcRecentLevels(period, ks, close) {
   const recent20 = ks.slice(-21, -1);
   const recent60 = ks.slice(-61, -1);
   const maxHigh = arr => arr.length ? Math.max(...arr.map(k => Number(k.high) || Number(k.close) || 0)) : null;
   const minLow = arr => arr.length ? Math.min(...arr.map(k => Number(k.low) || Number(k.close) || Infinity)) : null;
+  const quantile = (arr, q) => {
+    const vals = arr.map(v => Number(v)).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+    if (!vals.length) return null;
+    const idx = Math.min(vals.length - 1, Math.max(0, Math.floor((vals.length - 1) * q)));
+    return vals[idx];
+  };
+  const calcBox = (arr, lowQ, highQ) => {
+    const closes = arr.map(k => Number(k.close) || 0).filter(v => v > 0);
+    const rawHigh = maxHigh(arr) || close;
+    const rawLow = minLow(arr) || close;
+    const bodiesHigh = arr.map(k => Math.max(Number(k.open) || Number(k.close) || 0, Number(k.close) || 0)).filter(v => v > 0);
+    const bodiesLow = arr.map(k => Math.min(Number(k.open) || Number(k.close) || 0, Number(k.close) || 0)).filter(v => v > 0);
+    const bodyHigh = quantile(bodiesHigh, highQ) || quantile(closes, highQ) || rawHigh;
+    const bodyLow = quantile(bodiesLow, lowQ) || quantile(closes, lowQ) || rawLow;
+    const bodyMid = (bodyHigh + bodyLow) / 2;
+    const ranges = arr.map(k => Math.max(0, (Number(k.high) || Number(k.close) || 0) - (Number(k.low) || Number(k.close) || 0)));
+    const typicalRange = quantile(ranges, 0.55) || Math.max(bodyMid * 0.02, bodyHigh - bodyLow);
+    const pad = Math.min(Math.max(typicalRange * 0.45, bodyMid * 0.006), Math.max(bodyHigh - bodyLow, bodyMid * 0.03));
+    let high = Math.min(rawHigh, bodyHigh + pad);
+    let low = Math.max(rawLow, bodyLow - pad);
+    if (!(high > low)) { high = rawHigh; low = rawLow; }
+    const widthPct = low > 0 ? (high - low) / low * 100 : 0;
+    const pos = high > low ? (close - low) / (high - low) : 0.5;
+    let state = '箱体震荡';
+    if (close > high * 1.005) state = '突破箱体上沿';
+    else if (close < low * 0.995) state = '跌破箱体下沿';
+    else if (pos >= 0.75) state = '靠近箱体上沿';
+    else if (pos <= 0.25) state = '靠近箱体下沿';
+    return { high, low, rawHigh, rawLow, widthPct, pos, state };
+  };
+
   const prevHigh20 = maxHigh(recent20);
   const prevLow20 = minLow(recent20);
   const prevHigh60 = maxHigh(recent60);
   const prevLow60 = minLow(recent60);
-  const boxHigh = prevHigh20 || prevHigh60 || close;
-  const boxLow = prevLow20 || prevLow60 || close;
-  const boxWidthPct = boxLow > 0 ? (boxHigh - boxLow) / boxLow * 100 : 0;
-  const boxPos = boxHigh > boxLow ? (close - boxLow) / (boxHigh - boxLow) : 0.5;
-  let boxState = '箱体震荡';
-  if (close > boxHigh * 1.005) boxState = '突破箱体上沿';
-  else if (close < boxLow * 0.995) boxState = '跌破箱体下沿';
-  else if (boxPos >= 0.75) boxState = '靠近箱体上沿';
-  else if (boxPos <= 0.25) boxState = '靠近箱体下沿';
-  return { prevHigh20, prevLow20, prevHigh60, prevLow60, boxHigh, boxLow, boxWidthPct, boxPos, boxState };
-}
+  const major = calcBox(recent60.length ? recent60 : recent20, 0.15, 0.85);
+  if (period === 'week') {
+    major.high = prevHigh60 || prevHigh20 || major.high;
+    major.low = prevLow60 || prevLow20 || major.low;
+    major.widthPct = major.low > 0 ? (major.high - major.low) / major.low * 100 : 0;
+    major.pos = major.high > major.low ? (close - major.low) / (major.high - major.low) : 0.5;
+    major.state = close > major.high * 1.005 ? '突破箱体上沿' : close < major.low * 0.995 ? '跌破箱体下沿' : major.pos >= 0.75 ? '靠近箱体上沿' : major.pos <= 0.25 ? '靠近箱体下沿' : '箱体震荡';
+  }
+  const minor = calcBox(recent20.length ? recent20 : recent60, 0.20, 0.80);
+  const closes20 = recent20.map(k => Number(k.close) || 0);
+  const cLow = quantile(closes20, 0.38);
+  const cHigh = quantile(closes20, 0.62);
+  const minorMid = (minor.high + minor.low) / 2;
+  const minorRange = Math.max(minor.high - minor.low, minor.high * 0.01);
+  const centerLow = Math.max(minor.low, cLow || (minorMid - minorRange * 0.14));
+  const centerHigh = Math.min(minor.high, cHigh || (minorMid + minorRange * 0.14));
+  const centerMid = (centerLow + centerHigh) / 2;
+  const centerWidthPct = centerLow > 0 ? (centerHigh - centerLow) / centerLow * 100 : 0;
+  const centerState = close > centerHigh ? '中枢上方' : close < centerLow ? '中枢下方' : '中枢内部';
 
+  return {
+    prevHigh20, prevLow20, prevHigh60, prevLow60,
+    boxHigh: minor.high, boxLow: minor.low, boxWidthPct: minor.widthPct, boxPos: minor.pos, boxState: minor.state,
+    majorHigh: major.high, majorLow: major.low, majorRawHigh: major.rawHigh, majorRawLow: major.rawLow, majorWidthPct: major.widthPct, majorPos: major.pos, majorState: major.state,
+    minorHigh: minor.high, minorLow: minor.low, minorRawHigh: minor.rawHigh, minorRawLow: minor.rawLow, minorWidthPct: minor.widthPct, minorPos: minor.pos, minorState: minor.state,
+    centerLow, centerHigh, centerMid, centerWidthPct, centerState,
+  };
+}
 function calcPriceSignal({ last, prev, close, chgPct, vRatio, ma20, bollUp, bollLow, levels }) {
   const open = Number(last.open) || close;
   const high = Number(last.high) || close;
@@ -175,7 +222,7 @@ function analyzePeriod(period, klines, prec) {
   const volState = vRatio >= 1.5 ? '放量' : vRatio >= 1.2 ? '温和放量' : vRatio < 0.5 ? '极缩量' : vRatio < 0.8 ? '缩量' : '正常量';
   const cross = findLastCross(macd);
   const divergence = detectDivergence(closes, macd);
-  const levels = calcRecentLevels(ks, close);
+  const levels = calcRecentLevels(period, ks, close);
   const priceSignal = calcPriceSignal({ last, prev, close, chgPct, vRatio, ma20, bollUp, bollLow, levels });
   const hist = lastVal(macd.hist) || 0;
   const histPrev = prevVal(macd.hist) || 0;
@@ -212,7 +259,8 @@ function buildPeriodLine(period, a, prec) {
   const crossTxt = a.cross ? (a.cross.type === 'gold' ? '近现金叉' : '近期死叉') : '无近交叉';
   const divTxt = a.divergence ? (a.divergence.type === 'top' ? `${a.divergence.strength || ''}顶背离` : `${a.divergence.strength || ''}底背离`) : '无背离';
   const pos = a.bollUp && a.bollLow !== null ? (a.close > a.bollUp * 0.98 ? '靠近BOLL上轨' : a.close < a.bollLow * 1.02 ? '靠近BOLL下轨' : 'BOLL中部') : 'BOLL不足';
-  return `${PERIOD_LABEL[period]}：${a.trend}，${a.volState}(${a.vRatio.toFixed(1)}倍)，${a.macdTxt}，${crossTxt}，${divTxt}，${pos}，${a.levels.boxState}，${a.priceSignal.text}`;
+  const boxTxt = period === 'month' ? '' : `，${a.levels.minorState || a.levels.boxState}，${a.levels.centerState || '中枢不明'}`;
+  return `${PERIOD_LABEL[period]}：${a.trend}，${a.volState}(${a.vRatio.toFixed(1)}倍)，${a.macdTxt}，${crossTxt}，${divTxt}，${pos}${boxTxt}，${a.priceSignal.text}`;
 }
 
 function overallConclusion(day, week, month) {
@@ -312,9 +360,22 @@ function periodConclusion(period, a) {
 function structureExplain(a, prec) {
   const l = a.levels || {};
   const parts = [];
-  parts.push(`${l.boxState || '箱体震荡'}（${fpBy(l.boxLow, prec)}~${fpBy(l.boxHigh, prec)}，宽${pct(l.boxWidthPct || 0)}）`);
-  if (l.prevHigh20) parts.push(`20期前高${fpBy(l.prevHigh20, prec)}`);
-  if (l.prevLow20) parts.push(`20期前低${fpBy(l.prevLow20, prec)}`);
+  const minor = `小箱体${fpBy(l.minorLow, prec)}~${fpBy(l.minorHigh, prec)}（${l.minorState || l.boxState || '震荡'}）`;
+  const center = `中枢${fpBy(l.centerLow, prec)}~${fpBy(l.centerHigh, prec)}（${l.centerState || '中枢不明'}）`;
+  const major = `大箱体${fpBy(l.majorLow, prec)}~${fpBy(l.majorHigh, prec)}（宽${pct(l.majorWidthPct || 0)}）`;
+  if (a.period === 'week') {
+    parts.push(major);
+    parts.push(minor);
+    parts.push(center);
+  } else if (a.period === 'day') {
+    parts.push(minor);
+    parts.push(center);
+    parts.push(`大箱体背景${fpBy(l.majorLow, prec)}~${fpBy(l.majorHigh, prec)}`);
+  } else {
+    parts.push('月线不画箱体，仅看长期方向与均线/BOLL/MACD');
+  }
+  if (l.prevHigh20) parts.push(`近20期压力${fpBy(l.prevHigh20, prec)}`);
+  if (l.prevLow20) parts.push(`近20期支撑${fpBy(l.prevLow20, prec)}`);
   parts.push(a.priceSignal.text);
   return parts.join('，');
 }
@@ -387,16 +448,51 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   const macdTop = volTop + volH + 8;
   ctx.fillStyle = ink; ctx.font = 'bold 16px cjk'; ctx.textAlign = 'left'; ctx.fillText(`${title} · ${a.trend}`, x0, y0 + 18);
   ctx.fillStyle = sub; ctx.font = '12px cjk';
-  ctx.fillText(`MA20 ${fpBy(a.ma20, prec)}  BOLL ${fpBy(a.bollLow, prec)}~${fpBy(a.bollUp, prec)}  ${a.volState}  ${a.priceSignal.text}`, x0 + 130, y0 + 18);
+  ctx.fillText(title === '月线' ? `MA20 ${fpBy(a.ma20, prec)}  BOLL ${fpBy(a.bollLow, prec)}~${fpBy(a.bollUp, prec)}  ${a.volState}  月线不画箱体` : `MA20 ${fpBy(a.ma20, prec)}  BOLL ${fpBy(a.bollLow, prec)}~${fpBy(a.bollUp, prec)}  ${a.volState}  BOX-S小箱体 CORE中枢 BOX-L大箱体`, x0 + 130, y0 + 18);
   const allP = [];
   ks.forEach((k, i) => { allP.push(k.high, k.low); const idx = offset + i; [5, 10, 20, 60].forEach(p => { if (a.ma[p][idx]) allP.push(a.ma[p][idx]); }); if (a.boll.up[idx]) allP.push(a.boll.up[idx], a.boll.low[idx]); });
   const lo = Math.min(...allP), hi = Math.max(...allP), rng = hi - lo || 1;
   const yMin = lo - rng * 0.05, yMax = hi + rng * 0.05;
   const X = i => x0 + (i + 0.5) * (w / n);
+  const barW = w / n;
   const Y = p => plotTop + topH - ((p - yMin) / (yMax - yMin)) * topH;
   ctx.strokeStyle = grid; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
   [0.25, 0.5, 0.75].forEach(f => { const yy = plotTop + topH * f; ctx.beginPath(); ctx.moveTo(x0, yy); ctx.lineTo(x0 + w, yy); ctx.stroke(); });
   ctx.setLineDash([]);
+  const clampY = y => Math.max(plotTop, Math.min(plotTop + topH, y));
+  const usedLabelYs = [];
+  const placeY = (yy) => {
+    let y = Math.max(plotTop + 12, Math.min(plotTop + topH - 10, yy));
+    for (let guard = 0; guard < 8 && usedLabelYs.some(v => Math.abs(v - y) < 13); guard++) y += 13;
+    y = Math.max(plotTop + 12, Math.min(plotTop + topH - 10, y));
+    usedLabelYs.push(y);
+    return y;
+  };
+  const drawBoxArea = (low, high, startIdx, label, stroke, fill, dash, opts = {}) => {
+    if (!(high > low) || high < yMin || low > yMax) return;
+    const x1 = x0 + Math.max(0, startIdx) * barW;
+    const x2 = x0 + w;
+    const yt = clampY(Y(high));
+    const yb = clampY(Y(low));
+    ctx.fillStyle = fill; ctx.fillRect(x1, yt, x2 - x1, Math.max(2, yb - yt));
+    ctx.strokeStyle = stroke; ctx.lineWidth = label === 'BOX-S' ? 2 : 1.3; ctx.setLineDash(dash || []);
+    ctx.strokeRect(x1, yt, x2 - x1, Math.max(2, yb - yt));
+    ctx.setLineDash([]);
+    ctx.fillStyle = stroke; ctx.font = label === 'BOX-S' ? 'bold 12px cjk' : '11px cjk'; ctx.textAlign = 'left';
+    const labelY = placeY(yt + 14);
+    const text = opts.noRange ? label : `${label} ${fpBy(low, prec)}~${fpBy(high, prec)}`;
+    ctx.fillText(text, x1 + 6, labelY);
+    if (!opts.noRightText) {
+      ctx.textAlign = 'right';
+      ctx.fillText(`${fpBy(high, prec)}`, x2 - 4, placeY(yt - 8));
+      ctx.fillText(`${fpBy(low, prec)}`, x2 - 4, placeY(yb + 8));
+    }
+  };
+  if (a.levels && title !== '月线') {
+    drawBoxArea(a.levels.majorLow, a.levels.majorHigh, n - 60, 'BOX-L', '#b37b00', 'rgba(250, 173, 20, 0.07)', [5, 4]);
+    drawBoxArea(a.levels.minorLow, a.levels.minorHigh, n - 20, 'BOX-S', '#d48806', 'rgba(250, 173, 20, 0.18)', []);
+    drawBoxArea(a.levels.centerLow, a.levels.centerHigh, n - 20, 'CORE', '#1677ff', 'rgba(22, 119, 255, 0.14)', [2, 3], { noRightText: true, noRange: true });
+  }
   const cw = Math.max(2, Math.min(8, w / n * 0.58));
   for (let i = 0; i < n; i++) {
     const k = ks[i], col = k.close >= k.open ? upC : downC;
@@ -412,16 +508,36 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   };
   [5, 10, 20, 60].forEach(p => drawLine(a.ma[p], maCols[p]));
   drawLine(a.boll.up, '#f0b90b', [4, 4]); drawLine(a.boll.mid, '#f0b90b', [2, 5]); drawLine(a.boll.low, '#f0b90b', [4, 4]);
-  // 支撑压力
-  const markPrice = (price, label, color) => {
-    if (!(price > yMin && price < yMax)) return;
-    const yy = Y(price); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.moveTo(x0, yy); ctx.lineTo(x0 + w, yy); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle = color; ctx.font = '11px cjk'; ctx.textAlign = 'right'; ctx.fillText(`${label} ${fpBy(price, prec)}`, x0 + w - 4, yy - 8);
+  // 支撑压力：找最近贴近该价位的高/低点，在点位附近做短标注，不再全图横穿
+  const findAnchorX = (price, kind) => {
+    let best = -1, bestScore = Infinity;
+    const from = Math.max(0, n - 55);
+    for (let i = from; i < n; i++) {
+      const k = ks[i];
+      const px = kind === 'pressure' ? (Number(k.high) || Number(k.close) || 0) : (Number(k.low) || Number(k.close) || 0);
+      if (!(px > 0)) continue;
+      const dist = Math.abs(px - price) / price;
+      const recency = (n - 1 - i) / n * 0.018;
+      const score = dist + recency;
+      if (score < bestScore) { bestScore = score; best = i; }
+    }
+    return best >= 0 ? X(best) : x0 + w * (kind === 'pressure' ? 0.82 : 0.72);
   };
-  if (a.levels && a.levels.boxHigh) markPrice(a.levels.boxHigh, '箱顶', '#d48806');
-  if (a.levels && a.levels.boxLow) markPrice(a.levels.boxLow, '箱底', '#389e0d');
-  if (a.pressures[0]) markPrice(a.pressures[0], '压力', upC);
-  if (a.supports[0]) markPrice(a.supports[0], '支撑', downC);
+  const markPrice = (price, label, color, kind) => {
+    if (!(price > yMin && price < yMax)) return;
+    const anchorX = findAnchorX(price, kind);
+    const yy = placeY(Y(price));
+    const text = `${label} ${fpBy(price, prec)}`;
+    const tw = ctx.measureText(text).width + 10;
+    let tx = kind === 'pressure' ? anchorX + 8 : anchorX - tw - 8;
+    tx = Math.max(x0 + 4, Math.min(x0 + w - tw - 4, tx));
+    ctx.strokeStyle = color; ctx.lineWidth = 1.3; ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(Math.max(x0, anchorX - 26), yy); ctx.lineTo(Math.min(x0 + w, anchorX + 26), yy); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,255,255,0.86)'; ctx.beginPath(); ctx.roundRect(tx, yy - 10, tw, 20, 4); ctx.fill();
+    ctx.fillStyle = color; ctx.font = '11px cjk'; ctx.textAlign = 'left'; ctx.fillText(text, tx + 5, yy);
+  };
+  if (a.pressures[0]) markPrice(a.pressures[0], '压力', upC, 'pressure');
+  if (a.supports[0]) markPrice(a.supports[0], '支撑', downC, 'support');
   if (a.priceSignal && a.priceSignal.type !== 'neutral') {
     const labelColor = a.priceSignal.score >= 0 ? upC : downC;
     ctx.fillStyle = labelColor; ctx.font = 'bold 12px cjk'; ctx.textAlign = 'left';

@@ -82,10 +82,10 @@ function analyzeMACDState(macd, closes) {
   if (!macd) return null;
   const { series, dif, dea, hist } = macd;
   const d = series.dif, e = series.dea, h = series.hist;
-  let cross = 'none';
+  let cross = 'none', crossIndex = -1;
   for (let i = d.length - 1; i >= 1; i--) {
-    if (d[i - 1] < e[i - 1] && d[i] >= e[i]) { cross = 'gold'; break; }
-    if (d[i - 1] >= e[i - 1] && d[i] < e[i]) { cross = 'dead'; break; }
+    if (d[i - 1] < e[i - 1] && d[i] >= e[i]) { cross = 'gold'; crossIndex = i; break; }
+    if (d[i - 1] >= e[i - 1] && d[i] < e[i]) { cross = 'dead'; crossIndex = i; break; }
   }
   // 背离检测：取最后30根的局部顶/底，对比价格与DIF
   let divergence = null;
@@ -107,7 +107,15 @@ function analyzeMACDState(macd, closes) {
     }
   }
   const histTrend = h.length > 1 ? (h[h.length - 1] >= h[h.length - 2] ? 'expand' : 'shrink') : 'flat';
-  return { dif, dea, hist, cross, divergence, histTrend, zeroAbove: dif > 0 && dea > 0 };
+  const zeroAbove = dif > 0 && dea > 0;
+  const crossLevel = crossIndex >= 0 ? (d[crossIndex] + e[crossIndex]) / 2 : (dif + dea) / 2;
+  const crossZone = crossLevel >= 0 ? 'water_up' : 'water_down';
+  const crossText = cross === 'gold'
+    ? (crossZone === 'water_up' ? '水上金叉' : '水下金叉')
+    : cross === 'dead'
+      ? (crossZone === 'water_up' ? '水上死叉' : '水下死叉')
+      : '无交叉';
+  return { dif, dea, hist, cross, crossIndex, crossZone, crossText, divergence, histTrend, zeroAbove };
 }
 
 // ── 开盘走势场景判断 ──
@@ -517,11 +525,20 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   }
   // ── 分时MACD状态（两个模式共用）──
   if (macdState && macd) {
-    const crossTxt = macdState.cross === 'gold' ? '金叉↑' : macdState.cross === 'dead' ? '死叉↓' : '无交叉';
+    const crossTxt = macdState.crossText || (macdState.cross === 'gold' ? '金叉↑' : macdState.cross === 'dead' ? '死叉↓' : '无交叉');
     const zoneTxt = macdState.zeroAbove ? '零轴上方' : '零轴下方';
     const histTxt = macdState.hist >= 0 ? '红柱' : '绿柱';
     const histDir = macdState.histTrend === 'expand' ? '放大' : '收敛';
     L.push(`→ 📉 分时MACD：DIFF ${fp(macd.dif)} / DEA ${fp(macd.dea)} / ${histTxt}${histDir}，${zoneTxt}，${crossTxt}`);
+    if (macdState.cross === 'gold') {
+      L.push(macdState.crossZone === 'water_up'
+        ? `   ✅ 水上金叉：强势区继续转强，若价格不远离黄线，买回/持有信号更可靠`
+        : `   🟡 水下金叉：弱势区修复信号，只能当反弹确认，需配合量缩企稳`);
+    } else if (macdState.cross === 'dead') {
+      L.push(macdState.crossZone === 'water_up'
+        ? `   ⚠️ 水上死叉：强势区动能转弱，冲高T出信号增强`
+        : `   🔻 水下死叉：弱势区继续走弱，不急着买回，优先等绿柱收敛`);
+    }
     if (macdState.divergence === 'top') L.push(`   ⚠️ 顶背离：价格创新高但MACD未跟上 → 冲高回落前兆，卖出信号加强！`);
     else if (macdState.divergence === 'bottom') L.push(`   🟢 底背离：价格创新低但MACD未跟跌 → 跌势衰竭，买回信号加强！`);
   } else if (hasTData) {
@@ -663,13 +680,13 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push(`   等量能明显萎缩（量比降至0.5以下）且MACD底背离/金叉再分批接`);
   } else if (inSellZone) {
     L.push(`🎯 当前 ${fp(lastPrice)} 已进入卖出参考区（≥ ${fp(sellLow)}）`);
-    if (macdConfirmSell) L.push(`   📉 MACD死叉确认，卖出信号增强，建议优先挂单 ${fp(sellLow)} ~ ${fp(sellHigh)}`);
+    if (macdConfirmSell) L.push(`   📉 ${macdState.crossText || 'MACD死叉'}确认，卖出信号增强，建议优先挂单 ${fp(sellLow)} ~ ${fp(sellHigh)}`);
     else if (volRatio < 0.8) L.push(`   量缩确认，信号较强，建议挂单 ${fp(sellLow)} ~ ${fp(sellHigh)}`);
     else if (volRatio > 1.4) L.push(`   ⚠️ 放量注意！若持续放量是趋势突破，谨慎T出`);
     else L.push(`   可分批挂单 ${fp(sellLow)} ~ ${fp(sellHigh)}，等冲高机会`);
   } else if (inBuyZone) {
     L.push(`🎯 当前 ${fp(lastPrice)} 已进入买回参考区（≤ ${fp(buyHigh)}）`);
-    if (macdConfirmBuy) L.push(`   📈 MACD金叉确认，买回信号增强，可在 ${fp(buyLow)} ~ ${fp(buyHigh)} 分批买回`);
+    if (macdConfirmBuy) L.push(`   📈 ${macdState.crossText || 'MACD金叉'}确认，买回信号增强，可在 ${fp(buyLow)} ~ ${fp(buyHigh)} 分批买回`);
     else if (volRatio < 0.8) L.push(`   缩量确认，信号较强，可在 ${fp(buyLow)} ~ ${fp(buyHigh)} 分批买回`);
     else if (volRatio > 1.4) L.push(`   ⚠️ 放量下跌，等量缩后再买回，不追跌`);
     else L.push(`   可在 ${fp(buyLow)} ~ ${fp(buyHigh)} 区间分批挂单买回`);
@@ -696,7 +713,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
 // ── 图表渲染：分时图 + T位水平标注线 + 分时MACD小面板 ──
 function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
   const { createCanvas } = require('@napi-rs/canvas');
-  const W = 1000, PAD = 74, TITLE_H = 62, VOL_H = 80, MACD_H = 96, LEG_H = 36;
+  const W = 1000, PAD = 74, TITLE_H = 62, VOL_H = 74, MACD_H = 144, LEG_H = 36;
   const plotH = 360;
   const H = TITLE_H + plotH + VOL_H + MACD_H + LEG_H + PAD + 8;
   const isHK = code.startsWith('hk'), isHF = code.startsWith('hf_');
@@ -816,7 +833,7 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
   }
   // ── 分时MACD小面板 ──
   const macdTop = volYBase + 8;
-  const macdH = MACD_H - 28;
+  const macdH = MACD_H - 36;
   ctx.fillStyle = panel; ctx.fillRect(PAD - 8, macdTop - 2, W - PAD * 2 + 16, macdH + 8);
   // 零轴
   const macdZeroY = macdTop + macdH / 2;
@@ -827,8 +844,9 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
     const hasSeries = diff.length === dn;
     if (hasSeries) {
       // 柱状图（HIST=DIF-DEA再×2）
-      const mMax = Math.max(...hist.map(Math.abs), 0.0001);
-      const mScale = macdH / 2 / mMax;
+      const deaSeries = macdData.series ? macdData.series.dea : [];
+      const mMax = Math.max(...hist.map(Math.abs), ...diff.map(Math.abs), ...deaSeries.map(Math.abs), 0.0001);
+      const mScale = macdH * 0.46 / mMax;
       for (let i = 0; i < dn; i++) {
         const v = hist[i];
         const bh = Math.abs(v) * mScale;
@@ -837,17 +855,17 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
         // 红涨绿跌
         const col = v >= 0 ? '#f5222d' : '#0aa869';
         ctx.fillStyle = col + (v >= 0 ? 'cc' : 'cc');
-        ctx.fillRect(x - cw2 / 2, v >= 0 ? macdZeroY - bh : macdZeroY, cw2, bh);
+        ctx.fillRect(x - Math.max(1.2, cw2 * 0.42), v >= 0 ? macdZeroY - bh : macdZeroY, Math.max(2, cw2 * 0.84), Math.max(1, bh));
       }
       if (diff.length === dn) {
-        const macdCol = '#7b61ff';
-        ctx.strokeStyle = macdCol; ctx.lineWidth = 1.2; ctx.beginPath();
+        const macdCol = '#1677ff';
+        ctx.strokeStyle = macdCol; ctx.lineWidth = 2.0; ctx.beginPath();
         for (let i = 0; i < dn; i++) { const x = mapX(i), y = macdZeroY - diff[i] * mScale; i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
         ctx.stroke();
         // DEA
-        const deaIdx = macdData.series ? macdData.series.dea : [];
+        const deaIdx = deaSeries;
         if (deaIdx && deaIdx.length === dn) {
-          ctx.strokeStyle = '#f0b90b'; ctx.lineWidth = 1.2; ctx.beginPath();
+          ctx.strokeStyle = '#f0b90b'; ctx.lineWidth = 1.8; ctx.beginPath();
           for (let i = 0; i < dn; i++) { const x = mapX(i), y = macdZeroY - deaIdx[i] * mScale; i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
           ctx.stroke();
         }
@@ -856,7 +874,7 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
     ctx.fillStyle = sub; ctx.font = '11px cjk'; ctx.textAlign = 'left';
     const mState = analyzeMACDState(macdData, closes);
     const mtxt = mState
-      ? `MACD DIFF ${fp(macdData.dif)}  DEA ${fp(macdData.dea)}  ${mState.hist >= 0 ? '红柱' : '绿柱'}${mState.histTrend === 'expand' ? '↑' : '↓'} ${mState.cross === 'gold' ? '金叉' : mState.cross === 'dead' ? '死叉' : ''}${mState.divergence === 'top' ? ' ⚠顶部背离' : mState.divergence === 'bottom' ? ' 底部背离' : ''}`
+      ? `MACD DIF ${fp(macdData.dif)}  DEA ${fp(macdData.dea)}  ${mState.hist >= 0 ? '红柱' : '绿柱'}${mState.histTrend === 'expand' ? '↑' : '↓'} ${mState.crossText || ''}${mState.divergence === 'top' ? ' ⚠顶部背离' : mState.divergence === 'bottom' ? ' 底部背离' : ''}`
       : 'MACD 数据不足';
     ctx.fillText(mtxt, PAD + 4, macdTop + macdH + 12);
   } else {
