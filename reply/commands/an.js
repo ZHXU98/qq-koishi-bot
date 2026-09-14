@@ -75,24 +75,81 @@ function findLastCross(macd) {
   return null;
 }
 
+function swingPoints(values, lookback = 2, span = 80) {
+  const start = Math.max(lookback, values.length - span);
+  const tops = [], bottoms = [];
+  for (let i = start; i < values.length - lookback; i++) {
+    let isTop = true, isBottom = true;
+    for (let j = i - lookback; j <= i + lookback; j++) {
+      if (j === i) continue;
+      if (values[i] < values[j]) isTop = false;
+      if (values[i] > values[j]) isBottom = false;
+    }
+    if (isTop) tops.push(i);
+    if (isBottom) bottoms.push(i);
+  }
+  return { tops, bottoms };
+}
+
 function detectDivergence(closes, macd) {
   const d = macd.dif;
-  if (closes.length < 40 || d.length < 40) return null;
-  const start = closes.length - 30;
-  const tops = [], bottoms = [];
-  for (let i = start + 1; i < closes.length - 1; i++) {
-    if (closes[i] > closes[i - 1] && closes[i] >= closes[i + 1]) tops.push(i);
-    if (closes[i] < closes[i - 1] && closes[i] <= closes[i + 1]) bottoms.push(i);
-  }
+  if (closes.length < 50 || d.length < 50) return null;
+  const { tops, bottoms } = swingPoints(closes, 2, 70);
+  const minMove = 0.012;
   if (tops.length >= 2) {
     const a = tops[tops.length - 2], b = tops[tops.length - 1];
-    if (closes[b] >= closes[a] && d[b] < d[a]) return { type: 'top', index: b };
+    const priceMove = closes[a] > 0 ? (closes[b] - closes[a]) / closes[a] : 0;
+    const macdMove = Math.abs(d[a]) > 1e-9 ? (d[b] - d[a]) / Math.abs(d[a]) : d[b] - d[a];
+    if (priceMove >= minMove && macdMove < -0.08) return { type: 'top', index: b, strength: priceMove >= 0.03 ? '强' : '普通' };
   }
   if (bottoms.length >= 2) {
     const a = bottoms[bottoms.length - 2], b = bottoms[bottoms.length - 1];
-    if (closes[b] <= closes[a] && d[b] > d[a]) return { type: 'bottom', index: b };
+    const priceMove = closes[a] > 0 ? (closes[b] - closes[a]) / closes[a] : 0;
+    const macdMove = Math.abs(d[a]) > 1e-9 ? (d[b] - d[a]) / Math.abs(d[a]) : d[b] - d[a];
+    if (priceMove <= -minMove && macdMove > 0.08) return { type: 'bottom', index: b, strength: priceMove <= -0.03 ? '强' : '普通' };
   }
   return null;
+}
+
+function calcRecentLevels(ks, close) {
+  const recent20 = ks.slice(-21, -1);
+  const recent60 = ks.slice(-61, -1);
+  const maxHigh = arr => arr.length ? Math.max(...arr.map(k => Number(k.high) || Number(k.close) || 0)) : null;
+  const minLow = arr => arr.length ? Math.min(...arr.map(k => Number(k.low) || Number(k.close) || Infinity)) : null;
+  const prevHigh20 = maxHigh(recent20);
+  const prevLow20 = minLow(recent20);
+  const prevHigh60 = maxHigh(recent60);
+  const prevLow60 = minLow(recent60);
+  const boxHigh = prevHigh20 || prevHigh60 || close;
+  const boxLow = prevLow20 || prevLow60 || close;
+  const boxWidthPct = boxLow > 0 ? (boxHigh - boxLow) / boxLow * 100 : 0;
+  const boxPos = boxHigh > boxLow ? (close - boxLow) / (boxHigh - boxLow) : 0.5;
+  let boxState = '箱体震荡';
+  if (close > boxHigh * 1.005) boxState = '突破箱体上沿';
+  else if (close < boxLow * 0.995) boxState = '跌破箱体下沿';
+  else if (boxPos >= 0.75) boxState = '靠近箱体上沿';
+  else if (boxPos <= 0.25) boxState = '靠近箱体下沿';
+  return { prevHigh20, prevLow20, prevHigh60, prevLow60, boxHigh, boxLow, boxWidthPct, boxPos, boxState };
+}
+
+function calcPriceSignal({ last, prev, close, chgPct, vRatio, ma20, bollUp, bollLow, levels }) {
+  const open = Number(last.open) || close;
+  const high = Number(last.high) || close;
+  const low = Number(last.low) || close;
+  const prevClose = Number(prev.close) || close;
+  const bodyPct = prevClose > 0 ? Math.abs(close - open) / prevClose * 100 : 0;
+  const upperShadowPct = prevClose > 0 ? (high - Math.max(open, close)) / prevClose * 100 : 0;
+  const lowerShadowPct = prevClose > 0 ? (Math.min(open, close) - low) / prevClose * 100 : 0;
+  const nearMa20 = ma20 && Math.abs(close - ma20) / ma20 <= 0.015;
+  const nearBoxLow = levels.boxLow && Math.abs(close - levels.boxLow) / levels.boxLow <= 0.018;
+  if (levels.prevHigh20 && close > levels.prevHigh20 * 1.005 && vRatio >= 1.2) return { type: 'breakout', text: '放量突破前高', score: 1 };
+  if (levels.prevLow20 && close < levels.prevLow20 * 0.995 && vRatio >= 1.2) return { type: 'breakdown', text: '放量跌破前低', score: -1 };
+  if (chgPct > 0 && vRatio >= 1.5 && bodyPct < 0.8 && upperShadowPct > bodyPct * 0.8) return { type: 'stall', text: '放量滞涨/上影压力', score: -0.5 };
+  if (chgPct < 0 && vRatio >= 1.5 && lowerShadowPct > bodyPct * 0.8) return { type: 'support', text: '放量下探有承接', score: 0.4 };
+  if ((nearMa20 || nearBoxLow) && vRatio < 0.85 && Math.abs(chgPct) < 1.2) return { type: 'pullback', text: '缩量回踩关键位', score: 0.5 };
+  if (bollUp && close > bollUp && vRatio >= 1.2) return { type: 'boll_break', text: '放量突破BOLL上轨', score: 0.7 };
+  if (bollLow && close < bollLow && vRatio >= 1.2) return { type: 'boll_down', text: '放量跌破BOLL下轨', score: -0.7 };
+  return { type: 'neutral', text: '暂无明确量价结构信号', score: 0 };
 }
 
 function analyzePeriod(period, klines, prec) {
@@ -118,6 +175,8 @@ function analyzePeriod(period, klines, prec) {
   const volState = vRatio >= 1.5 ? '放量' : vRatio >= 1.2 ? '温和放量' : vRatio < 0.5 ? '极缩量' : vRatio < 0.8 ? '缩量' : '正常量';
   const cross = findLastCross(macd);
   const divergence = detectDivergence(closes, macd);
+  const levels = calcRecentLevels(ks, close);
+  const priceSignal = calcPriceSignal({ last, prev, close, chgPct, vRatio, ma20, bollUp, bollLow, levels });
   const hist = lastVal(macd.hist) || 0;
   const histPrev = prevVal(macd.hist) || 0;
   const macdTxt = `${lastVal(macd.dif) >= lastVal(macd.dea) ? '偏多' : '偏空'} / ${hist >= 0 ? '红柱' : '绿柱'}${Math.abs(hist) >= Math.abs(histPrev) ? '放大' : '收敛'}`;
@@ -135,22 +194,25 @@ function analyzePeriod(period, klines, prec) {
   if (divergence && divergence.type === 'top') score -= 0.5;
   if (chgPct > 1 && vRatio >= 1.2) score += 0.5;
   if (chgPct < -1 && vRatio >= 1.2) score -= 0.5;
+  score += priceSignal.score;
+  if (levels.boxState === '突破箱体上沿') score += 0.4;
+  if (levels.boxState === '跌破箱体下沿') score -= 0.4;
 
   const recent = ks.slice(-30);
   const recentHigh = Math.max(...recent.map(k => Number(k.high) || Number(k.close) || 0));
   const recentLow = Math.min(...recent.map(k => Number(k.low) || Number(k.close) || Infinity));
-  const supports = [recentLow, ma20, ma60, bollLow].filter(v => isFinite(v) && v > 0 && v <= close).sort((a, b) => b - a).slice(0, 3);
-  const pressures = [recentHigh, ma20, ma60, bollUp].filter(v => isFinite(v) && v > 0 && v >= close).sort((a, b) => a - b).slice(0, 3);
+  const supports = [recentLow, levels.prevLow20, levels.prevLow60, ma20, ma60, bollLow, levels.boxLow].filter(v => isFinite(v) && v > 0 && v <= close).sort((a, b) => b - a).slice(0, 4);
+  const pressures = [recentHigh, levels.prevHigh20, levels.prevHigh60, ma20, ma60, bollUp, levels.boxHigh].filter(v => isFinite(v) && v > 0 && v >= close).sort((a, b) => a - b).slice(0, 4);
   const rawTrend = trend;
-  const line = buildPeriodLine(period, { close, chgPct, trend, volState, vRatio, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, cross, divergence, macdTxt }, prec);
-  return { period, label: PERIOD_LABEL[period], ks, closes, vols, ma, boll, macd, close, prevClose, chgPct, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, bollWidth, vRatio, volState, cross, divergence, macdTxt, trend, rawTrend, score, supports, pressures, line, prec };
+  const line = buildPeriodLine(period, { close, chgPct, trend, volState, vRatio, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, cross, divergence, macdTxt, levels, priceSignal }, prec);
+  return { period, label: PERIOD_LABEL[period], ks, closes, vols, ma, boll, macd, close, prevClose, chgPct, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, bollWidth, vRatio, volState, cross, divergence, levels, priceSignal, macdTxt, trend, rawTrend, score, supports, pressures, line, prec };
 }
 
 function buildPeriodLine(period, a, prec) {
   const crossTxt = a.cross ? (a.cross.type === 'gold' ? '近现金叉' : '近期死叉') : '无近交叉';
-  const divTxt = a.divergence ? (a.divergence.type === 'top' ? '顶背离' : '底背离') : '无背离';
-  const pos = a.bollUp && a.bollLow ? (a.close > a.bollUp * 0.98 ? '靠近BOLL上轨' : a.close < a.bollLow * 1.02 ? '靠近BOLL下轨' : 'BOLL中部') : 'BOLL不足';
-  return `${PERIOD_LABEL[period]}：${a.trend}，${a.volState}(${a.vRatio.toFixed(1)}倍)，${a.macdTxt}，${crossTxt}，${divTxt}，${pos}`;
+  const divTxt = a.divergence ? (a.divergence.type === 'top' ? `${a.divergence.strength || ''}顶背离` : `${a.divergence.strength || ''}底背离`) : '无背离';
+  const pos = a.bollUp && a.bollLow !== null ? (a.close > a.bollUp * 0.98 ? '靠近BOLL上轨' : a.close < a.bollLow * 1.02 ? '靠近BOLL下轨' : 'BOLL中部') : 'BOLL不足';
+  return `${PERIOD_LABEL[period]}：${a.trend}，${a.volState}(${a.vRatio.toFixed(1)}倍)，${a.macdTxt}，${crossTxt}，${divTxt}，${pos}，${a.levels.boxState}，${a.priceSignal.text}`;
 }
 
 function overallConclusion(day, week, month) {
@@ -211,9 +273,10 @@ function buildReport(name, code, quote, all, prec) {
   L.push(`· MA5/10/20/60：${fpBy(day.ma5, prec)} / ${fpBy(day.ma10, prec)} / ${fpBy(day.ma20, prec)} / ${fpBy(day.ma60, prec)}`);
   L.push(`结论：${periodConclusion('day', day)}`);
   L.push('');
-  L.push('━━━ 量价关系 ━━━');
-  L.push(`· 日线：${volumeExplain(day)}`);
-  L.push(`· 周线：${volumeExplain(week)}`);
+  L.push('━━━ 结构与量价 ━━━');
+  L.push(`· 日线：${structureExplain(day, prec)}`);
+  L.push(`· 周线：${structureExplain(week, prec)}`);
+  L.push(`· 量价：日线${stripPeriod(volumeExplain(day))}；周线${stripPeriod(volumeExplain(week))}`);
   L.push('');
   L.push('━━━ 关键价位 ━━━');
   L.push(`压力：${pressures.length ? pressures.join(' / ') : '暂无明显压力'}`);
@@ -236,12 +299,26 @@ function buildOneLine(oc, day, week, month) {
   return `月线${month.trend}、周线${week.trend}、日线${day.trend}，多周期分歧较大，先按区间震荡处理。`;
 }
 function periodConclusion(period, a) {
+  if (a.priceSignal.type === 'breakout') return `${a.label}放量突破前高，若回踩不破前高/MA20，可按突破确认观察。`;
+  if (a.priceSignal.type === 'breakdown') return `${a.label}放量跌破前低，优先控风险，等重新站回关键位。`;
+  if (a.priceSignal.type === 'stall') return `${a.label}放量滞涨并有上影，冲高回落风险增加。`;
+  if (a.priceSignal.type === 'pullback') return `${a.label}缩量回踩关键位，若次级别放量转强可作为低吸观察点。`;
   if (a.trend.includes('上升')) return `${a.label}结构偏强，回踩均线/中轨不破仍按强势整理看。`;
   if (a.trend.includes('下降')) return `${a.label}结构偏弱，反弹先按修复看，站回MA20前不算反转。`;
-  if (a.divergence && a.divergence.type === 'top') return `${a.label}出现顶背离，冲高回落风险增加。`;
-  if (a.divergence && a.divergence.type === 'bottom') return `${a.label}出现底背离，但需要放量阳线确认。`;
+  if (a.divergence && a.divergence.type === 'top') return `${a.label}出现${a.divergence.strength || ''}顶背离，冲高回落风险增加。`;
+  if (a.divergence && a.divergence.type === 'bottom') return `${a.label}出现${a.divergence.strength || ''}底背离，但需要放量阳线确认。`;
   return `${a.label}偏震荡，等待放量突破或缩量回踩确认。`;
 }
+function structureExplain(a, prec) {
+  const l = a.levels || {};
+  const parts = [];
+  parts.push(`${l.boxState || '箱体震荡'}（${fpBy(l.boxLow, prec)}~${fpBy(l.boxHigh, prec)}，宽${pct(l.boxWidthPct || 0)}）`);
+  if (l.prevHigh20) parts.push(`20期前高${fpBy(l.prevHigh20, prec)}`);
+  if (l.prevLow20) parts.push(`20期前低${fpBy(l.prevLow20, prec)}`);
+  parts.push(a.priceSignal.text);
+  return parts.join('，');
+}
+function stripPeriod(s) { return String(s || '').replace(/[。；;\s]+$/g, ''); }
 function volumeExplain(a) {
   const up = a.chgPct >= 0;
   if (up && a.vRatio >= 1.2) return `上涨配合${a.volState}，主动资金较积极，突破可信度提升。`;
@@ -253,6 +330,8 @@ function volumeExplain(a) {
 function holderAdvice(oc, day, week, prec) {
   const p = day.pressures[0] ? fpBy(day.pressures[0], prec) : '上方压力';
   const s = day.supports[0] ? fpBy(day.supports[0], prec) : '关键支撑';
+  if (day.priceSignal.type === 'breakdown') return `日线放量跌破前低，优先减风险；重新站回 ${p} 前少加仓。`;
+  if (day.priceSignal.type === 'breakout' && week.score >= 0) return `突破有效时可留底仓，回踩 ${s} 不破再看加仓，跌回突破位则减。`;
   if (oc.weighted < -0.4) return `反弹到 ${p} 附近缩量可减仓，跌破 ${s} 需控制风险。`;
   if (oc.weighted > 0.4) return `趋势未破可持有，回踩 ${s} 不破可观察，放量跌破则减。`;
   return `区间内高抛低吸，靠近 ${p} 谨慎，回踩 ${s} 观察承接。`;
@@ -260,6 +339,8 @@ function holderAdvice(oc, day, week, prec) {
 function emptyAdvice(oc, day, week, prec) {
   const s = day.supports[0] ? fpBy(day.supports[0], prec) : '支撑位';
   const p = day.pressures[0] ? fpBy(day.pressures[0], prec) : '压力位';
+  if (day.priceSignal.type === 'breakout') return `不直接追高，等回踩 ${p} 附近不破、或盘中缩量回踩 ${s} 后再评估。`;
+  if (day.priceSignal.type === 'pullback') return `可重点观察 ${s} 附近承接，但要等放量转强，不提前重仓。`;
   if (oc.weighted < -0.4) return `不追反弹，等站回 ${p} 并放量后再评估。`;
   if (oc.weighted > 0.4) return `等回踩 ${s} 缩量企稳，不追高。`;
   return `等靠近 ${s} 的缩量回踩，或放量突破 ${p} 后确认。`;
@@ -306,7 +387,7 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   const macdTop = volTop + volH + 8;
   ctx.fillStyle = ink; ctx.font = 'bold 16px cjk'; ctx.textAlign = 'left'; ctx.fillText(`${title} · ${a.trend}`, x0, y0 + 18);
   ctx.fillStyle = sub; ctx.font = '12px cjk';
-  ctx.fillText(`MA20 ${fpBy(a.ma20, prec)}  BOLL ${fpBy(a.bollLow, prec)}~${fpBy(a.bollUp, prec)}  ${a.volState}`, x0 + 130, y0 + 18);
+  ctx.fillText(`MA20 ${fpBy(a.ma20, prec)}  BOLL ${fpBy(a.bollLow, prec)}~${fpBy(a.bollUp, prec)}  ${a.volState}  ${a.priceSignal.text}`, x0 + 130, y0 + 18);
   const allP = [];
   ks.forEach((k, i) => { allP.push(k.high, k.low); const idx = offset + i; [5, 10, 20, 60].forEach(p => { if (a.ma[p][idx]) allP.push(a.ma[p][idx]); }); if (a.boll.up[idx]) allP.push(a.boll.up[idx], a.boll.low[idx]); });
   const lo = Math.min(...allP), hi = Math.max(...allP), rng = hi - lo || 1;
@@ -337,8 +418,15 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
     const yy = Y(price); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.moveTo(x0, yy); ctx.lineTo(x0 + w, yy); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = color; ctx.font = '11px cjk'; ctx.textAlign = 'right'; ctx.fillText(`${label} ${fpBy(price, prec)}`, x0 + w - 4, yy - 8);
   };
+  if (a.levels && a.levels.boxHigh) markPrice(a.levels.boxHigh, '箱顶', '#d48806');
+  if (a.levels && a.levels.boxLow) markPrice(a.levels.boxLow, '箱底', '#389e0d');
   if (a.pressures[0]) markPrice(a.pressures[0], '压力', upC);
   if (a.supports[0]) markPrice(a.supports[0], '支撑', downC);
+  if (a.priceSignal && a.priceSignal.type !== 'neutral') {
+    const labelColor = a.priceSignal.score >= 0 ? upC : downC;
+    ctx.fillStyle = labelColor; ctx.font = 'bold 12px cjk'; ctx.textAlign = 'left';
+    ctx.fillText(a.priceSignal.text, x0 + 6, plotTop + 12);
+  }
   // volume
   const maxVol = Math.max(...ks.map(k => k.vol || 0), 1);
   for (let i = 0; i < n; i++) { const k = ks[i], col = k.close >= k.open ? upC : downC; const bh = (k.vol || 0) / maxVol * volH; ctx.fillStyle = col + '99'; ctx.fillRect(X(i) - cw / 2, volTop + volH - bh, cw, bh); }
@@ -358,7 +446,8 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   }
   if (a.divergence) {
     ctx.fillStyle = a.divergence.type === 'top' ? upC : downC; ctx.font = '12px cjk'; ctx.textAlign = 'right';
-    ctx.fillText(a.divergence.type === 'top' ? '⚠ 顶背离' : '底背离', x0 + w - 6, macdTop + 12);
+    const divLabel = a.divergence.type === 'top' ? `${a.divergence.strength || ''}顶背离` : `${a.divergence.strength || ''}底背离`;
+    ctx.fillText(divLabel, x0 + w - 6, macdTop + 12);
   }
   // legend
   ctx.textAlign = 'left'; ctx.font = '11px cjk'; let lx = x0;
