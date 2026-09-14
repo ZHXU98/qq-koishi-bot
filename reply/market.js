@@ -362,6 +362,27 @@ async function fetchEmTrends(secid, isUS) {
   } catch (e) { console.error('[fetchEmTrends] 异常', secid, e && e.message); return null; }
 }
 
+async function fetchStockMinuteKline(code, period = 'm1', limit = 600) {
+  const lim = Math.max(1, Math.min(1000, Number(limit) || 600));
+  const ckey = `minute:${code}:${period}:${lim}`;
+  const cached = cacheGet(ckey);
+  if (cached) return cached;
+  try {
+    const url = STOCK_MINUTE.replace('%s', code).replace('%s', period).replace(/,320$/, ',' + lim);
+    const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) });
+    const j = await resp.json();
+    const d = j?.data?.[code];
+    const raw = d?.[period] || [];
+    if (!Array.isArray(raw) || raw.length < 2) return null;
+    const out = raw.map(r => ({
+      t: r[0], open: Number(r[1]), close: Number(r[2]), high: Number(r[3]), low: Number(r[4]), vol: Number(r[5]),
+    })).filter(k => isFinite(k.close) && k.close > 0);
+    if (out.length < 2) return null;
+    cacheSet(ckey, out, 5000);
+    return out;
+  } catch (_) { return null; }
+}
+
 async function fetchStockQuote(code) {
   const ckey = 'quote:' + code;
   const cached = cacheGet(ckey);
@@ -453,7 +474,7 @@ module.exports = {
   STOCK_QUOTE, STOCK_FQKLINE, STOCK_MINUTE, STOCK_TIMELINE, STOCK_SEARCH,
   STOCK_PERIODS, STOCK_PERIOD_LABEL, STOCK_LONG,
   normalizeCode, GLOBAL_ALIAS, GLOBAL_TEXT, EM_IDX_SECID, resolveStockCode,
-  calcSMA, calcBOLL, buildAvgLine, fetchStockKline, fetchEmKline,
+  calcSMA, calcBOLL, buildAvgLine, fetchStockKline, fetchStockMinuteKline, fetchEmKline,
   HF_SINA_SYM, SINA_GLOBAL_MIN, fetchSinaGlobalMin, SINA_GLOBAL_DAILY, HF_DAILY_TTL,
   fetchSinaGlobalDaily, aggHfKline, fetchSinaGlobalKline, EM_TRENDS, emSecid, fetchEmTrends,
   fetchStockQuote, EM_HOSTS, EM_UA, _emHost, emFetchJson,

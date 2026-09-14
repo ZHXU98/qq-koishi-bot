@@ -2,7 +2,7 @@
 // /t 做T参谋：形态判断 + 分时黄线分析 + T位建议（原理见 T_GUIDE.md）
 // ============================================================
 const { cacheGet, cacheSet, normStockName, isFundCode } = require('../utils');
-const { resolveStockCode, normalizeCode, fetchStockKline, fetchStockQuote, buildAvgLine, calcSMA, calcBOLL } = require('../market');
+const { resolveStockCode, normalizeCode, fetchStockKline, fetchStockMinuteKline, fetchStockQuote, buildAvgLine, calcSMA, calcBOLL } = require('../market');
 const { renderStockPng } = require('./stock');
 
 // ── 日线形态判断 ──
@@ -39,10 +39,10 @@ function analyzeTDayForm(dayKlines) {
 }
 
 // ── 分时MACD（与同花顺一致）──
-// 计算方式：1分钟K线收盘价，EMA12/26 + DEA9
-// 种子：前一日收盘价作为EMA初始值（同花顺分时MACD做法），从第1根分时起即可计算
-// 返回最新值+完整序列；无分时数据时返回 null
-function calcMACD(closes, prevClose) {
+// 计算方式：1分钟K线收盘价，EMA12/26 + DEA9。
+// /t 优先传入多日 1min 序列做隐藏预热，再只截今天显示；取不到 warmup 时才退化为当天分时。
+// 返回最新值+显示区序列；无分时数据时返回 null
+function calcMACD(closes, prevClose, displayStart = 0) {
   const arr = (closes || []).filter(v => isFinite(v) && v > 0);
   if (!arr.length) return null;
   // 种子：昨收（若无昨收数据则退化为首根收盘价）
@@ -69,12 +69,47 @@ function calcMACD(closes, prevClose) {
     dea.push(prevDea);
   }
   const hist = dif.map((d, i) => (d - dea[i]) * 2);
-  const last = arr.length - 1;
+  const start = Math.max(0, Math.min(arr.length - 1, Number(displayStart) || 0));
+  const difOut = dif.slice(start), deaOut = dea.slice(start), histOut = hist.slice(start);
+  const last = difOut.length - 1;
   return {
-    dif: dif[last], dea: dea[last], hist: hist[last],
-    prevHist: hist[last - 1] ?? 0,
-    series: { dif, dea, hist },
+    dif: difOut[last], dea: deaOut[last], hist: histOut[last],
+    prevHist: histOut[last - 1] ?? 0,
+    series: { dif: difOut, dea: deaOut, hist: histOut },
+    warmup: start,
   };
+}
+
+function buildWarmupMACD(timeKlines, warmupKlines, prevClose) {
+  const today = (timeKlines || []).filter(k => Number(k.close) > 0);
+  const warm = (warmupKlines || []).filter(k => Number(k.close) > 0);
+  if (!today.length) return null;
+  if (warm.length >= today.length + 80) {
+    const closes = warm.map(k => Number(k.close) || 0);
+    // 连续 1min 序列自身做预热：初始种子用序列首根价格，避免把“今日昨收”硬塞到历史起点。
+    const full = calcMACD(closes, closes[0], 0);
+    const fullSeries = full && full.series;
+    if (fullSeries && fullSeries.dif.length === warm.length) {
+      const lastDate = String(warm[warm.length - 1].t || '').slice(0, 8);
+      const idxByKey = new Map();
+      warm.forEach((k, i) => idxByKey.set(String(k.t || ''), i));
+      const idxs = today.map(k => idxByKey.get(lastDate + String(k.t || '').replace(':', '').slice(-4))).filter(i => Number.isInteger(i));
+      if (idxs.length >= Math.max(2, Math.floor(today.length * 0.85))) {
+        const dif = idxs.map(i => fullSeries.dif[i]);
+        const dea = idxs.map(i => fullSeries.dea[i]);
+        const hist = idxs.map(i => fullSeries.hist[i]);
+        const last = dif.length - 1;
+        return { dif: dif[last], dea: dea[last], hist: hist[last], prevHist: hist[last - 1] ?? 0, series: { dif, dea, hist }, warmup: idxs[0], warmupSource: 'm1-600' };
+      }
+    }
+  }
+  return calcMACD(today.map(k => Number(k.close) || 0), prevClose, 0);
+}
+
+function filterTDisplayKlines(code, timeKlines) {
+  const arr = (timeKlines || []).filter(k => Number(k.close) > 0);
+  if (code && code.startsWith('hf_')) return arr;
+  return arr.filter(k => { const t = String(k.t).replace(':', ''); return t >= '0930' && t <= '1500'; });
 }
 
 // ── MACD状态解读：金叉/死叉 + 顶/底背离 + 柱体趋势 ──
@@ -154,7 +189,7 @@ function _openScenario({ gapPct, openDirPct, pullbackPct, recoverPct, confirmTh,
 //   pureAuction  ：分时 <  5 根（9:30~9:35 前）— 只有竞价数据，不给T位
 //   openPhase    ：分时 < 30 根（~10:00 前）   — 用今开+5min走势确定做T场景
 //   盘中          ：分时 ≥ 30 根              — 用黄线均价做基准（原逻辑）
-function analyzeTTimeData(timeKlines, quote) {
+function analyzeTTimeData(timeKlines, quote, warmupKlines = null, code = '') {
   const hasTime = !!timeKlines && timeKlines.length >= 2;
   const candleCount = hasTime ? timeKlines.length : 0;
   const pureAuction = candleCount < 5;          // 不足5分钟：只有竞价，等方向确认
@@ -201,9 +236,10 @@ function analyzeTTimeData(timeKlines, quote) {
   const recoverPct = dayLow > 0 ? (lastPrice - dayLow) / dayLow * 100 : 0;
   // ── 振幅自适应确认阈值：波动越大，"冲高回落/低开企稳"的确认门槛越高 ──
   const confirmTh = Math.max(0.8, amplitude * 0.25);
-  // ── 分时MACD（1分钟K线，昨收做种子，从第1根即可计算）──
-  const closesArr = hasTime ? timeKlines.map(k => Number(k.close) || 0) : [];
-  const macd = calcMACD(closesArr, prevClose);
+  // ── 分时MACD：优先使用多日 1min 隐藏预热，只显示今天；避免开盘从昨收重置造成伪尖峰 ──
+  const macdKlines = hasTime ? filterTDisplayKlines(code, timeKlines) : [];
+  const closesArr = macdKlines.map(k => Number(k.close) || 0);
+  const macd = macdKlines.length ? buildWarmupMACD(macdKlines, warmupKlines, prevClose) : null;
   const macdState = macd ? analyzeMACDState(macd, closesArr) : null;
   // 开盘场景（纯竞价阶段暂无意义）
   const openScenario = (!pureAuction && openPhase) ? _openScenario({ gapPct, openDirPct, pullbackPct, recoverPct, confirmTh, hiFromOpen, loFromOpen }) : null;
@@ -453,7 +489,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push('');
     L.push(`⏰ 当前分时数据：仅 ${candleCount} 根（9:30起约${candleCount}分钟），方向尚未确认`);
     L.push(`   ⚠️ 暂不给T位——等开盘5分钟后（约9:35）再查，系统将根据走势自动给出动态T位`);
-    L.push(`   📉 分时MACD：开盘后即可计算（与同花顺一致，昨收做种子）`);
+    L.push(`   📉 分时MACD：优先用多日1分钟线隐藏预热，只显示今天，避免开盘伪尖峰`);
     L.push('');
     L.push(`📈 图表分析正在生成...`);
     L.push(`⚠️ 非投资建议，仅供参考，请结合自身判断操作`);
@@ -711,7 +747,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
 }
 
 // ── 图表渲染：分时图 + T位水平标注线 + 分时MACD小面板 ──
-function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
+function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos, warmupKlines = null) {
   const { createCanvas } = require('@napi-rs/canvas');
   // MACD_H 200→260：定标改回真线性后不再有压缩，把面板加高来补可读性
   const W = 1400, PAD = 74, TITLE_H = 62, VOL_H = 84, MACD_H = 260, LEG_H = 36;
@@ -719,7 +755,7 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
   const H = TITLE_H + plotH + VOL_H + MACD_H + LEG_H + PAD + 8;
   const isHK = code.startsWith('hk'), isHF = code.startsWith('hf_');
   // 过滤有效分时（A股 9:30~15:00）
-  const display = isHF ? timeKlines : timeKlines.filter(k => { const t = String(k.t); return t >= '0930' && t <= '1500'; });
+  const display = filterTDisplayKlines(code, timeKlines);
   const dn = display.length;
   if (dn < 2) return null;
   // 数据范围
@@ -739,9 +775,9 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
   const tmin = t => { const s = String(t).replace(':', ''); const m = Number(s.slice(0, 2)) * 60 + Number(s.slice(2, 4)); return isHK ? Math.min(TOT - 1, Math.max(0, m <= 720 ? m - 570 : 150 + (m - 780))) : Math.min(TOT - 1, Math.max(0, m <= 690 ? m - 571 : m - 660)); };
   const plotW = W - PAD * 2;
   const mapX = isHF ? (i => PAD + (i / (dn - 1)) * plotW) : (i => PAD + (tmin(display[i].t) / TOT) * plotW);
-  // 分时MACD小面板数据
+  // 分时MACD小面板数据：用多日 1min 预热后的今日序列，避免开盘伪尖峰绑架定标
   const closes = display.map(k => Number(k.close) || 0);
-  const macdData = calcMACD(closes, prevClose);
+  const macdData = buildWarmupMACD(display, warmupKlines, prevClose);
   // 配色
   const upC = '#f5222d', downC = '#0aa869';
   const bg = '#ffffff', panel = '#f7f8fa', grid = '#e8eaed', sub = '#8a919c', ink = '#2b2f36';
@@ -945,9 +981,10 @@ async function cmdT(args) {
     code = await resolveStockCode(codeArg);
     if (!code) return { ok: false, text: `⚠️ 找不到「${codeArg}」，请检查代码或名称` };
   }
-  // 并行拉取：分时 + 日线 + 快照
-  const [timeKlines, dayKlines, quote] = await Promise.all([
+  // 并行拉取：当天分时 + 600根1min预热 + 日线 + 快照
+  const [timeKlines, warmupKlines, dayKlines, quote] = await Promise.all([
     fetchStockKline(code, 'time').catch(() => null),
+    fetchStockMinuteKline(code, 'm1', 600).catch(() => fetchStockKline(code, 'm1').catch(() => null)),
     fetchStockKline(code, 'day').catch(() => null),
     fetchStockQuote(code).catch(() => null),
   ]);
@@ -970,7 +1007,7 @@ async function cmdT(args) {
   // 分时分析（无分时/开盘不足30min → openPhase 模式，基准用今开+量比+日线位置）
   let timeInfo;
   if (timeKlines && timeKlines.length >= 2) {
-    timeInfo = analyzeTTimeData(timeKlines, quote);
+    timeInfo = analyzeTTimeData(timeKlines, quote, warmupKlines, code);
   } else {
     // 盘前/盘后无分时：用快照 + 日线末尾补充
     const last = dayKlines[dayKlines.length - 1], prev = dayKlines[dayKlines.length - 2];
@@ -1009,8 +1046,8 @@ async function cmdT(args) {
     if (timeKlines && timeKlines.length >= 5) {
       // 纯竞价阶段（tPos 为 null）：画简化分时图（无T位标注）
       img = tPos
-        ? renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos)
-        : renderTPngCanvas(code, name, timeKlines, quote, dayInfo, { sellLow: 0, sellHigh: 0, buyLow: 0, buyHigh: 0 });
+        ? renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos, warmupKlines)
+        : renderTPngCanvas(code, name, timeKlines, quote, dayInfo, { sellLow: 0, sellHigh: 0, buyLow: 0, buyHigh: 0 }, warmupKlines);
     } else {
       img = renderStockPng(code, name, '日线', dayKlines, { maPeriods: [5, 10, 20], boll: true, timeMode: false, prec: 2 }, quote);
     }
