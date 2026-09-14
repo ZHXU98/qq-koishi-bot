@@ -34,8 +34,9 @@ function analyzeTDayForm(dayKlines) {
     else form = diff < 4 ? 'unclear' : (ma5 > ma20 ? 'uptrend' : 'downtrend');
   }
   const lastClose = closes[n - 1];
+  const prevClose = n >= 2 ? closes[n - 2] : 0;
   const ma20Dev = ma20 ? (lastClose - ma20) / ma20 * 100 : 0;
-  return { ma5, ma10, ma20, bollUp, bollLow, bollMid, bollWidth, form, ma20Dev, lastClose };
+  return { ma5, ma10, ma20, bollUp, bollLow, bollMid, bollWidth, form, ma20Dev, lastClose, prevClose };
 }
 
 // ── 分时MACD（同花顺日内口径）──
@@ -160,14 +161,19 @@ function _openScenario({ gapPct, openDirPct, pullbackPct, recoverPct, confirmTh,
 
 // ── 分时现状分析 ──
 // 三阶段逻辑：
-//   pureAuction  ：分时 <  5 根（9:30~9:35 前）— 只有竞价数据，不给T位
-//   openPhase    ：分时 < 30 根（~10:00 前）   — 用今开+5min走势确定做T场景
-//   盘中          ：分时 ≥ 30 根              — 用黄线均价做基准（原逻辑）
+//   preMacd      ：有效分时 ≤ 3 根（约 9:30~9:32）— 不使用 MACD，只看首根实体、均价和量比
+//   macdForming  ：4~5 根（约 9:33~9:34）       — 仅观察 MACD 柱/DIFF 是否收敛或拐头，不给做T确认
+//   macdConfirm  ：6~10 根（约 9:35~9:39）      — MACD 交叉须与价格相对均价线共同确认
+//   盘中          ：有效分时 > 10 根             — 使用既有黄线、轨迹、量能与 MACD 共振
 function analyzeTTimeData(timeKlines, quote, code = '') {
   const hasTime = !!timeKlines && timeKlines.length >= 2;
-  const candleCount = hasTime ? timeKlines.length : 0;
-  const pureAuction = candleCount < 5;          // 不足5分钟：只有竞价，等方向确认
-  const openPhase = candleCount < 30;           // 不足30分钟：开盘模式
+  const validKlines = hasTime ? filterTDisplayKlines(code, timeKlines) : [];
+  const candleCount = validKlines.length;
+  const preMacd = candleCount <= 3;
+  const macdForming = candleCount >= 4 && candleCount <= 5;
+  const macdConfirm = candleCount >= 6 && candleCount <= 10;
+  const pureAuction = preMacd || macdForming;
+  const openPhase = candleCount <= 30;
   const lastPrice = (quote && Number(quote.price) > 0) ? Number(quote.price)
     : (hasTime ? timeKlines[timeKlines.length - 1].close : 0);
   const prevClose = (quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : 0;
@@ -211,7 +217,7 @@ function analyzeTTimeData(timeKlines, quote, code = '') {
   // ── 振幅自适应确认阈值：波动越大，"冲高回落/低开企稳"的确认门槛越高 ──
   const confirmTh = Math.max(0.8, amplitude * 0.25);
   // ── 分时 MACD：仅当天 1 分钟数据，参数 6/21/6，首根收盘价为 EMA 初始值 ──
-  const macdKlines = hasTime ? filterTDisplayKlines(code, timeKlines) : [];
+  const macdKlines = validKlines;
   const closesArr = macdKlines.map(k => Number(k.close) || 0);
   const macd = closesArr.length ? calcMACD(closesArr) : null;
   const macdState = macd ? analyzeMACDState(macd, closesArr) : null;
@@ -225,6 +231,7 @@ function analyzeTTimeData(timeKlines, quote, code = '') {
   }
   return {
     lastPrice, prevClose, open, currentAvg, avgDev, baseRef, openPhase, pureAuction,
+    preMacd, macdForming, macdConfirm,
     gapPct, openDirPct, openScenario, candleCount,
     dayHigh, dayLow, dayPosition, amplitude, volRatio, avgSlope, avgLine, timeKlines,
     pullbackPct, recoverPct, hiFromOpen, loFromOpen, confirmTh, macd, macdState,
@@ -253,7 +260,7 @@ function calcVolRef(dayKlines) {
 // ── 计算T位 ──
 // pureAuction：返回 null（上层不渲染T位，只显示竞价分析）
 function calcTPositions(activeForm, timeInfo, dayInfo) {
-  const { lastPrice, currentAvg, dayLow, dayHigh, openPhase, pureAuction, openScenario, open, prevClose } = timeInfo;
+  const { lastPrice, currentAvg, dayLow, dayHigh, openPhase, pureAuction, macdForming, openScenario, open, prevClose } = timeInfo;
   const { bollUp, bollLow } = dayInfo;
   const prec = dayInfo.prec || 2;
   const r2 = v => Math.round(v * 10 ** prec) / 10 ** prec;
@@ -263,7 +270,7 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
   const isSwing = activeForm === 'swing' || activeForm === 'unclear';
 
   // ── 纯竞价阶段：数据不足，不给T位 ──
-  if (pureAuction) return null;
+  if (pureAuction || macdForming) return null;
 
   // ── 开盘模式（5<=分时<30）：基于「开盘场景 x 日线形态」给动态T位 ──
   if (openPhase) {
@@ -352,7 +359,7 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
 // tPos 可能为 null（纯竞价阶段），需特殊处理
 function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos) {
   const { lastPrice, currentAvg, avgDev, dayHigh, dayLow, dayPosition, volRatio, amplitude,
-          avgSlope, openPhase, pureAuction, open, gapPct, openDirPct, openScenario, candleCount,
+          avgSlope, openPhase, pureAuction, preMacd, macdForming, macdConfirm, open, gapPct, openDirPct, openScenario, candleCount,
           pullbackPct, recoverPct, hiFromOpen, loFromOpen, confirmTh, macd, macdState } = timeInfo;
   const { ma5, ma10, ma20, bollUp, bollLow, bollMid, bollWidth } = dayInfo;
   const now = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, hour: '2-digit', minute: '2-digit' });
@@ -433,7 +440,9 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   const gapTxt = gapPct > 1 ? `高开 +${gapPct.toFixed(2)}%` : gapPct < -1 ? `低开 ${gapPct.toFixed(2)}%` : `平开 ${gapPct.toFixed(2)}%`;
 
   if (pureAuction) {
-    // ── 纯竞价阶段：只有竞价信息，无法判断走势，不给T位 ──
+    // ── 前 3 分钟 / 3~5 分钟：不以 MACD 作为做T确认 ──
+    const first = timeInfo.timeKlines && timeInfo.timeKlines[0];
+    const firstDir = first ? (first.close >= first.open ? '首根实体偏强' : '首根实体偏弱') : '首根实体待确认';
     L.push(`🔔 竞价结果：今开 ${fp(open)}（${gapTxt}）  /  量比 ${volRatio.toFixed(1)}  /  现价 ${fp(lastPrice)}`);
     L.push('');
     if (gapPct > 2) {
@@ -461,9 +470,9 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
       L.push(`   💡 平开看开盘后走势与量能，再判断T方向`);
     }
     L.push('');
-    L.push(`⏰ 当前分时数据：仅 ${candleCount} 根（9:30起约${candleCount}分钟），方向尚未确认`);
-    L.push(`   ⚠️ 暂不给T位——等开盘5分钟后（约9:35）再查，系统将根据走势自动给出动态T位`);
-    L.push(`   📉 分时MACD：仅用当天1分钟K线，参数(6,21,6)，首根收盘价作为EMA初始值`);
+    L.push(`⏰ 当前有效分时 ${candleCount} 根，${preMacd ? '前3分钟：只看均价线、量比和首根实体，不用MACD' : `3~5分钟：${firstDir}，只观察MACD绿柱是否收敛、DIF是否拐头，不作为做T确认`}`);
+    L.push(`   ⚠️ 暂不给T位——${preMacd ? '先等至少3分钟形成初步价格结构' : '等到第6根分钟K后，再用MACD与均价线共同确认'}`);
+    L.push(`   📉 分时MACD：当天1分钟K线(6,21,6)，首根收盘价为EMA初始值`);
     L.push('');
     L.push(`📈 图表分析正在生成...`);
     L.push(`⚠️ 非投资建议，仅供参考，请结合自身判断操作`);
@@ -532,6 +541,13 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push(`   💡 黄线 = 今日所有成交的加权均价。偏贵=持有者平均在亏（有出货压力）；偏低=持有者有浮盈（有支撑）`);
   } else {
     L.push(`现价 ${fp(lastPrice)}（盘后/非交易时段，无实时分时数据，以日线数据为参考）`);
+  }
+  if (macdConfirm) {
+    const aboveAvg = currentAvg > 0 && lastPrice >= currentAvg;
+    const belowAvg = currentAvg > 0 && lastPrice < currentAvg;
+    L.push(`→ ⏱ 开盘MACD确认窗口（第6~10分钟）：${aboveAvg ? '价格站上均价线' : belowAvg ? '价格仍在均价线下' : '均价线数据不足'}。`);
+    if (macdState && macdState.cross === 'gold' && aboveAvg) L.push(`   ✅ DIF上穿DEA且站上均价线：短线T买回信号较可靠；零轴${macdState.zeroAbove ? '上方，强度更高' : '下方，仅按反弹看'}。`);
+    if (macdState && macdState.cross === 'dead' && belowAvg) L.push(`   ⚠️ DIF下穿DEA且跌破均价线：减仓/T出信号增强。`);
   }
   // ── 分时MACD状态（两个模式共用）──
   if (macdState && macd) {
@@ -682,8 +698,8 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   // ── 当前操作建议 ──
   L.push('━━━ 当前操作建议 ━━━');
   // MACD 最终确认（三条件共振：轨迹 → 量能 → MACD）
-  const macdConfirmSell = macdState && macdState.cross === 'dead';
-  const macdConfirmBuy = macdState && macdState.cross === 'gold';
+  const macdConfirmSell = macdState && macdState.cross === 'dead' && (!macdConfirm || currentAvg <= 0 || lastPrice < currentAvg);
+  const macdConfirmBuy = macdState && macdState.cross === 'gold' && (!macdConfirm || currentAvg <= 0 || lastPrice >= currentAvg);
   if (openScenario === 'gap_down_panic' && openPhase) {
     L.push(`🚨 低开续跌中——做T难度极高，不建议操作`);
     L.push(`   优先方案：若跌幅已大（>3%），考虑部分减仓止损`);
@@ -966,6 +982,15 @@ async function cmdT(args) {
     fetchStockKline(code, 'day').catch(() => null),
     fetchStockQuote(code).catch(() => null),
   ]);
+  const fallbackLastClose = dayKlines.length ? Number(dayKlines[dayKlines.length - 1].close) || 0 : 0;
+  const fallbackPrevClose = dayKlines.length >= 2 ? Number(dayKlines[dayKlines.length - 2].close) || 0 : 0;
+  // 快照盘后/网络失败时没有昨收：日线倒数第二根是稳定回退，图表、涨跌色和开盘缺口必须共用同一基准。
+  const effectiveQuote = {
+    ...(quote || {}),
+    price: (quote && Number(quote.price) > 0) ? Number(quote.price) : (timeKlines?.[timeKlines.length - 1]?.close || fallbackLastClose),
+    prevClose: (quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : fallbackPrevClose,
+    open: (quote && Number(quote.open) > 0) ? Number(quote.open) : (timeKlines?.[0]?.open || fallbackPrevClose),
+  };
   if (quote && quote.name) name = quote.name;
   if (!dayKlines || dayKlines.length < 20) {
     return { ok: false, text: `⚠️ 获取 ${name} 日线数据失败（至少需要20根K线才能分析）` };
@@ -985,7 +1010,7 @@ async function cmdT(args) {
   // 分时分析（无分时/开盘不足30min → openPhase 模式，基准用今开+量比+日线位置）
   let timeInfo;
   if (timeKlines && timeKlines.length >= 2) {
-    timeInfo = analyzeTTimeData(timeKlines, quote, code);
+    timeInfo = analyzeTTimeData(timeKlines, effectiveQuote, code);
   } else {
     // 盘前/盘后无分时：用快照 + 日线末尾补充
     const last = dayKlines[dayKlines.length - 1], prev = dayKlines[dayKlines.length - 2];
@@ -1024,8 +1049,8 @@ async function cmdT(args) {
     if (timeKlines && timeKlines.length >= 5) {
       // 纯竞价阶段（tPos 为 null）：画简化分时图（无T位标注）
       img = tPos
-        ? renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos)
-        : renderTPngCanvas(code, name, timeKlines, quote, dayInfo, { sellLow: 0, sellHigh: 0, buyLow: 0, buyHigh: 0 });
+        ? renderTPngCanvas(code, name, timeKlines, effectiveQuote, dayInfo, tPos)
+        : renderTPngCanvas(code, name, timeKlines, effectiveQuote, dayInfo, { sellLow: 0, sellHigh: 0, buyLow: 0, buyHigh: 0 });
     } else {
       img = renderStockPng(code, name, '日线', dayKlines, { maPeriods: [5, 10, 20], boll: true, timeMode: false, prec: 2 }, quote);
     }
