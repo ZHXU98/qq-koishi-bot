@@ -699,9 +699,29 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   // key labels
   const crossIdx = a.cross ? a.cross.index - offset : -1;
   if (crossIdx >= 0 && crossIdx < n) {
-    const yy = Math.max(macdTop + 8, Math.min(macdTop + macdH - 8, zeroY - dif[crossIdx] * lK));
-    ctx.fillStyle = a.cross.type === 'gold' ? upC : downC; ctx.beginPath(); ctx.arc(X(crossIdx), yy, 4, 0, Math.PI * 2); ctx.fill();
-    ctx.font = '11px cjk'; ctx.textAlign = 'center'; ctx.fillText(a.cross.type === 'gold' ? '金叉' : '死叉', X(crossIdx), yy - 12);
+    let cx = X(crossIdx);
+    let cy = zeroY - dif[crossIdx] * lK;
+    if (crossIdx >= 1) {
+      const prevGap = dif[crossIdx - 1] - dea[crossIdx - 1];
+      const currGap = dif[crossIdx] - dea[crossIdx];
+      const denom = Math.abs(prevGap) + Math.abs(currGap);
+      const r = denom > 1e-9 ? Math.abs(prevGap) / denom : 1;
+      cx = X(crossIdx - 1) + (X(crossIdx) - X(crossIdx - 1)) * r;
+      const crossVal = dif[crossIdx - 1] + (dif[crossIdx] - dif[crossIdx - 1]) * r;
+      cy = zeroY - crossVal * lK;
+    }
+    const yy = Math.max(macdTop + 8, Math.min(macdTop + macdH - 8, cy));
+    const label = a.cross.type === 'gold' ? '金叉' : '死叉';
+    const color = a.cross.type === 'gold' ? upC : downC;
+    ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(cx, macdTop + 3); ctx.lineTo(cx, macdTop + macdH - 3); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(cx, yy, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(cx, yy, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.font = 'bold 11px cjk'; ctx.textAlign = 'center';
+    const ly = a.cross.type === 'gold' ? Math.max(macdTop + 12, yy - 14) : Math.min(macdTop + macdH - 12, yy + 14);
+    const tw = ctx.measureText(label).width + 10;
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(cx - tw / 2, ly - 8, tw, 16);
+    ctx.fillStyle = color; ctx.fillText(label, cx, ly);
   }
   if (a.divergence) {
     ctx.fillStyle = a.divergence.type === 'top' ? upC : downC; ctx.font = '12px cjk'; ctx.textAlign = 'right';
