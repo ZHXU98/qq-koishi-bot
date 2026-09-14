@@ -55,6 +55,7 @@ const { cmdInfo, cmdEtfInfo } = require('./commands/info');
 const { cmdZj } = require('./commands/zj');
 const { cmdPreview } = require('./commands/preview');
 const { cmdT } = require('./commands/t');
+const { cmdAn } = require('./commands/an');
 
 let wsState = 'idle';
 let reconnectTimer = null; // WS 重连定时器（连接失败时 ws 库可能不触发 onclose，必须独立调度）
@@ -80,6 +81,7 @@ function routeCommand(text) {
     case 'info': case '个股': case '资料': return { name: 'info', type: 'info', args: parts };
     case 'etfinfo': case 'etf': case '基金持仓': return { name: 'etfinfo', type: 'etfinfo', args: parts };
     case 't': case '做t': case '做T': case 'doT': return { name: 't', type: 't', args: parts };
+    case 'an': case '分析': case '技术分析': return { name: 'an', type: 'an', args: parts };
     default: return null;
   }
 }
@@ -212,6 +214,15 @@ async function handleEvent(ev) {
         await sendReply(ev, '', [r.img]);
       }
     }
+  } else if (cmd.type === 'an') {
+    // /an 多周期技术分析：先发文字报告，再发综合图
+    const r = await cmdAn(cmd.args);
+    if (!r.ok) {
+      await sendReply(ev, r.text || '⚠️ 多周期分析失败');
+    } else {
+      await sendReply(ev, r.text);
+      if (r.img) await sendReply(ev, '', [r.img]);
+    }
   } else {
     await sendReply(ev, cmd.text);
   }
@@ -286,7 +297,7 @@ if (require.main === module) {
 
 module.exports = {
   handleEvent, routeCommand, parseMessage, loadConfig, sendReply,
-  cmdStatus, cmdPreview, cmdStock, cmdStocks, cmdSS, cmdZj, cmdInfo, cmdEtfInfo, cmdHelp, cmdT,
+  cmdStatus, cmdPreview, cmdStock, cmdStocks, cmdSS, cmdZj, cmdInfo, cmdEtfInfo, cmdHelp, cmdT, cmdAn,
   extractMagnet, genHardwareStats: require('./commands/basic').genHardwareStats,
   fetchStockKline: require('./market').fetchStockKline,
   fetchStockQuote: require('./market').fetchStockQuote,
