@@ -446,10 +446,11 @@ function renderAnPng(code, name, quote, all, prec) {
 function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   const upC = '#f5222d', downC = '#0aa869', ink = '#2b2f36', sub = '#8a919c', grid = '#e8eaed', panel = '#f7f8fa';
   ctx.fillStyle = panel; ctx.beginPath(); ctx.roundRect(x0 - 8, y0 + 2, w + 16, h - 4, 12); ctx.fill();
-  // 显示窗口：日线 90 根（≈4.5个月）、周线 30 根（≈7个月）、月线 24 根（2年）。
-  // 窗口再拉长没有意义——603986 周线 90 根会把 113 的低点和 846 的高点塞进同一坐标系，
-  // K 线被压成一条细带，箱体/中枢完全失去参照。周线 30 根与大箱体计算窗口同宽。
-  const ks = a.ks.slice(title === '日线' ? -90 : title === '周线' ? -30 : -24);
+  // 显示窗口 = 大箱体计算窗口，一格不多：
+  //   日线 40 根（≈2个月）· 周线 30 根（≈7个月）· 月线 24 根（2年，月线不画箱体）
+  // 为什么必须收窄：603986 日线 90 根的 Y 跨度是 509（含 7 月那根 846 的尖顶），
+  // 40 根只有 164 —— 同样的 220px 面板，K 线分辨率差 3 倍。窗口拉长 = 自己把图画糊。
+  const ks = a.ks.slice(title === '日线' ? -40 : title === '周线' ? -30 : -24);
   const offset = a.ks.length - ks.length;
   const n = ks.length;
   const topH = 220, volH = 56, macdH = 92;
@@ -459,9 +460,26 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   ctx.fillStyle = ink; ctx.font = 'bold 16px cjk'; ctx.textAlign = 'left'; ctx.fillText(`${title} · ${a.trend}`, x0, y0 + 18);
   ctx.fillStyle = sub; ctx.font = '12px cjk';
   ctx.fillText(title === '月线' ? `MA20 ${fpBy(a.ma20, prec)}  BOLL ${fpBy(a.bollLow, prec)}~${fpBy(a.bollUp, prec)}  ${a.volState}  月线不画箱体` : `MA20 ${fpBy(a.ma20, prec)}  BOLL ${fpBy(a.bollLow, prec)}~${fpBy(a.bollUp, prec)}  ${a.volState}  BOX-S小箱体 CORE中枢 BOX-L大箱体`, x0 + 130, y0 + 18);
-  const allP = [];
-  ks.forEach((k, i) => { allP.push(k.high, k.low); const idx = offset + i; [5, 10, 20, 60].forEach(p => { if (a.ma[p][idx]) allP.push(a.ma[p][idx]); }); if (a.boll.up[idx]) allP.push(a.boll.up[idx], a.boll.low[idx]); });
-  const lo = Math.min(...allP), hi = Math.max(...allP), rng = hi - lo || 1;
+  // 纵向定标：**以 K 线高低为准**，MA/BOLL 只在与 K 线范围相差 30% 以内时才参与。
+  // 为什么必须这样：均线/布林是滞后指标，它们在窗口首根反映的是**窗口外**的旧数据。
+  // 603986 日线 40 根如果不做这个过滤，窗口首根的 BOLL 上轨还是 871.32（20 天前那根 846 尖顶算出来的），
+  // Y 跨度会被从 164 撑到 648，K 线直接压成一条线——这才是"图难看"的真正元凶，不是窗口长度。
+  // 超出该带的均线/布林一律交给 panel clip 裁掉（它本来也不是这个窗口该看的参考）。
+  const kLo = Math.min(...ks.map(k => Number(k.low) || Number(k.close) || Infinity));
+  const kHi = Math.max(...ks.map(k => Number(k.high) || Number(k.close) || 0));
+  const kRng = Math.max(kHi - kLo, kHi * 0.01);
+  // 下界再叠一个"不可能低于区间最低价一半"的绝对地板，挡住 0 附近的脏值（月线实测出现过 BOLL 下轨 ≈ 0）
+  const bandLo = Math.max(kLo * 0.5, kLo - kRng * 0.15);
+  const bandHi = kHi + kRng * 0.15;
+  const inBand = v => Number.isFinite(v) && v > 0 && v >= bandLo && v <= bandHi;
+  const extraP = [];
+  ks.forEach((k, i) => {
+    const idx = offset + i;
+    [5, 10, 20, 60].forEach(p => { if (inBand(a.ma[p][idx])) extraP.push(a.ma[p][idx]); });
+    if (inBand(a.boll.up[idx])) extraP.push(a.boll.up[idx]);
+    if (inBand(a.boll.low[idx])) extraP.push(a.boll.low[idx]);
+  });
+  const lo = Math.min(kLo, ...extraP), hi = Math.max(kHi, ...extraP), rng = hi - lo || 1;
   const yMin = lo - rng * 0.05, yMax = hi + rng * 0.05;
   const X = i => x0 + (i + 0.5) * (w / n);
   const barW = w / n;
@@ -474,13 +492,14 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   // 标签纵向避让：先试原位，冲突则按 18px 步长**上下交替**找空位
   // （只往下推会在面板底部撞墙被夹回来，反而又重叠）
   const LBL_GAP = 18;
-  const placeY = (yy) => {
+  // maxShift：允许的最大避让位移。挪太远标签就指不准它标的价位了，宁可就地压一点。
+  const placeY = (yy, maxShift = 54) => {
     const lo = plotTop + 12, hi = plotTop + topH - 10;
     let y = Math.max(lo, Math.min(hi, yy));
     const clash = v => usedLabelYs.some(u => Math.abs(u - v) < LBL_GAP);
     if (clash(y)) {
       let found = null;
-      for (let d = LBL_GAP; d <= LBL_GAP * 10 && found === null; d += LBL_GAP) {
+      for (let d = LBL_GAP; d <= maxShift && found === null; d += LBL_GAP) {
         if (y + d <= hi && !clash(y + d)) found = y + d;
         else if (y - d >= lo && !clash(y - d)) found = y - d;
       }
@@ -506,12 +525,20 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   // 箱体绘制：价格一律按真实比例映射，**不做 clamp**。
   // clamp 会把超出视图的上下沿压到面板边缘，形成两条贴边的"平行线"——那是假象，必须避免。
   // 超出视图时改为在面板边缘给出「上沿/下沿在视图外」的提示标签，并把线交给 panel clip 截断。
-  const drawBoxArea = (low, high, startIdx, label, stroke, fill, dash, opts = {}) => {
+  // winStart/winLen：箱体的**计算窗口**（左闭右开，均不含当前K）。
+  // 框必须只覆盖被统计的那几根 K 线——之前右边一律拉到 x0+w，等于把"今天"也框进去了，
+  // 而今天的价格根本不在箱体区间里（603986 今天 356.88，小箱体 374.13~416.51），
+  // 视觉上就变成"框住了今天的价格但价格不在框里"，自相矛盾。
+  const drawBoxArea = (low, high, winStart, winLen, label, stroke, fill, dash, opts = {}) => {
     if (!(high > low)) return;
-    const x1 = x0 + Math.max(0, startIdx) * barW;
-    const x2 = x0 + w;
+    const s = Math.max(0, Math.min(n, winStart));
+    const e = Math.max(s, Math.min(n, winStart + winLen));
+    if (e - s < 1) return;
+    const x1 = x0 + s * barW;
+    const x2 = x0 + e * barW;
     const yt = Y(high), yb = Y(low);
-    const bh = Math.max(opts.minH || 2, yb - yt); // minH：过窄时给最小可视高度（不严格要求等比，优先看得清）
+    // minH 只做亚像素保护，不再用来"撑大"窄箱体——撑大会让框覆盖到它实际不含的价位
+    const bh = Math.max(opts.minH || 2, yb - yt);
     const by = Math.min(yt, plotTop + topH - bh);
     // 大箱体占满整个纵向时不再填色，否则整块色板会盖住 K 线，反而看不清
     const coverRatio = bh / topH;
@@ -548,19 +575,19 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
     ctx.font = '11px cjk'; ctx.textAlign = 'left'; ctx.fillStyle = stroke;
     ctx.fillText(`${label} ${fpBy(price, prec)} ${above ? '↑在视图上方' : '↓在视图下方'}`, x0 + 6, above ? plotTop + 12 : plotTop + topH - 4);
   };
+  const lv = a.levels || {};
+  // 整个价格面板统一裁剪：箱体、K 线、均线、布林都可能超出视图（尤其是被 inBand 过滤掉的滞后值），
+  // 一律裁在面板内，绝不越界压到成交量/MACD 面板上，也绝不做 clamp 贴边。
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0 - 2, plotTop - 1, w + 4, topH + 2); ctx.clip();
   if (a.levels && title !== '月线') {
-    // 框宽 = 计算窗口（算多少根就框多少根）：日线大箱体=近40根、周线=近30根、小箱体/中枢=近20根
-    // 三层错开呈现：大箱体只画上下通道线；小箱体画矩形；中枢最窄但保证最小可视高度（蓝）
-    const lv = a.levels;
+    // 框宽 = 计算窗口（算多少根就框多少根，且**不含当前K**）：
+    // 日线大箱体=近40根、周线=近30根、小箱体/中枢=近20根
+    // 三层错开呈现：大箱体只画上下通道线；小箱体画矩形；中枢最窄（蓝）
     const mW = lv.majorWin || 40, sW = lv.minorWin || 20, cW = lv.coreWin || 20;
-    ctx.save();
-    ctx.beginPath(); ctx.rect(x0 - 2, plotTop, w + 4, topH); ctx.clip(); // 越界部分裁掉，不做贴边压缩
-    drawBoxArea(lv.majorLow, lv.majorHigh, n - mW, 'BOX-L', '#b37b00', 'rgba(250, 173, 20, 0.04)', [5, 4], { noRightText: true, railsOnly: true, dropFillIfTall: 0.55 });
-    drawBoxArea(lv.minorLow, lv.minorHigh, n - sW, 'BOX-S', '#d48806', 'rgba(250, 173, 20, 0.14)', [], { noRightText: true, minH: 14 });
-    drawBoxArea(lv.centerLow, lv.centerHigh, n - cW, 'CORE', '#1677ff', 'rgba(22, 119, 255, 0.32)', [], { noRightText: true, minH: 18 });
-    ctx.restore();
-    outNote(lv.majorHigh, '大箱体上沿', '#b37b00');
-    outNote(lv.majorLow, '大箱体下沿', '#b37b00');
+    drawBoxArea(lv.majorLow, lv.majorHigh, n - mW - 1, mW, 'BOX-L', '#b37b00', 'rgba(250, 173, 20, 0.04)', [5, 4], { noRightText: true, railsOnly: true, dropFillIfTall: 0.55, minH: 4 });
+    drawBoxArea(lv.minorLow, lv.minorHigh, n - sW - 1, sW, 'BOX-S', '#d48806', 'rgba(250, 173, 20, 0.14)', [], { noRightText: true, minH: 5 });
+    drawBoxArea(lv.centerLow, lv.centerHigh, n - cW - 1, cW, 'CORE', '#1677ff', 'rgba(22, 119, 255, 0.34)', [], { noRightText: true, minH: 5 });
   }
   // 上限从 8 放宽到 20：周线只显示 30 根、月线 24 根时，每根间距 50~60px，
   // 若仍按 8px 画会变成"牙签"，K 线实体几乎看不见。
@@ -579,6 +606,11 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   };
   [5, 10, 20, 60].forEach(p => drawLine(a.ma[p], maCols[p]));
   drawLine(a.boll.up, '#f0b90b', [4, 4]); drawLine(a.boll.mid, '#f0b90b', [2, 5]); drawLine(a.boll.low, '#f0b90b', [4, 4]);
+  ctx.restore(); // 结束价格面板裁剪
+  if (a.levels && title !== '月线') {
+    outNote(lv.majorHigh, '大箱体上沿', '#b37b00');
+    outNote(lv.majorLow, '大箱体下沿', '#b37b00');
+  }
   // 支撑压力：找最近贴近该价位的高/低点，在点位附近做短标注，不再全图横穿
   const findAnchorX = (price, kind) => {
     let best = -1, bestScore = Infinity;
@@ -597,14 +629,22 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   const markPrice = (price, label, color, kind) => {
     if (!(price > yMin && price < yMax)) return;
     const anchorX = findAnchorX(price, kind);
-    const yy = placeY(Y(price));
+    const trueY = Y(price);
+    // 关键：**虚线永远画在真实价位上**。之前虚线跟着避让后的标签一起挪，
+    // 结果线画在了一个价格根本不在的位置（603986 支撑 337.10 的线跑到了 400 上方），等于给假信号。
+    // 标签躲开碰撞时，用一条细引线连回真实价位。
+    const yy = placeY(trueY, 36);
     const text = `${label} ${fpBy(price, prec)}`;
     ctx.font = '11px cjk';
     const tw = ctx.measureText(text).width + 10;
     let tx = kind === 'pressure' ? anchorX + 8 : anchorX - tw - 8;
     tx = Math.max(x0 + 4, Math.min(x0 + w - tw - 4, tx));
     ctx.strokeStyle = color; ctx.lineWidth = 1.3; ctx.setLineDash([4, 3]);
-    ctx.beginPath(); ctx.moveTo(Math.max(x0, anchorX - 26), yy); ctx.lineTo(Math.min(x0 + w, anchorX + 26), yy); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(Math.max(x0, anchorX - 26), trueY); ctx.lineTo(Math.min(x0 + w, anchorX + 26), trueY); ctx.stroke(); ctx.setLineDash([]);
+    if (Math.abs(yy - trueY) > 4) {
+      ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([2, 2]);
+      ctx.beginPath(); ctx.moveTo(tx + 6, yy + (yy > trueY ? -10 : 10)); ctx.lineTo(tx + 6, trueY); ctx.stroke(); ctx.setLineDash([]);
+    }
     ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.roundRect(tx, yy - 10, tw, 20, 4); ctx.fill();
     ctx.fillStyle = color; ctx.font = '11px cjk'; ctx.textAlign = 'left'; ctx.fillText(text, tx + 5, yy);
   };
