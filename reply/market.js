@@ -362,8 +362,8 @@ async function fetchEmTrends(secid, isUS) {
   } catch (e) { console.error('[fetchEmTrends] 异常', secid, e && e.message); return null; }
 }
 
-async function fetchStockMinuteKline(code, period = 'm1', limit = 600) {
-  const lim = Math.max(1, Math.min(1000, Number(limit) || 600));
+async function fetchStockMinuteKline(code, period = 'm1', limit = 400) {
+  const lim = Math.max(1, Math.min(1000, Number(limit) || 400));
   const ckey = `minute:${code}:${period}:${lim}`;
   const cached = cacheGet(ckey);
   if (cached) return cached;

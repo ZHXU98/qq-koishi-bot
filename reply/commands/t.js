@@ -99,7 +99,7 @@ function buildWarmupMACD(timeKlines, warmupKlines, prevClose) {
         const dea = idxs.map(i => fullSeries.dea[i]);
         const hist = idxs.map(i => fullSeries.hist[i]);
         const last = dif.length - 1;
-        return { dif: dif[last], dea: dea[last], hist: hist[last], prevHist: hist[last - 1] ?? 0, series: { dif, dea, hist }, warmup: idxs[0], warmupSource: 'm1-600' };
+        return { dif: dif[last], dea: dea[last], hist: hist[last], prevHist: hist[last - 1] ?? 0, series: { dif, dea, hist }, warmup: idxs[0], warmupSource: 'm1-400' };
       }
     }
   }
@@ -981,10 +981,10 @@ async function cmdT(args) {
     code = await resolveStockCode(codeArg);
     if (!code) return { ok: false, text: `⚠️ 找不到「${codeArg}」，请检查代码或名称` };
   }
-  // 并行拉取：当天分时 + 600根1min预热 + 日线 + 快照
+  // 并行拉取：当天分时 + 400根1min预热 + 日线 + 快照
   const [timeKlines, warmupKlines, dayKlines, quote] = await Promise.all([
     fetchStockKline(code, 'time').catch(() => null),
-    fetchStockMinuteKline(code, 'm1', 600).catch(() => fetchStockKline(code, 'm1').catch(() => null)),
+    fetchStockMinuteKline(code, 'm1', 400).catch(() => fetchStockKline(code, 'm1').catch(() => null)),
     fetchStockKline(code, 'day').catch(() => null),
     fetchStockQuote(code).catch(() => null),
   ]);
