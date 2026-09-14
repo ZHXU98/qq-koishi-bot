@@ -446,7 +446,10 @@ function renderAnPng(code, name, quote, all, prec) {
 function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   const upC = '#f5222d', downC = '#0aa869', ink = '#2b2f36', sub = '#8a919c', grid = '#e8eaed', panel = '#f7f8fa';
   ctx.fillStyle = panel; ctx.beginPath(); ctx.roundRect(x0 - 8, y0 + 2, w + 16, h - 4, 12); ctx.fill();
-  const ks = a.ks.slice(title === '日线' ? -90 : title === '周线' ? -90 : -60);
+  // 显示窗口：日线 90 根（≈4.5个月）、周线 30 根（≈7个月）、月线 24 根（2年）。
+  // 窗口再拉长没有意义——603986 周线 90 根会把 113 的低点和 846 的高点塞进同一坐标系，
+  // K 线被压成一条细带，箱体/中枢完全失去参照。周线 30 根与大箱体计算窗口同宽。
+  const ks = a.ks.slice(title === '日线' ? -90 : title === '周线' ? -30 : -24);
   const offset = a.ks.length - ks.length;
   const n = ks.length;
   const topH = 220, volH = 56, macdH = 92;
@@ -468,10 +471,21 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   ctx.setLineDash([]);
   const clampY = y => Math.max(plotTop, Math.min(plotTop + topH, y));
   const usedLabelYs = [];
+  // 标签纵向避让：先试原位，冲突则按 18px 步长**上下交替**找空位
+  // （只往下推会在面板底部撞墙被夹回来，反而又重叠）
+  const LBL_GAP = 18;
   const placeY = (yy) => {
-    let y = Math.max(plotTop + 12, Math.min(plotTop + topH - 10, yy));
-    for (let guard = 0; guard < 8 && usedLabelYs.some(v => Math.abs(v - y) < 13); guard++) y += 13;
-    y = Math.max(plotTop + 12, Math.min(plotTop + topH - 10, y));
+    const lo = plotTop + 12, hi = plotTop + topH - 10;
+    let y = Math.max(lo, Math.min(hi, yy));
+    const clash = v => usedLabelYs.some(u => Math.abs(u - v) < LBL_GAP);
+    if (clash(y)) {
+      let found = null;
+      for (let d = LBL_GAP; d <= LBL_GAP * 10 && found === null; d += LBL_GAP) {
+        if (y + d <= hi && !clash(y + d)) found = y + d;
+        else if (y - d >= lo && !clash(y - d)) found = y - d;
+      }
+      if (found !== null) y = found;
+    }
     usedLabelYs.push(y);
     return y;
   };
@@ -481,9 +495,10 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   const drawDeferred = () => {
     deferredLabels.forEach(o => {
       ctx.font = o.font; ctx.textAlign = 'left';
-      const tw = ctx.measureText(o.text).width + 8;
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
-      ctx.fillRect(o.x - 4, o.y - 12, Math.min(tw, o.maxW), 16);
+      const tw = ctx.measureText(o.text).width + 10;
+      // 不透明底衬：半透明时下面的 BOLL/均线会透出来，看起来像给文字加了"删除线"
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(o.x - 5, o.y - 11, Math.min(tw, o.maxW), 16);
       ctx.fillStyle = o.color;
       ctx.fillText(o.text, o.x, o.y);
     });
@@ -547,7 +562,9 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
     outNote(lv.majorHigh, '大箱体上沿', '#b37b00');
     outNote(lv.majorLow, '大箱体下沿', '#b37b00');
   }
-  const cw = Math.max(2, Math.min(8, w / n * 0.58));
+  // 上限从 8 放宽到 20：周线只显示 30 根、月线 24 根时，每根间距 50~60px，
+  // 若仍按 8px 画会变成"牙签"，K 线实体几乎看不见。
+  const cw = Math.max(2, Math.min(20, w / n * 0.58));
   for (let i = 0; i < n; i++) {
     const k = ks[i], col = k.close >= k.open ? upC : downC;
     const xx = X(i), yo = Y(k.open), yc = Y(k.close), yh = Y(k.high), yl = Y(k.low);
@@ -588,7 +605,7 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
     tx = Math.max(x0 + 4, Math.min(x0 + w - tw - 4, tx));
     ctx.strokeStyle = color; ctx.lineWidth = 1.3; ctx.setLineDash([4, 3]);
     ctx.beginPath(); ctx.moveTo(Math.max(x0, anchorX - 26), yy); ctx.lineTo(Math.min(x0 + w, anchorX + 26), yy); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(255,255,255,0.86)'; ctx.beginPath(); ctx.roundRect(tx, yy - 10, tw, 20, 4); ctx.fill();
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.roundRect(tx, yy - 10, tw, 20, 4); ctx.fill();
     ctx.fillStyle = color; ctx.font = '11px cjk'; ctx.textAlign = 'left'; ctx.fillText(text, tx + 5, yy);
   };
   if (a.pressures[0]) markPrice(a.pressures[0], '压力', upC, 'pressure');

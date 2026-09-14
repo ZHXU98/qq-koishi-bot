@@ -713,7 +713,8 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
 // ── 图表渲染：分时图 + T位水平标注线 + 分时MACD小面板 ──
 function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
   const { createCanvas } = require('@napi-rs/canvas');
-  const W = 1400, PAD = 74, TITLE_H = 62, VOL_H = 84, MACD_H = 200, LEG_H = 36;
+  // MACD_H 200→260：定标改回真线性后不再有压缩，把面板加高来补可读性
+  const W = 1400, PAD = 74, TITLE_H = 62, VOL_H = 84, MACD_H = 260, LEG_H = 36;
   const plotH = 420;
   const H = TITLE_H + plotH + VOL_H + MACD_H + LEG_H + PAD + 8;
   const isHK = code.startsWith('hk'), isHF = code.startsWith('hf_');
@@ -845,19 +846,18 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
     if (hasSeries) {
       // 柱状图（HIST=DIF-DEA再×2）
       const deaSeries = macdData.series ? macdData.series.dea : [];
-      // 纵向定标：柱与线共用同一基准（同花顺口径），但映射用 signed-sqrt 压缩。
-      // 分时 DIF 在开盘 10 分钟内会冲到常态的 5~8 倍（603986 实测 max 3.78 / p50 0.24），
-      // 线性定标会把剩下 4 小时压成贴零轴的一条直线 —— 这正是"两条线重叠看不清"的根因。
-      // sqrt 保持单调 + 保号：金叉/死叉位置、正负、相对高低序完全不变，只是把尖峰压下来。
-      // 好处是全程无需 clip，不会出现"线冲出面板/贴边成平行线"的假象。
+      // 纵向定标：真线性、全域基准（同花顺分时副图口径），不做任何压缩或裁剪。
+      // 曾试过 signed-sqrt 压缩来放大午后的小幅波动，但 sqrt 会把小值相对抬高 3 倍左右
+      // （603986 实测 p50 从占 11% 抬到 34%），让全天的柱体看起来"个个都很大"——失真，已回退。
+      // 现在柱高与 DIF/DEA 离零轴的距离都与数值严格成正比，图上读到多少就是多少。
       const mRef = Math.max(
         ...hist.map(v => Math.abs(v)),
         ...diff.map(v => Math.abs(v)),
         ...(deaSeries || []).map(v => Math.abs(v)),
         1e-6,
       );
-      const AMP = macdH * 0.45;
-      const sY = v => Math.sign(v) * Math.sqrt(Math.abs(v) / mRef) * AMP;
+      const mScale = (macdH * 0.45) / mRef;
+      const sY = v => v * mScale;
       for (let i = 0; i < dn; i++) {
         const v = hist[i];
         const bh = Math.max(1, Math.abs(sY(v)));
@@ -879,11 +879,17 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
         strokeSeries(diff, '#1677ff');                                   // DIF 蓝线
         if (deaSeries && deaSeries.length === dn) strokeSeries(deaSeries, '#f0a90b'); // DEA 黄线
       }
+      // 刻度标注：面板上下缘对应的数值（真线性，直接可读）。
+      // 开盘跳空那天 DIF 会冲到 ±3.8，午后只 ±0.3 是真实情况，不是画糊了——标出来避免误判。
+      const edgeVal = mRef / 0.9;
+      ctx.fillStyle = sub; ctx.font = '10px cjk'; ctx.textAlign = 'left';
+      ctx.fillText('+' + edgeVal.toFixed(2), PAD + 2, macdTop + 9);
+      ctx.fillText('-' + edgeVal.toFixed(2), PAD + 2, macdTop + macdH - 3);
     }
     ctx.fillStyle = sub; ctx.font = '11px cjk'; ctx.textAlign = 'left';
     const mState = analyzeMACDState(macdData, closes);
     const mtxt = mState
-      ? `MACD(√压缩·重形态不重比例) DIF ${fp(macdData.dif)}  DEA ${fp(macdData.dea)}  ${mState.hist >= 0 ? '红柱' : '绿柱'}${mState.histTrend === 'expand' ? '↑' : '↓'} ${mState.crossText || ''}${mState.divergence === 'top' ? ' ⚠顶部背离' : mState.divergence === 'bottom' ? ' 底部背离' : ''}`
+      ? `MACD DIF ${fp(macdData.dif)}  DEA ${fp(macdData.dea)}  ${mState.hist >= 0 ? '红柱' : '绿柱'}${mState.histTrend === 'expand' ? '↑' : '↓'} ${mState.crossText || ''}${mState.divergence === 'top' ? ' ⚠顶部背离' : mState.divergence === 'bottom' ? ' 底部背离' : ''}`
       : 'MACD 数据不足';
     ctx.fillText(mtxt, PAD + 4, macdTop + macdH + 12);
   } else {
