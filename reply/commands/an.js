@@ -111,9 +111,18 @@ function detectDivergence(closes, macd) {
   return null;
 }
 
+// 箱体计算窗口（根数，均不含当前K）
+// 选取依据：箱体要框住"当下正在博弈的区间"，窗口过大必然跨越多轮涨跌，箱体退化成区间极值。
+//   日线：大箱体 40 根（≈2个月，覆盖一轮完整波段）；实测 603986 日线 60 根箱体宽 97%、40 根仅 29%，60 根已跨过 6~7 月那波翻倍行情。
+//   周线：大箱体 30 根（≈7个月）；60 周箱体宽 235%（113~846），完全没有"箱体"含义。
+//   小箱体/中枢固定 20 根（≈1个月 / 5个月），对应一轮短期震荡。
+const BOX_WIN = { day: { major: 40, minor: 20, core: 20 }, week: { major: 30, minor: 20, core: 20 }, month: { major: 0, minor: 0, core: 0 } };
+
 function calcRecentLevels(period, ks, close) {
+  const bw = BOX_WIN[period] || BOX_WIN.day;
   const recent20 = ks.slice(-21, -1);
   const recent60 = ks.slice(-61, -1);
+  const seg = n => (n > 0 ? ks.slice(-(n + 1), -1) : []);
   const maxHigh = arr => arr.length ? Math.max(...arr.map(k => Number(k.high) || Number(k.close) || 0)) : null;
   const minLow = arr => arr.length ? Math.min(...arr.map(k => Number(k.low) || Number(k.close) || Infinity)) : null;
   const quantile = (arr, q) => {
@@ -151,16 +160,13 @@ function calcRecentLevels(period, ks, close) {
   const prevLow20 = minLow(recent20);
   const prevHigh60 = maxHigh(recent60);
   const prevLow60 = minLow(recent60);
-  const major = calcBox(recent60.length ? recent60 : recent20, 0.15, 0.85);
-  if (period === 'week') {
-    major.high = prevHigh60 || prevHigh20 || major.high;
-    major.low = prevLow60 || prevLow20 || major.low;
-    major.widthPct = major.low > 0 ? (major.high - major.low) / major.low * 100 : 0;
-    major.pos = major.high > major.low ? (close - major.low) / (major.high - major.low) : 0.5;
-    major.state = close > major.high * 1.005 ? '突破箱体上沿' : close < major.low * 0.995 ? '跌破箱体下沿' : major.pos >= 0.75 ? '靠近箱体上沿' : major.pos <= 0.25 ? '靠近箱体下沿' : '箱体震荡';
-  }
-  const minor = calcBox(recent20.length ? recent20 : recent60, 0.20, 0.80);
-  const closes20 = recent20.map(k => Number(k.close) || 0);
+  const majorSeg = seg(bw.major);
+  const minorSeg = seg(bw.minor);
+  const coreSeg = seg(bw.core);
+  // 大箱体一律走分位口径：不再用窗口极值（极值会被单根长影线/远月高低点污染，画出 113~846 这种没有意义的"箱体"）
+  const major = calcBox(majorSeg.length >= 8 ? majorSeg : recent60, 0.15, 0.85);
+  const minor = calcBox(minorSeg.length ? minorSeg : recent20, 0.20, 0.80);
+  const closes20 = (coreSeg.length ? coreSeg : recent20).map(k => Number(k.close) || 0);
   const cLow = quantile(closes20, 0.38);
   const cHigh = quantile(closes20, 0.62);
   const minorMid = (minor.high + minor.low) / 2;
@@ -172,6 +178,7 @@ function calcRecentLevels(period, ks, close) {
   const centerState = close > centerHigh ? '中枢上方' : close < centerLow ? '中枢下方' : '中枢内部';
 
   return {
+    majorWin: bw.major, minorWin: bw.minor, coreWin: bw.core,
     prevHigh20, prevLow20, prevHigh60, prevLow60,
     boxHigh: minor.high, boxLow: minor.low, boxWidthPct: minor.widthPct, boxPos: minor.pos, boxState: minor.state,
     majorHigh: major.high, majorLow: major.low, majorRawHigh: major.rawHigh, majorRawLow: major.rawLow, majorWidthPct: major.widthPct, majorPos: major.pos, majorState: major.state,
@@ -409,7 +416,7 @@ function emptyAdvice(oc, day, week, prec) {
 
 function renderAnPng(code, name, quote, all, prec) {
   const { createCanvas } = require('@napi-rs/canvas');
-  const W = 1120, PAD = 56, TITLE_H = 88, ROW_H = 320, GAP = 14;
+  const W = 1560, PAD = 56, TITLE_H = 88, ROW_H = 450, GAP = 14;
   const H = TITLE_H + ROW_H * 3 + GAP * 2 + 46;
   const canvas = createCanvas(Math.round(W * 1.2), Math.round(H * 1.2));
   const ctx = canvas.getContext('2d');
@@ -439,10 +446,10 @@ function renderAnPng(code, name, quote, all, prec) {
 function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   const upC = '#f5222d', downC = '#0aa869', ink = '#2b2f36', sub = '#8a919c', grid = '#e8eaed', panel = '#f7f8fa';
   ctx.fillStyle = panel; ctx.beginPath(); ctx.roundRect(x0 - 8, y0 + 2, w + 16, h - 4, 12); ctx.fill();
-  const ks = a.ks.slice(title === '日线' ? -60 : title === '周线' ? -80 : -60);
+  const ks = a.ks.slice(title === '日线' ? -90 : title === '周线' ? -90 : -60);
   const offset = a.ks.length - ks.length;
   const n = ks.length;
-  const topH = 180, volH = 48, macdH = 58;
+  const topH = 220, volH = 56, macdH = 92;
   const plotTop = y0 + 34;
   const volTop = plotTop + topH + 8;
   const macdTop = volTop + volH + 8;
@@ -468,30 +475,77 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
     usedLabelYs.push(y);
     return y;
   };
+  // 箱体文字先"占位"（登记到 usedLabelYs 参与避让），最后统一画在 K 线/压力线之上，
+  // 否则压力支撑的虚线会把箱体标签横穿成"删除线"。
+  const deferredLabels = [];
+  const drawDeferred = () => {
+    deferredLabels.forEach(o => {
+      ctx.font = o.font; ctx.textAlign = 'left';
+      const tw = ctx.measureText(o.text).width + 8;
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillRect(o.x - 4, o.y - 12, Math.min(tw, o.maxW), 16);
+      ctx.fillStyle = o.color;
+      ctx.fillText(o.text, o.x, o.y);
+    });
+  };
+  // 箱体绘制：价格一律按真实比例映射，**不做 clamp**。
+  // clamp 会把超出视图的上下沿压到面板边缘，形成两条贴边的"平行线"——那是假象，必须避免。
+  // 超出视图时改为在面板边缘给出「上沿/下沿在视图外」的提示标签，并把线交给 panel clip 截断。
   const drawBoxArea = (low, high, startIdx, label, stroke, fill, dash, opts = {}) => {
-    if (!(high > low) || high < yMin || low > yMax) return;
+    if (!(high > low)) return;
     const x1 = x0 + Math.max(0, startIdx) * barW;
     const x2 = x0 + w;
-    const yt = clampY(Y(high));
-    const yb = clampY(Y(low));
-    ctx.fillStyle = fill; ctx.fillRect(x1, yt, x2 - x1, Math.max(2, yb - yt));
-    ctx.strokeStyle = stroke; ctx.lineWidth = label === 'BOX-S' ? 2 : 1.3; ctx.setLineDash(dash || []);
-    ctx.strokeRect(x1, yt, x2 - x1, Math.max(2, yb - yt));
-    ctx.setLineDash([]);
-    ctx.fillStyle = stroke; ctx.font = label === 'BOX-S' ? 'bold 12px cjk' : '11px cjk'; ctx.textAlign = 'left';
-    const labelY = placeY(yt + 14);
+    const yt = Y(high), yb = Y(low);
+    const bh = Math.max(opts.minH || 2, yb - yt); // minH：过窄时给最小可视高度（不严格要求等比，优先看得清）
+    const by = Math.min(yt, plotTop + topH - bh);
+    // 大箱体占满整个纵向时不再填色，否则整块色板会盖住 K 线，反而看不清
+    const coverRatio = bh / topH;
+    if (fill && !(opts.dropFillIfTall && coverRatio > opts.dropFillIfTall)) {
+      ctx.fillStyle = fill; ctx.fillRect(x1, by, x2 - x1, bh);
+    }
+    if (opts.railsOnly) {
+      // 只画上下两条水平线（通道），不画两侧竖线：与内层小箱体/中枢叠加时不会糊成一片
+      ctx.strokeStyle = stroke; ctx.lineWidth = 1.2; ctx.setLineDash(dash || []);
+      [by, by + bh].forEach(yy => { ctx.beginPath(); ctx.moveTo(x1, yy); ctx.lineTo(x2, yy); ctx.stroke(); });
+      ctx.setLineDash([]);
+    } else {
+      ctx.strokeStyle = stroke; ctx.lineWidth = label === 'BOX-S' ? 2 : 1.3; ctx.setLineDash(dash || []);
+      ctx.strokeRect(x1, by, x2 - x1, bh);
+      ctx.setLineDash([]);
+    }
+    const font = label === 'CORE' ? 'bold 12px cjk' : label === 'BOX-S' ? 'bold 12px cjk' : '11px cjk';
     const text = opts.noRange ? label : `${label} ${fpBy(low, prec)}~${fpBy(high, prec)}`;
-    ctx.fillText(text, x1 + 6, labelY);
+    // 标注贴框内上沿；框太窄时移到框上方。位置先登记避让，实际绘制延后到最上层。
+    ctx.font = font;
+    const labelY = placeY(bh >= 26 ? by + 15 : Math.max(plotTop + 12, by - 4));
+    deferredLabels.push({ x: x1 + 6, y: labelY, text, color: stroke, font, maxW: Math.max(60, x2 - x1 - 6) });
     if (!opts.noRightText) {
       ctx.textAlign = 'right';
-      ctx.fillText(`${fpBy(high, prec)}`, x2 - 4, placeY(yt - 8));
-      ctx.fillText(`${fpBy(low, prec)}`, x2 - 4, placeY(yb + 8));
+      ctx.fillText(`${fpBy(high, prec)}`, x2 - 4, by - 8);
+      ctx.fillText(`${fpBy(low, prec)}`, x2 - 4, by + bh + 8);
     }
   };
+  // 越界的箱体边：在面板上下缘提示"在视图外"，而不是画一条假线
+  const outNote = (price, label, stroke) => {
+    if (!isFinite(price)) return;
+    const above = price > yMax, below = price < yMin;
+    if (!above && !below) return;
+    ctx.font = '11px cjk'; ctx.textAlign = 'left'; ctx.fillStyle = stroke;
+    ctx.fillText(`${label} ${fpBy(price, prec)} ${above ? '↑在视图上方' : '↓在视图下方'}`, x0 + 6, above ? plotTop + 12 : plotTop + topH - 4);
+  };
   if (a.levels && title !== '月线') {
-    drawBoxArea(a.levels.majorLow, a.levels.majorHigh, n - 60, 'BOX-L', '#b37b00', 'rgba(250, 173, 20, 0.07)', [5, 4]);
-    drawBoxArea(a.levels.minorLow, a.levels.minorHigh, n - 20, 'BOX-S', '#d48806', 'rgba(250, 173, 20, 0.18)', []);
-    drawBoxArea(a.levels.centerLow, a.levels.centerHigh, n - 20, 'CORE', '#1677ff', 'rgba(22, 119, 255, 0.14)', [2, 3], { noRightText: true, noRange: true });
+    // 框宽 = 计算窗口（算多少根就框多少根）：日线大箱体=近40根、周线=近30根、小箱体/中枢=近20根
+    // 三层错开呈现：大箱体只画上下通道线；小箱体画矩形；中枢最窄但保证最小可视高度（蓝）
+    const lv = a.levels;
+    const mW = lv.majorWin || 40, sW = lv.minorWin || 20, cW = lv.coreWin || 20;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x0 - 2, plotTop, w + 4, topH); ctx.clip(); // 越界部分裁掉，不做贴边压缩
+    drawBoxArea(lv.majorLow, lv.majorHigh, n - mW, 'BOX-L', '#b37b00', 'rgba(250, 173, 20, 0.04)', [5, 4], { noRightText: true, railsOnly: true, dropFillIfTall: 0.55 });
+    drawBoxArea(lv.minorLow, lv.minorHigh, n - sW, 'BOX-S', '#d48806', 'rgba(250, 173, 20, 0.14)', [], { noRightText: true, minH: 14 });
+    drawBoxArea(lv.centerLow, lv.centerHigh, n - cW, 'CORE', '#1677ff', 'rgba(22, 119, 255, 0.32)', [], { noRightText: true, minH: 18 });
+    ctx.restore();
+    outNote(lv.majorHigh, '大箱体上沿', '#b37b00');
+    outNote(lv.majorLow, '大箱体下沿', '#b37b00');
   }
   const cw = Math.max(2, Math.min(8, w / n * 0.58));
   for (let i = 0; i < n; i++) {
@@ -528,6 +582,7 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
     const anchorX = findAnchorX(price, kind);
     const yy = placeY(Y(price));
     const text = `${label} ${fpBy(price, prec)}`;
+    ctx.font = '11px cjk';
     const tw = ctx.measureText(text).width + 10;
     let tx = kind === 'pressure' ? anchorX + 8 : anchorX - tw - 8;
     tx = Math.max(x0 + 4, Math.min(x0 + w - tw - 4, tx));
@@ -538,25 +593,56 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   };
   if (a.pressures[0]) markPrice(a.pressures[0], '压力', upC, 'pressure');
   if (a.supports[0]) markPrice(a.supports[0], '支撑', downC, 'support');
+  // 箱体标签最后画，压在 K 线 / 均线 / 压力线之上，避免被虚线横穿
+  drawDeferred();
   if (a.priceSignal && a.priceSignal.type !== 'neutral') {
     const labelColor = a.priceSignal.score >= 0 ? upC : downC;
     ctx.fillStyle = labelColor; ctx.font = 'bold 12px cjk'; ctx.textAlign = 'left';
-    ctx.fillText(a.priceSignal.text, x0 + 6, plotTop + 12);
+    ctx.fillText(a.priceSignal.text, x0 + 6, placeY(plotTop + 12));
   }
   // volume
   const maxVol = Math.max(...ks.map(k => k.vol || 0), 1);
   for (let i = 0; i < n; i++) { const k = ks[i], col = k.close >= k.open ? upC : downC; const bh = (k.vol || 0) / maxVol * volH; ctx.fillStyle = col + '99'; ctx.fillRect(X(i) - cw / 2, volTop + volH - bh, cw, bh); }
   // MACD
   const hist = a.macd.hist.slice(offset), dif = a.macd.dif.slice(offset), dea = a.macd.dea.slice(offset);
-  const maxM = Math.max(...hist.map(v => Math.abs(v)), ...dif.map(v => Math.abs(v)), ...dea.map(v => Math.abs(v)), 0.0001);
-  const zeroY = macdTop + macdH / 2; ctx.strokeStyle = grid; ctx.beginPath(); ctx.moveTo(x0, zeroY); ctx.lineTo(x0 + w, zeroY); ctx.stroke();
-  for (let i = 0; i < n; i++) { const v = hist[i]; const bh = Math.abs(v) / maxM * macdH / 2; ctx.fillStyle = v >= 0 ? upC + 'aa' : downC + 'aa'; ctx.fillRect(X(i) - cw / 2, v >= 0 ? zeroY - bh : zeroY, cw, bh); }
-  const drawM = (arr, color) => { ctx.strokeStyle = color; ctx.lineWidth = 1.1; ctx.beginPath(); for (let i = 0; i < n; i++) { const yy = zeroY - arr[i] / maxM * macdH / 2; i === 0 ? ctx.moveTo(X(i), yy) : ctx.lineTo(X(i), yy); } ctx.stroke(); };
-  drawM(dif, '#7b61ff'); drawM(dea, '#f0b90b');
+  // 定标：柱与线各自按 p96 分位定标 —— 剔除少数极端尖峰（DIF 尖峰常达常态 3~4 倍，
+  // 用全局极值定标会把整段压成贴零轴的一条线），再对面板做 clip。
+  // 超出尖峰被裁到面板外，而不是被压平贴边形成"平行线"（这是同花顺的视觉观感）。
+  const pickMax = arr => {
+    const v = arr.map(Math.abs).filter(x => Number.isFinite(x) && x > 1e-9).sort((p, q) => p - q);
+    return v.length ? Math.max(v[Math.min(v.length - 1, Math.floor(v.length * 0.96))], 1e-6) : 0.0001;
+  };
+  const hMax = pickMax(hist), lMax = pickMax([...dif, ...dea]);
+  const hK = (macdH / 2) * 0.86 / hMax, lK = (macdH / 2) * 0.86 / lMax;
+  const zeroY = macdTop + macdH / 2;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0 - 2, macdTop - 2, w + 4, macdH + 4); ctx.clip(); // 面板裁剪：尖峰冲出面板
+  ctx.strokeStyle = grid; ctx.beginPath(); ctx.moveTo(x0, zeroY); ctx.lineTo(x0 + w, zeroY); ctx.stroke();
+  for (let i = 0; i < n; i++) {
+    const v = hist[i]; if (!Number.isFinite(v)) continue;
+    const bh = Math.abs(v) * hK;
+    ctx.fillStyle = v >= 0 ? upC + 'aa' : downC + 'aa';
+    ctx.fillRect(X(i) - cw / 2, v >= 0 ? zeroY - bh : zeroY, cw, bh);
+  }
+  const drawM = (arr, color) => {
+    // 两遍描边：宽浅色描边 + 细彩线，压在红绿柱上也能看清两条线，且两条线互不粘连
+    for (const [lw, col] of [[3.2, 'rgba(255,255,255,0.95)'], [1.5, color]]) {
+      ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath(); let started = false;
+      for (let i = 0; i < n; i++) {
+        const v = arr[i];
+        if (!Number.isFinite(v)) { started = false; continue; }
+        const yy = zeroY - v * lK;
+        if (!started) { ctx.moveTo(X(i), yy); started = true; } else ctx.lineTo(X(i), yy);
+      }
+      ctx.stroke();
+    }
+  };
+  drawM(dif, '#7b3fe4'); drawM(dea, '#d46b08');
+  ctx.restore();
   // key labels
   const crossIdx = a.cross ? a.cross.index - offset : -1;
   if (crossIdx >= 0 && crossIdx < n) {
-    const yy = zeroY - dif[crossIdx] / maxM * macdH / 2;
+    const yy = Math.max(macdTop + 8, Math.min(macdTop + macdH - 8, zeroY - dif[crossIdx] * lK));
     ctx.fillStyle = a.cross.type === 'gold' ? upC : downC; ctx.beginPath(); ctx.arc(X(crossIdx), yy, 4, 0, Math.PI * 2); ctx.fill();
     ctx.font = '11px cjk'; ctx.textAlign = 'center'; ctx.fillText(a.cross.type === 'gold' ? '金叉' : '死叉', X(crossIdx), yy - 12);
   }

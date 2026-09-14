@@ -713,8 +713,8 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
 // ── 图表渲染：分时图 + T位水平标注线 + 分时MACD小面板 ──
 function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
   const { createCanvas } = require('@napi-rs/canvas');
-  const W = 1000, PAD = 74, TITLE_H = 62, VOL_H = 74, MACD_H = 144, LEG_H = 36;
-  const plotH = 360;
+  const W = 1400, PAD = 74, TITLE_H = 62, VOL_H = 84, MACD_H = 200, LEG_H = 36;
+  const plotH = 420;
   const H = TITLE_H + plotH + VOL_H + MACD_H + LEG_H + PAD + 8;
   const isHK = code.startsWith('hk'), isHF = code.startsWith('hf_');
   // 过滤有效分时（A股 9:30~15:00）
@@ -845,36 +845,45 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
     if (hasSeries) {
       // 柱状图（HIST=DIF-DEA再×2）
       const deaSeries = macdData.series ? macdData.series.dea : [];
-      const mMax = Math.max(...hist.map(Math.abs), ...diff.map(Math.abs), ...deaSeries.map(Math.abs), 0.0001);
-      const mScale = macdH * 0.46 / mMax;
+      // 纵向定标：柱与线共用同一基准（同花顺口径），但映射用 signed-sqrt 压缩。
+      // 分时 DIF 在开盘 10 分钟内会冲到常态的 5~8 倍（603986 实测 max 3.78 / p50 0.24），
+      // 线性定标会把剩下 4 小时压成贴零轴的一条直线 —— 这正是"两条线重叠看不清"的根因。
+      // sqrt 保持单调 + 保号：金叉/死叉位置、正负、相对高低序完全不变，只是把尖峰压下来。
+      // 好处是全程无需 clip，不会出现"线冲出面板/贴边成平行线"的假象。
+      const mRef = Math.max(
+        ...hist.map(v => Math.abs(v)),
+        ...diff.map(v => Math.abs(v)),
+        ...(deaSeries || []).map(v => Math.abs(v)),
+        1e-6,
+      );
+      const AMP = macdH * 0.45;
+      const sY = v => Math.sign(v) * Math.sqrt(Math.abs(v) / mRef) * AMP;
       for (let i = 0; i < dn; i++) {
         const v = hist[i];
-        const bh = Math.abs(v) * mScale;
+        const bh = Math.max(1, Math.abs(sY(v)));
         const x = mapX(i);
-        ctx.fillStyle = v >= 0 ? (upC + 'aa') : (downC + 'aa');
         // 红涨绿跌
         const col = v >= 0 ? '#f5222d' : '#0aa869';
-        ctx.fillStyle = col + (v >= 0 ? 'cc' : 'cc');
-        ctx.fillRect(x - Math.max(1.2, cw2 * 0.42), v >= 0 ? macdZeroY - bh : macdZeroY, Math.max(2, cw2 * 0.84), Math.max(1, bh));
+        ctx.fillStyle = col + 'cc';
+        ctx.fillRect(x - Math.max(1.2, cw2 * 0.42), v >= 0 ? macdZeroY - bh : macdZeroY, Math.max(2, cw2 * 0.84), bh);
       }
       if (diff.length === dn) {
-        const macdCol = '#1677ff';
-        ctx.strokeStyle = macdCol; ctx.lineWidth = 2.0; ctx.beginPath();
-        for (let i = 0; i < dn; i++) { const x = mapX(i), y = macdZeroY - diff[i] * mScale; i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
-        ctx.stroke();
-        // DEA
-        const deaIdx = deaSeries;
-        if (deaIdx && deaIdx.length === dn) {
-          ctx.strokeStyle = '#f0b90b'; ctx.lineWidth = 1.8; ctx.beginPath();
-          for (let i = 0; i < dn; i++) { const x = mapX(i), y = macdZeroY - deaIdx[i] * mScale; i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
-          ctx.stroke();
-        }
+        // 两遍描边：先白色宽描边再从上面画细彩线（浅底/红绿柱上都清晰，接近同花顺观感）
+        const strokeSeries = (arr, color) => {
+          for (const [lw, col] of [[3.2, 'rgba(255,255,255,0.92)'], [1.3, color]]) {
+            ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath();
+            for (let i = 0; i < dn; i++) { const x = mapX(i), y = macdZeroY - sY(arr[i]); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+            ctx.stroke();
+          }
+        };
+        strokeSeries(diff, '#1677ff');                                   // DIF 蓝线
+        if (deaSeries && deaSeries.length === dn) strokeSeries(deaSeries, '#f0a90b'); // DEA 黄线
       }
     }
     ctx.fillStyle = sub; ctx.font = '11px cjk'; ctx.textAlign = 'left';
     const mState = analyzeMACDState(macdData, closes);
     const mtxt = mState
-      ? `MACD DIF ${fp(macdData.dif)}  DEA ${fp(macdData.dea)}  ${mState.hist >= 0 ? '红柱' : '绿柱'}${mState.histTrend === 'expand' ? '↑' : '↓'} ${mState.crossText || ''}${mState.divergence === 'top' ? ' ⚠顶部背离' : mState.divergence === 'bottom' ? ' 底部背离' : ''}`
+      ? `MACD(√压缩·重形态不重比例) DIF ${fp(macdData.dif)}  DEA ${fp(macdData.dea)}  ${mState.hist >= 0 ? '红柱' : '绿柱'}${mState.histTrend === 'expand' ? '↑' : '↓'} ${mState.crossText || ''}${mState.divergence === 'top' ? ' ⚠顶部背离' : mState.divergence === 'bottom' ? ' 底部背离' : ''}`
       : 'MACD 数据不足';
     ctx.fillText(mtxt, PAD + 4, macdTop + macdH + 12);
   } else {
