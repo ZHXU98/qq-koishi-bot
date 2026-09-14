@@ -54,7 +54,7 @@ function macdValues(closes) {
   const dif = closes.map((_, i) => e12[i] - e26[i]);
   const dea = new Array(closes.length).fill(null);
   const k = 2 / 10;
-  let prev = dif[0] || 0;
+  let prev = 0; // DEA 起点从 0 开始，与同花顺口径一致
   for (let i = 0; i < dif.length; i++) {
     prev = dif[i] * k + prev * (1 - k);
     dea[i] = prev;
@@ -99,13 +99,13 @@ function detectDivergence(closes, macd) {
   if (tops.length >= 2) {
     const a = tops[tops.length - 2], b = tops[tops.length - 1];
     const priceMove = closes[a] > 0 ? (closes[b] - closes[a]) / closes[a] : 0;
-    const macdMove = Math.abs(d[a]) > 1e-9 ? (d[b] - d[a]) / Math.abs(d[a]) : d[b] - d[a];
+    const macdMove = Math.abs(d[a]) > 0.02 ? (d[b] - d[a]) / Math.abs(d[a]) : d[b] - d[a]; // codeflicker-fix: 归一分母阈值提到 0.02，避免零轴附近被放大为伪强背离
     if (priceMove >= minMove && macdMove < -0.08) return { type: 'top', index: b, strength: priceMove >= 0.03 ? '强' : '普通' };
   }
   if (bottoms.length >= 2) {
     const a = bottoms[bottoms.length - 2], b = bottoms[bottoms.length - 1];
     const priceMove = closes[a] > 0 ? (closes[b] - closes[a]) / closes[a] : 0;
-    const macdMove = Math.abs(d[a]) > 1e-9 ? (d[b] - d[a]) / Math.abs(d[a]) : d[b] - d[a];
+    const macdMove = Math.abs(d[a]) > 0.02 ? (d[b] - d[a]) / Math.abs(d[a]) : d[b] - d[a]; // codeflicker-fix: 归一分母阈值提到 0.02，避免零轴附近被放大为伪强背离
     if (priceMove <= -minMove && macdMove > 0.08) return { type: 'bottom', index: b, strength: priceMove <= -0.03 ? '强' : '普通' };
   }
   return null;
@@ -242,10 +242,10 @@ function analyzePeriod(period, klines, prec) {
   if (chgPct > 1 && vRatio >= 1.2) score += 0.5;
   if (chgPct < -1 && vRatio >= 1.2) score -= 0.5;
   score += priceSignal.score;
-  if (levels.boxState === '突破箱体上沿') score += 0.4;
-  if (levels.boxState === '跌破箱体下沿') score -= 0.4;
+  if (period !== 'month' && levels.boxState === '突破箱体上沿') score += 0.4;
+  if (period !== 'month' && levels.boxState === '跌破箱体下沿') score -= 0.4; // codeflicker-fix: 月线评分不再受箱体突破影响，与图上不画月线箱体保持一致
 
-  const recent = ks.slice(-30);
+  const recent = ks.slice(-31, -1); // codeflicker-fix: 排除当前 K，避免把现价自己当作支撑/压力
   const recentHigh = Math.max(...recent.map(k => Number(k.high) || Number(k.close) || 0));
   const recentLow = Math.min(...recent.map(k => Number(k.low) || Number(k.close) || Infinity));
   const supports = [recentLow, levels.prevLow20, levels.prevLow60, ma20, ma60, bollLow, levels.boxLow].filter(v => isFinite(v) && v > 0 && v <= close).sort((a, b) => b - a).slice(0, 4);
