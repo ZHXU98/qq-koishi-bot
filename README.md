@@ -223,7 +223,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 |---|---|---|
 | `/ss` | `/指数` | 指数行情图：上证 / 沪深300 / 全市场成交额（盘中含预计全天成交量）/ 申万二级资金流 |
 | `/stock <周期> <代码或名称>` | `/股票` `/K线` | K线图 / 分时图 / 文本速查（详见下节） |
-| `/an <代码或名称>` | `/分析` `/技术分析` | 多周期技术分析：月线长期许可、周线阶段、日线执行；输出确认/失效条件与综合图（详见 `reply/AN_GUIDE.md`） |
+| `/an <代码或名称>` | `/分析` `/技术分析` | 多周期技术分析：月周日结构 + ADX/DMI趋势质量、ATR风险、突破状态、相对沪深300/行业超额收益；输出确认/失效条件与综合图（详见 `reply/AN_GUIDE.md`） |
 | `/stocks <周期> <组合名 或 股票...>` | `/组合` `/自选` | **股票组合拼图**：一张图并列多看（详见下节）。查询 / `-list` 所有人可用，`-add` / `-update` / `-del` 仅主人 |
 | `/zj <1\|2> [t\|d]` | `/资金` | 申万行业资金流（详见下节） |
 
@@ -389,6 +389,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 | 国际商品分时 / 日线 | 新浪 `GlobalFuturesService`（`getGlobalFuturesMinLine` / `getGlobalFuturesDailyKLine`） |
 | 申万行业资金流 | 腾讯 `getRank`（`hy` / `hy2`，字段 `zljlr`） |
 | 板块资金流曲线 | 东财 `clist` + `fflow`（分时/日级） |
+| `/an` 行业归属 / 行业涨幅排行 / 行业日线 | 东财 `stock/get` + 行业 `clist` + 板块日K（统一行业口径） |
 | 个股公告 | 东财 `np-anotice-stock` |
 | 个股新闻 | 东财 `search-api-web` |
 | 基金资料 / 前十持仓 | 东财 `fundmobapi` + `fundf10` jjcc |

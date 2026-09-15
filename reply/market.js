@@ -477,6 +477,48 @@ async function fetchStockQuote(code) {
   });
 }
 
+// 东财个股行业与行业板块强弱：两者使用同一口径，避免把 F10 行业和申万排行硬拼。
+const EM_STOCK_INDUSTRY = 'https://push2.eastmoney.com/api/qt/stock/get?secid=%s&fields=f58,f127';
+const EM_INDUSTRY_BOARDS = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:90+t:2&fields=f12,f14,f3';
+const EM_INDUSTRY_KLINE = 'https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=90.%s&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56&fqt=1&lmt=320&end=20500101&klt=101';
+async function fetchEmStockIndustry(code) {
+  if (!/^(sh|sz|bj)\d{6}$/i.test(String(code || ''))) return null;
+  const key = 'em-industry:' + code;
+  const cached = cacheGet(key);
+  if (cached !== undefined) return cached;
+  const j = await emFetchJson(EM_STOCK_INDUSTRY.replace('%s', emSecid(code)));
+  const name = String(j?.data?.f127 || '').trim();
+  const result = name ? { name } : null;
+  cacheSet(key, result, 10 * 60 * 1000);
+  return result;
+}
+async function fetchEmIndustryKline(code) {
+  if (!/^BK\d+$/i.test(String(code || ''))) return null;
+  const key = 'em-industry-kline:' + code;
+  const cached = cacheGet(key);
+  if (cached) return cached;
+  const j = await emFetchJson(EM_INDUSTRY_KLINE.replace('%s', code));
+  const rows = (j?.data?.klines || []).map(row => {
+    const p = String(row).split(',');
+    return { t: p[0], open: Number(p[1]), close: Number(p[2]), high: Number(p[3]), low: Number(p[4]), vol: Number(p[5]) };
+  }).filter(k => k.t && k.close > 0);
+  if (rows.length < 70) return null;
+  cacheSet(key, rows, 5 * 60 * 1000);
+  return rows;
+}
+async function fetchEmIndustryBoards() {
+  const key = 'em-industry-boards';
+  const cached = cacheGet(key);
+  if (cached) return cached;
+  const j = await emFetchJson(EM_INDUSTRY_BOARDS);
+  const list = (j?.data?.diff || []).map(row => ({
+    code: String(row.f12 || ''), name: String(row.f14 || ''), chgPct: Number(row.f3),
+  })).filter(row => row.code && row.name && Number.isFinite(row.chgPct));
+  if (!list.length) return null;
+  list.sort((a, b) => b.chgPct - a.chgPct);
+  cacheSet(key, list, 30000);
+  return list;
+}
 const EM_HOSTS = ['push2his.eastmoney.com', 'push2.eastmoney.com', 'push2delay.eastmoney.com'];
 // 东财 UA（emFetchJson 及各东财接口共用）
 const EM_UA = { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Referer': 'https://www.eastmoney.com/' };
@@ -505,5 +547,5 @@ module.exports = {
   calcSMA, calcBOLL, buildAvgLine, fetchStockKline, fetchStockMinuteKline, fetchEmKline,
   HF_SINA_SYM, SINA_GLOBAL_MIN, fetchSinaGlobalMin, SINA_GLOBAL_DAILY, HF_DAILY_TTL,
   fetchSinaGlobalDaily, aggHfKline, fetchSinaGlobalKline, EM_TRENDS, emSecid, fetchEmTrends,
-  fetchStockQuote, EM_HOSTS, EM_UA, _emHost, emFetchJson,
+  fetchStockQuote, EM_STOCK_INDUSTRY, EM_INDUSTRY_BOARDS, EM_INDUSTRY_KLINE, fetchEmStockIndustry, fetchEmIndustryKline, fetchEmIndustryBoards, EM_HOSTS, EM_UA, _emHost, emFetchJson,
 };

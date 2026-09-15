@@ -2,13 +2,19 @@
 // /an 多周期股票分析：日线/周线/月线 + MA/BOLL/MACD + 量价 + 关键价位
 // ============================================================
 const { normStockName, isFundCode } = require('../utils');
-const { resolveStockCode, normalizeCode, fetchStockKline, fetchStockQuote } = require('../market');
+const { resolveStockCode, normalizeCode, fetchStockKline, fetchStockQuote, fetchEmStockIndustry, fetchEmIndustryBoards, fetchEmIndustryKline } = require('../market');
 
 const MA_PERIODS = [5, 10, 20, 60];
 const PERIOD_LABEL = { day: '日线', week: '周线', month: '月线' };
 
 const fpBy = (v, prec = 2) => isFinite(v) && v !== null ? Number(v).toFixed(prec) : '-';
 const pct = v => (isFinite(v) ? (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%' : '-');
+const bollRangeText = (a, prec) => {
+  const low = Number(a?.bollLow), up = Number(a?.bollUp), close = Number(a?.close);
+  // 极端历史波动会让 BOLL 下轨被数学截到接近 0；这时不应伪装成可交易参考价。
+  if (!(up > 0) || !(low > 0) || (close > 0 && low < close * 0.1)) return 'BOLL -';
+  return `BOLL ${fpBy(low, prec)} ~ ${fpBy(up, prec)}`;
+};
 
 function smaValues(values, period) {
   const out = new Array(values.length).fill(null);
@@ -62,6 +68,97 @@ function macdValues(closes) {
   return { dif, dea, hist };
 }
 
+function calcRsi(closes, period = 14) {
+  const out = new Array(closes.length).fill(null);
+  if (closes.length <= period) return out;
+  let gain = 0, loss = 0;
+  for (let i = 1; i <= period; i++) { const d = closes[i] - closes[i - 1]; gain += Math.max(d, 0); loss += Math.max(-d, 0); }
+  let avgGain = gain / period, avgLoss = loss / period;
+  out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  for (let i = period + 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period;
+    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return out;
+}
+function calcAtrDmi(ks, period = 14) {
+  const n = ks.length, atr = new Array(n).fill(null), plusDi = new Array(n).fill(null), minusDi = new Array(n).fill(null), adx = new Array(n).fill(null);
+  if (n <= period * 2) return { atr, plusDi, minusDi, adx };
+  const tr = new Array(n).fill(0), plus = new Array(n).fill(0), minus = new Array(n).fill(0);
+  for (let i = 1; i < n; i++) {
+    const hi = Number(ks[i].high) || 0, lo = Number(ks[i].low) || 0, prevClose = Number(ks[i - 1].close) || 0;
+    tr[i] = Math.max(hi - lo, Math.abs(hi - prevClose), Math.abs(lo - prevClose));
+    const up = hi - (Number(ks[i - 1].high) || hi), down = (Number(ks[i - 1].low) || lo) - lo;
+    plus[i] = up > down && up > 0 ? up : 0; minus[i] = down > up && down > 0 ? down : 0;
+  }
+  let smTr = tr.slice(1, period + 1).reduce((a, v) => a + v, 0), smPlus = plus.slice(1, period + 1).reduce((a, v) => a + v, 0), smMinus = minus.slice(1, period + 1).reduce((a, v) => a + v, 0);
+  const dx = new Array(n).fill(null);
+  for (let i = period; i < n; i++) {
+    if (i > period) { smTr = smTr - smTr / period + tr[i]; smPlus = smPlus - smPlus / period + plus[i]; smMinus = smMinus - smMinus / period + minus[i]; }
+    atr[i] = smTr / period; plusDi[i] = smTr ? smPlus / smTr * 100 : 0; minusDi[i] = smTr ? smMinus / smTr * 100 : 0;
+    const sum = plusDi[i] + minusDi[i]; dx[i] = sum ? Math.abs(plusDi[i] - minusDi[i]) / sum * 100 : 0;
+  }
+  let seed = dx.slice(period, period * 2).filter(Number.isFinite);
+  if (seed.length === period) {
+    let value = seed.reduce((a, v) => a + v, 0) / period; adx[period * 2 - 1] = value;
+    for (let i = period * 2; i < n; i++) { value = (value * (period - 1) + dx[i]) / period; adx[i] = value; }
+  }
+  return { atr, plusDi, minusDi, adx };
+}
+function calcVolumeTrend(vols) {
+  const ma5 = lastVal(smaValues(vols, 5)) || 0, ma20 = lastVal(smaValues(vols, 20)) || 0;
+  const ratio = ma20 > 0 ? ma5 / ma20 : 1;
+  const state = ratio >= 1.25 ? '参与度回升' : ratio <= 0.75 ? '参与度下降' : '参与度平稳';
+  return { ma5, ma20, ratio, state };
+}
+function detectPriceAction(ks, atrValue = 0) {
+  const last = ks.at(-1) || {}, prev = ks.at(-2) || {};
+  const o = Number(last.open) || 0, c = Number(last.close) || 0, h = Number(last.high) || c, l = Number(last.low) || c;
+  const po = Number(prev.open) || 0, pc = Number(prev.close) || 0;
+  const range = Math.max(h - l, 1e-9), body = Math.abs(c - o), closePos = (c - l) / range;
+  const recentRanges = ks.slice(-6, -1).map(k => Math.max(0, Number(k.high) - Number(k.low))).filter(Boolean);
+  const avgRange = recentRanges.length ? recentRanges.reduce((a, v) => a + v, 0) / recentRanges.length : 0;
+  if (c > o && pc < po && c >= po && o <= pc) return { type: 'bull_engulf', text: '阳包阴，短线转强尝试' };
+  if (c < o && pc > po && c <= po && o >= pc) return { type: 'bear_engulf', text: '阴包阳，短线转弱警报' };
+  if (avgRange > 0 && range <= avgRange * 0.55) return { type: 'narrow', text: '窄幅整理，等待方向选择' };
+  if (body / range >= 0.62 && closePos >= 0.75) return { type: 'strong_close', text: '强势收盘，买方占优' };
+  if (body / range >= 0.62 && closePos <= 0.25) return { type: 'weak_close', text: '弱势收盘，卖方占优' };
+  return { type: 'neutral', text: 'K线形态中性' };
+}
+function detectBreakoutState(a) {
+  const { close, levels, vRatio, ma20, ks } = a;
+  const recentHigh = levels.prevHigh20, recentLow = levels.prevLow20;
+  if (recentHigh && close > recentHigh * 1.005) {
+    if (vRatio >= 1.2) return { state: '有效突破待回踩', text: `站上前高，量能配合；回踩 ${fpBy(recentHigh, a.prec)} 不破再确认` };
+    return { state: '初步突破未确认', text: `站上前高但量能不足，需放量确认 ${fpBy(recentHigh, a.prec)}` };
+  }
+  if (recentHigh && ks.length >= 3 && ks.at(-2).close > recentHigh && close < recentHigh) return { state: '假突破风险', text: `突破后跌回前高 ${fpBy(recentHigh, a.prec)} 下方` };
+  if (recentLow && close < recentLow * 0.995) return { state: '破位', text: `跌破前低 ${fpBy(recentLow, a.prec)}，结构转弱` };
+  if (ma20 && Math.abs(close - ma20) / ma20 < 0.015) return { state: '关键位博弈', text: '价格靠近 MA20，等待收盘方向确认' };
+  return { state: '区间内', text: '尚未触发有效突破或破位' };
+}
+function alignExcess(stockKs, benchKs, days) {
+  const stock = new Map((stockKs || []).map(k => [String(k.t).slice(0, 10), Number(k.close)]));
+  const bench = new Map((benchKs || []).map(k => [String(k.t).slice(0, 10), Number(k.close)]));
+  const shared = [...stock.keys()].filter(t => bench.has(t)).sort();
+  if (shared.length <= days) return null;
+  const end = shared.at(-1), start = shared.at(-1 - days);
+  const sr = stock.get(end) / stock.get(start) - 1, br = bench.get(end) / bench.get(start) - 1;
+  return Number.isFinite(sr) && Number.isFinite(br) ? (sr - br) * 100 : null;
+}
+function buildRelativeStrength(dayK, hs300K, industry, industryK, boards) {
+  const horizons = [5, 20, 60];
+  const vs300 = Object.fromEntries(horizons.map(d => [d, alignExcess(dayK, hs300K, d)]));
+  const vsIndustry = industryK ? Object.fromEntries(horizons.map(d => [d, alignExcess(dayK, industryK, d)])) : null;
+  const rank = industry && boards ? boards.findIndex(b => b.code === industry.code) + 1 : 0;
+  const total = boards?.length || 0;
+  const current = industry && boards ? boards.find(b => b.code === industry.code) : null;
+  const recent20 = vs300[20];
+  const state = recent20 === null ? '基准数据不足' : recent20 >= 5 ? '显著跑赢沪深300' : recent20 >= 0 ? '相对沪深300偏强' : recent20 <= -5 ? '显著跑输沪深300' : '相对沪深300偏弱';
+  return { vs300, vsIndustry, industry: current ? { ...industry, rank, total, chgPct: current.chgPct } : null, state };
+}
 function lastVal(arr) { return arr && arr.length ? arr[arr.length - 1] : null; }
 function prevVal(arr) { return arr && arr.length > 1 ? arr[arr.length - 2] : null; }
 
@@ -219,6 +316,9 @@ function analyzePeriod(period, klines, prec) {
   MA_PERIODS.forEach(p => { ma[p] = smaValues(closes, p); });
   const boll = bollValues(closes);
   const macd = macdValues(closes);
+  const rsi = calcRsi(closes);
+  const dmi = calcAtrDmi(ks);
+  const volumeTrend = calcVolumeTrend(vols);
   const last = ks[n - 1] || {};
   const prev = ks[n - 2] || {};
   const close = Number(last.close) || 0;
@@ -266,9 +366,22 @@ function analyzePeriod(period, klines, prec) {
   const structureFloor = period === 'week' ? levels.minorLow : levels.boxLow;
   const structuralLows = [levels.prevLow20, structureFloor].filter(v => isFinite(v) && v > 0 && v < close * 0.998);
   const structuralInvalid = structuralLows.length ? Math.min(...structuralLows) : null;
+  const atr = lastVal(dmi.atr);
+  const atrPct = atr && close > 0 ? atr / close * 100 : null;
+  const adx = lastVal(dmi.adx), plusDi = lastVal(dmi.plusDi), minusDi = lastVal(dmi.minusDi);
+  const trendQuality = !isFinite(adx) ? '趋势强度待计算'
+    : adx < 18 ? '无趋势震荡'
+    : adx < 25 ? '趋势形成中'
+    : adx < 40 ? '趋势明确'
+    : '趋势强化';
+  const dmiDirection = !isFinite(plusDi) || !isFinite(minusDi) ? '方向待确认' : plusDi >= minusDi ? '多头占优' : '空头占优';
+  const rsiValue = lastVal(rsi);
+  const rsiState = !isFinite(rsiValue) ? '' : rsiValue >= 75 ? '短线过热' : rsiValue <= 25 ? '短线超卖' : '';
   const rawTrend = trend;
+  const evidence = { atr, atrPct, adx, plusDi, minusDi, trendQuality, dmiDirection, rsi: rsiValue, rsiState, volumeTrend, priceAction: detectPriceAction(ks, atr) };
+  const breakout = detectBreakoutState({ close, levels, vRatio: volumeUsable ? vRatio : 1, ma20, ks, prec });
   const line = buildPeriodLine(period, { close, chgPct, trend, volState, vRatio: vRatio || 0, volumeNote, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, cross, divergence, macdTxt, levels, priceSignal }, prec);
-  return { period, label: PERIOD_LABEL[period], ks, closes, vols, ma, boll, macd, close, prevClose, chgPct, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, bollWidth, vRatio, rawVRatio, volState, volumeUsable, volumeNote, cross, divergence, levels, priceSignal, macdTxt, trend, rawTrend, score, supports, pressures, structuralInvalid, line, prec };
+  return { period, label: PERIOD_LABEL[period], ks, closes, vols, ma, boll, macd, rsi, dmi, close, prevClose, chgPct, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, bollWidth, vRatio, rawVRatio, volState, volumeUsable, volumeNote, cross, divergence, levels, priceSignal, macdTxt, trend, rawTrend, score, supports, pressures, structuralInvalid, evidence, breakout, line, prec };
 }
 
 function buildPeriodLine(period, a, prec) {
@@ -317,7 +430,7 @@ function uniqPrices(arr, prec) {
   return out;
 }
 
-function buildReport(name, code, quote, all, prec) {
+function buildReport(name, code, quote, all, prec, relative = null) {
   const { day, week, month } = all;
   const oc = overallConclusion(day, week, month);
   const price = quote && quote.price ? Number(quote.price) : day.close;
@@ -339,10 +452,10 @@ function buildReport(name, code, quote, all, prec) {
   L.push('');
   L.push('━━━ 多周期结构 ━━━');
   L.push(`· 月线（长期许可）：${month.line}`);
-  L.push(`  MA20 ${fpBy(month.ma20, prec)} / BOLL ${fpBy(month.bollLow, prec)} ~ ${fpBy(month.bollUp, prec)}`);
+  L.push(`  MA20 ${fpBy(month.ma20, prec)} / ${bollRangeText(month, prec)}`);
   L.push(`  ${periodConclusion('month', month)}`);
   L.push(`· 周线（当前阶段）：${week.line}`);
-  L.push(`  MA20 ${fpBy(week.ma20, prec)} / BOLL ${fpBy(week.bollLow, prec)} ~ ${fpBy(week.bollUp, prec)}`);
+  L.push(`  MA20 ${fpBy(week.ma20, prec)} / ${bollRangeText(week, prec)}`);
   L.push(`  ${periodConclusion('week', week)}`);
   L.push(`· 日线（执行条件）：${day.line}`);
   L.push(`  MA5/10/20/60：${fpBy(day.ma5, prec)} / ${fpBy(day.ma10, prec)} / ${fpBy(day.ma20, prec)} / ${fpBy(day.ma60, prec)}`);
@@ -361,6 +474,16 @@ function buildReport(name, code, quote, all, prec) {
   L.push(`· 量价：日线${stripPeriod(volumeExplain(day))}；周线${stripPeriod(volumeExplain(week))}`);
   L.push(`· 动能：日线${day.macdTxt}${day.divergence ? `，${day.divergence.strength || ''}${day.divergence.type === 'top' ? '顶' : '底'}背离仅作预警` : ''}`);
   L.push('');
+  L.push('━━━ 趋势与风险质量 ━━━');
+  L.push(`· 趋势质量：${trendQualityExplain(day)}；DMI ${day.evidence.dmiDirection}（ADX ${fpBy(day.evidence.adx, 1)}，+DI ${fpBy(day.evidence.plusDi, 1)} / -DI ${fpBy(day.evidence.minusDi, 1)}）`);
+  L.push(`· 波动风险：${atrExplain(day, price, shortInvalid, prec)}`);
+  L.push(`· 量能趋势：${volumeTrendExplain(day)}`);
+  L.push(`· 价格行为：${day.evidence.priceAction.text}；突破状态：${day.breakout.state}（${day.breakout.text}）`);
+  if (day.evidence.rsiState) L.push(`· RSI14 ${fpBy(day.evidence.rsi, 1)}：${day.evidence.rsiState}，只作极端提醒，不改变主结论。`);
+  L.push('');
+  L.push('━━━ 相对强弱 ━━━');
+  relativeStrengthLines(relative).forEach(line => L.push(line));
+  L.push('');
   L.push('━━━ 操作参考 ━━━');
   L.push(`已持仓：${holderAdvice(oc, day, week, prec)}`);
   L.push(`空仓：${emptyAdvice(oc, day, week, prec)}`);
@@ -369,6 +492,40 @@ function buildReport(name, code, quote, all, prec) {
   L.push('📈 多周期技术图正在生成...');
   L.push('⚠️ 非投资建议，仅供参考');
   return L.join('\n');
+}
+function trendQualityExplain(day) {
+  const e = day.evidence || {};
+  if (e.trendQuality === '无趋势震荡') return 'ADX偏低，均线信号容易反复，优先按区间处理';
+  if (e.trendQuality === '趋势形成中') return `${e.trendQuality}，方向需靠关键位确认`;
+  return `${e.trendQuality}，${e.dmiDirection}`;
+}
+function atrExplain(day, price, invalid, prec) {
+  const e = day.evidence || {};
+  if (!(e.atr > 0) || !(price > 0)) return 'ATR 数据不足';
+  const dist = invalid > 0 ? (price - invalid) / e.atr : null;
+  const risk = dist === null ? '' : dist <= 1 ? '，离短线失效不足 1 ATR，容错较小' : dist <= 2 ? `，距短线失效约 ${dist.toFixed(1)} ATR` : `，距短线失效约 ${dist.toFixed(1)} ATR`;
+  return `ATR14 ${fpBy(e.atr, prec)}（约 ${fpBy(e.atrPct, 2)}%）${risk}`;
+}
+function volumeTrendExplain(day) {
+  const t = day.evidence?.volumeTrend;
+  if (!t) return '数据不足';
+  const ratio = t.ma20 > 0 ? t.ratio.toFixed(2) : '-';
+  return `${t.state}（5日均量 / 20日均量 ${ratio}）${day.volumeUsable ? '' : '；当前周期量能待收线'}`;
+}
+function relativeStrengthLines(relative) {
+  const fmt = v => v === null || v === undefined || !isFinite(v) ? '-' : pct(v);
+  if (!relative) return ['· 相对沪深300：基准数据暂不可用。', '· 所属行业：非 A 股个股、ETF/指数或行业映射失败时不做行业结论。'];
+  const rs = relative.vs300 || {};
+  const lines = [`· 相对沪深300：${relative.state}；5/20/60日超额 ${fmt(rs[5])} / ${fmt(rs[20])} / ${fmt(rs[60])}`];
+  const ind = relative.industry;
+  if (!ind) {
+    lines.push('· 所属行业：未识别或不适用（ETF/指数/跨市场标的不做行业排名）。');
+    return lines;
+  }
+  const ir = relative.vsIndustry || {};
+  lines.push(`· 所属行业：${ind.name}，当日 ${pct(ind.chgPct)}，行业涨幅排名 ${ind.rank}/${ind.total}`);
+  lines.push(`· 相对行业：5/20/60日超额 ${fmt(ir[5])} / ${fmt(ir[20])} / ${fmt(ir[60])}`);
+  return lines;
 }
 function buildOneLine(oc, day, week, month) {
   if (oc.state === '结构转弱') return `日线/周线存在结构破坏风险，先按控风险处理，重新站回关键位后再评估。`;
@@ -476,7 +633,7 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
     : title === '周线'
       ? (weeklyZoneTooWide ? 'BAND ONLY' : 'ZONE-W + BAND')
       : 'NO ZONE';
-  ctx.fillText(`MA20 ${fpBy(a.ma20, prec)}  BOLL ${fpBy(a.bollLow, prec)}~${fpBy(a.bollUp, prec)}  ${volumeLabel}  ${zoneLabel}`, x0 + 130, y0 + 18);
+  ctx.fillText(`MA20 ${fpBy(a.ma20, prec)}  ${bollRangeText(a, prec)}  ${volumeLabel}  ${zoneLabel}`, x0 + 130, y0 + 18);
   // 纵向定标：**以 K 线高低为准**，MA/BOLL 只在与 K 线范围相差 30% 以内时才参与。
   // 为什么必须这样：均线/布林是滞后指标，它们在窗口首根反映的是**窗口外**的旧数据。
   // 603986 日线 40 根如果不做这个过滤，窗口首根的 BOLL 上轨还是 871.32（20 天前那根 846 尖顶算出来的），
@@ -779,11 +936,12 @@ async function cmdAn(args) {
     name = resolved.name || codeArg;
     if (!resolved.exact) resolveNotice = `🔎 已按「${name}」查询\n`;
   }
-  const [dayK, weekK, monthK, quote] = await Promise.all([
+  const [dayK, weekK, monthK, quote, hs300K] = await Promise.all([
     fetchStockKline(code, 'day').catch(() => null),
     fetchStockKline(code, 'week').catch(() => null),
     fetchStockKline(code, 'month').catch(() => null),
     fetchStockQuote(code).catch(() => null),
+    fetchStockKline('sh000300', 'day').catch(() => null),
   ]);
   if (quote && quote.name) name = quote.name;
   if (!dayK || dayK.length < 60 || !weekK || weekK.length < 30 || !monthK || monthK.length < 20) {
@@ -795,7 +953,26 @@ async function cmdAn(args) {
     week: analyzePeriod('week', weekK, prec),
     month: analyzePeriod('month', monthK, prec),
   };
-  const text = resolveNotice + buildReport(name, code, quote, all, prec);
+  // codeflicker-fix: TA-Issue-001/z2s785wd1g4rkmchostf - 行业归属、行业排行与行业K线统一使用东财口径，避免跨分类体系硬匹配。
+  let relative = null;
+  const isCnStock = /^(sh|sz|bj)\d{6}$/i.test(code) && !quote?.isIndex && !isFundCode(code);
+  if (hs300K && hs300K.length >= 70) {
+    let industry = null, boards = null, industryK = null;
+    if (isCnStock) {
+      const [identity, boardList] = await Promise.all([
+        fetchEmStockIndustry(code).catch(() => null),
+        fetchEmIndustryBoards().catch(() => null),
+      ]);
+      const board = identity && boardList ? boardList.find(row => row.name === identity.name) : null;
+      if (board) {
+        industry = { name: board.name, code: board.code };
+        boards = boardList;
+        industryK = await fetchEmIndustryKline(board.code).catch(() => null);
+      }
+    }
+    relative = buildRelativeStrength(dayK, hs300K, industry, industryK, boards);
+  }
+  const text = resolveNotice + buildReport(name, code, quote, all, prec, relative);
   let img = null;
   try { img = renderAnPng(code, name, quote, all, prec); }
   catch (e) { console.error('[an] 图表生成失败:', e.message); }
