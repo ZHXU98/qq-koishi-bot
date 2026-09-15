@@ -208,18 +208,18 @@ async function handleEvent(ev) {
     if (!r.ok) {
       await sendReply(ev, r.text || '⚠️ 做T分析失败');
     } else {
-      await sendReply(ev, r.text);
-      if (r.summaryImg) await sendReply(ev, '', [r.summaryImg]);
+      if (r.reportImg) await sendReply(ev, '', [r.reportImg]);
+      else await sendReply(ev, r.detailText || r.text);
       if (r.img) await sendReply(ev, '', [r.img]);
     }
   } else if (cmd.type === 'an') {
-    // /an：短文字摘要 → 手机结论卡 → 多周期技术图
+    // /an：完整文字分析长图 → 多周期技术图
     const r = await cmdAn(cmd.args);
     if (!r.ok) {
       await sendReply(ev, r.text || '⚠️ 多周期分析失败');
     } else {
-      await sendReply(ev, r.text);
-      if (r.summaryImg) await sendReply(ev, '', [r.summaryImg]);
+      if (r.reportImg) await sendReply(ev, '', [r.reportImg]);
+      else await sendReply(ev, r.detailText || r.text);
       if (r.img) await sendReply(ev, '', [r.img]);
     }
   } else {
