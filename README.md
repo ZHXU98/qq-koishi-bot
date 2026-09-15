@@ -72,8 +72,12 @@ qq-koishi-bot/
 │   ├── bindings.json                   # openid 绑定表（owner / users / groups）
 │   ├── create_panels.mjs               # 生成面板辅助脚本
 │   └── README.md
-├── reply/                            # ★ 指令中心（容器，零依赖）
-│   ├── index.js                        # 主服务：WS 事件监听 + 全部指令实现（单文件）
+├── reply/                            # ★ 指令中心（容器，模块化 Node 服务）
+│   ├── index.js                        # 主服务：WS 事件监听与指令路由
+│   ├── commands/                       # 各指令实现（/an、/t、/ss 等）
+│   ├── market.js / gateway.js          # 行情数据层与网关发送层
+│   ├── chart-fonts.js                  # 图表字体初始化
+│   ├── package.json                    # Canvas / Resvg 渲染依赖
 │   ├── config.json                     # 权限配置（官方通道用）
 │   ├── config.napcat.json              # 权限配置（NapCat 通道备用，当前停用）
 │   ├── data/                           # /stocks 组合数据（可写挂载；portfolios.json 已 gitignore）
@@ -193,7 +197,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 
 ## 指令中心（qq-reply）
 
-单一文件 `reply/index.js` 实现全部指令，**零 npm 依赖**（Node ≥ 21 内置 `WebSocket` + `fetch`），外部依赖仅从 `ths-news-modules` 卷只读共享的 `@napi-rs/canvas`（主）+ `@resvg/resvg-js`（兜底），用于渲染图表。
+`reply/index.js` 负责事件监听和路由，具体命令拆分在 `reply/commands/`，行情与网关逻辑分别位于 `reply/market.js`、`reply/gateway.js`。图表依赖由 `reply/package.json` 管理：`@napi-rs/canvas` 为主渲染器，`@resvg/resvg-js` 为兜底；本地可在 `reply/` 下执行 `npm install` 后预览。
 
 ### 权限模型
 
@@ -217,8 +221,9 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 
 | 指令 | 别名 | 说明 |
 |---|---|---|
-| `/ss` | `/指数` | 指数行情图：上证 / 沪深300 / 全市场成交额 / 申万二级资金流 |
+| `/ss` | `/指数` | 指数行情图：上证 / 沪深300 / 全市场成交额（盘中含预计全天成交量）/ 申万二级资金流 |
 | `/stock <周期> <代码或名称>` | `/股票` `/K线` | K线图 / 分时图 / 文本速查（详见下节） |
+| `/an <代码或名称>` | `/分析` `/技术分析` | 多周期技术分析：月线长期许可、周线阶段、日线执行；输出确认/失效条件与综合图（详见 `reply/AN_GUIDE.md`） |
 | `/stocks <周期> <组合名 或 股票...>` | `/组合` `/自选` | **股票组合拼图**：一张图并列多看（详见下节）。查询 / `-list` 所有人可用，`-add` / `-update` / `-del` 仅主人 |
 | `/zj <1\|2> [t\|d]` | `/资金` | 申万行业资金流（详见下节） |
 
@@ -233,7 +238,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 
 | 指令 | 别名 | 说明 |
 |---|---|---|
-| `/快讯` | `/news` `/资讯` | 同花顺官方「重要」快讯，最近 10 条 |
+| `/快讯` | `/news` `/资讯` | 同花顺官方「重要」快讯：跨页补足最近 10 条，按主题/事件等级渲染为一张长图 |
 
 **🛠️ 工具**
 

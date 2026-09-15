@@ -6,7 +6,6 @@ const { resolveStockCode, normalizeCode, fetchStockKline, fetchStockQuote } = re
 
 const MA_PERIODS = [5, 10, 20, 60];
 const PERIOD_LABEL = { day: '日线', week: '周线', month: '月线' };
-const PERIOD_WEIGHT = { day: 0.3, week: 0.4, month: 0.3 };
 
 const fpBy = (v, prec = 2) => isFinite(v) && v !== null ? Number(v).toFixed(prec) : '-';
 const pct = v => (isFinite(v) ? (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%' : '-');
@@ -186,7 +185,7 @@ function calcRecentLevels(period, ks, close) {
     centerLow, centerHigh, centerMid, centerWidthPct, centerState,
   };
 }
-function calcPriceSignal({ last, prev, close, chgPct, vRatio, ma20, bollUp, bollLow, levels }) {
+function calcPriceSignal({ last, prev, close, chgPct, vRatio, ma20, bollUp, bollLow, levels, allowConstructivePullback = false }) {
   const open = Number(last.open) || close;
   const high = Number(last.high) || close;
   const low = Number(last.low) || close;
@@ -200,7 +199,12 @@ function calcPriceSignal({ last, prev, close, chgPct, vRatio, ma20, bollUp, boll
   if (levels.prevLow20 && close < levels.prevLow20 * 0.995 && vRatio >= 1.2) return { type: 'breakdown', text: '放量跌破前低', score: -1 };
   if (chgPct > 0 && vRatio >= 1.5 && bodyPct < 0.8 && upperShadowPct > bodyPct * 0.8) return { type: 'stall', text: '放量滞涨/上影压力', score: -0.5 };
   if (chgPct < 0 && vRatio >= 1.5 && lowerShadowPct > bodyPct * 0.8) return { type: 'support', text: '放量下探有承接', score: 0.4 };
-  if ((nearMa20 || nearBoxLow) && vRatio < 0.85 && Math.abs(chgPct) < 1.2) return { type: 'pullback', text: '缩量回踩关键位', score: 0.5 };
+  if ((nearMa20 || nearBoxLow) && vRatio < 0.85 && Math.abs(chgPct) < 1.2) {
+    // codeflicker-fix: TA-Issue-001/s8jm34fg6nv8n9a7y13u - 弱势趋势的缩量不能直接当成低吸型回踩。
+    return allowConstructivePullback
+      ? { type: 'pullback', text: '缩量回踩参考区', score: 0.5 }
+      : { type: 'weak_pullback', text: '弱势缩量整理，承接未确认', score: 0 };
+  }
   if (bollUp && close > bollUp && vRatio >= 1.2) return { type: 'boll_break', text: '放量突破BOLL上轨', score: 0.7 };
   if (bollLow && close < bollLow && vRatio >= 1.2) return { type: 'boll_down', text: '放量跌破BOLL下轨', score: -0.7 };
   return { type: 'neutral', text: '暂无明确量价结构信号', score: 0 };
@@ -225,12 +229,17 @@ function analyzePeriod(period, klines, prec) {
   const bollUp = lastVal(boll.up), bollMid = lastVal(boll.mid), bollLow = lastVal(boll.low);
   const bollWidth = bollMid ? (bollUp - bollLow) / bollMid * 100 : 0;
   const vma5 = lastVal(smaValues(vols, 5)) || 0;
-  const vRatio = vma5 > 0 ? (Number(last.vol) || 0) / vma5 : 1;
-  const volState = vRatio >= 1.5 ? '放量' : vRatio >= 1.2 ? '温和放量' : vRatio < 0.5 ? '极缩量' : vRatio < 0.8 ? '缩量' : '正常量';
+  const rawVRatio = vma5 > 0 ? (Number(last.vol) || 0) / vma5 : 1;
+  // codeflicker-fix: TA-Issue-002/s8jm34fg6nv8n9a7y13u - 当前周/月未收线，累计量不能和完整周期均量直接比较。
+  const volumeUsable = period === 'day';
+  const vRatio = volumeUsable ? rawVRatio : null;
+  const volState = volumeUsable
+    ? (vRatio >= 1.5 ? '放量' : vRatio >= 1.2 ? '温和放量' : vRatio < 0.5 ? '极缩量' : vRatio < 0.8 ? '缩量' : '正常量')
+    : '量能待收线';
+  const volumeNote = volumeUsable ? '' : `${PERIOD_LABEL[period]}未收线，量能不参与方向判断`;
   const cross = findLastCross(macd);
   const divergence = detectDivergence(closes, macd);
   const levels = calcRecentLevels(period, ks, close);
-  const priceSignal = calcPriceSignal({ last, prev, close, chgPct, vRatio, ma20, bollUp, bollLow, levels });
   const hist = lastVal(macd.hist) || 0;
   const histPrev = prevVal(macd.hist) || 0;
   const macdTxt = `${lastVal(macd.dif) >= lastVal(macd.dea) ? '偏多' : '偏空'} / ${hist >= 0 ? '红柱' : '绿柱'}${Math.abs(hist) >= Math.abs(histPrev) ? '放大' : '收敛'}`;
@@ -242,24 +251,24 @@ function analyzePeriod(period, klines, prec) {
     trend = '下降趋势'; score -= 2;
   } else if (ma20 && close > ma20) { trend = '中性偏强'; score += 1; }
   else if (ma20 && close < ma20) { trend = '中性偏弱'; score -= 1; }
-  if (cross && cross.type === 'gold' && cross.index >= n - 8) score += 0.5;
-  if (cross && cross.type === 'dead' && cross.index >= n - 8) score -= 0.5;
-  if (divergence && divergence.type === 'bottom') score += 0.5;
-  if (divergence && divergence.type === 'top') score -= 0.5;
-  if (chgPct > 1 && vRatio >= 1.2) score += 0.5;
-  if (chgPct < -1 && vRatio >= 1.2) score -= 0.5;
-  score += priceSignal.score;
-  if (period !== 'month' && levels.boxState === '突破箱体上沿') score += 0.4;
-  if (period !== 'month' && levels.boxState === '跌破箱体下沿') score -= 0.4; // codeflicker-fix: 月线评分不再受箱体突破影响，与图上不画月线箱体保持一致
+  // MACD 金叉、死叉与背离只用于动能确认/预警，不参与主趋势结论评分。
+  const allowConstructivePullback = period === 'day' && !trend.includes('下降') && close >= (ma20 || 0);
+  const priceSignal = calcPriceSignal({ last, prev, close, chgPct, vRatio: volumeUsable ? vRatio : 1, ma20, bollUp, bollLow, levels, allowConstructivePullback });
+  // 保留 period.score 仅供内部兼容；最终结论不再叠加量价、背离或单根 K 线分数。
 
-  const recent = ks.slice(-31, -1); // codeflicker-fix: 排除当前 K，避免把现价自己当作支撑/压力
+  const recent = ks.slice(-31, -1); // 排除当前 K，避免把现价自己当作支撑/压力
   const recentHigh = Math.max(...recent.map(k => Number(k.high) || Number(k.close) || 0));
   const recentLow = Math.min(...recent.map(k => Number(k.low) || Number(k.close) || Infinity));
-  const supports = [recentLow, levels.prevLow20, levels.prevLow60, ma20, ma60, bollLow, levels.boxLow].filter(v => isFinite(v) && v > 0 && v <= close).sort((a, b) => b - a).slice(0, 4);
-  const pressures = [recentHigh, levels.prevHigh20, levels.prevHigh60, ma20, ma60, bollUp, levels.boxHigh].filter(v => isFinite(v) && v > 0 && v >= close).sort((a, b) => a - b).slice(0, 4);
+  // codeflicker-fix: TA-Issue-003/s8jm34fg6nv8n9a7y13u - 关键位必须位于现价外侧，避免把当前价混入支撑/压力。
+  const supports = [recentLow, levels.prevLow20, levels.prevLow60, ma20, ma60, bollLow, levels.boxLow].filter(v => isFinite(v) && v > 0 && v < close * 0.998).sort((a, b) => b - a).slice(0, 4);
+  const pressures = [recentHigh, levels.prevHigh20, levels.prevHigh60, ma20, ma60, bollUp, levels.boxHigh].filter(v => isFinite(v) && v > close * 1.002).sort((a, b) => a - b).slice(0, 4);
+  // codeflicker-fix: TA-Issue-007/s8jm34fg6nv8n9a7y13u - 失效位绑定当前结构窗口，不让更早的极端低点拉远风险线。
+  const structureFloor = period === 'week' ? levels.minorLow : levels.boxLow;
+  const structuralLows = [levels.prevLow20, structureFloor].filter(v => isFinite(v) && v > 0 && v < close * 0.998);
+  const structuralInvalid = structuralLows.length ? Math.min(...structuralLows) : null;
   const rawTrend = trend;
-  const line = buildPeriodLine(period, { close, chgPct, trend, volState, vRatio, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, cross, divergence, macdTxt, levels, priceSignal }, prec);
-  return { period, label: PERIOD_LABEL[period], ks, closes, vols, ma, boll, macd, close, prevClose, chgPct, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, bollWidth, vRatio, volState, cross, divergence, levels, priceSignal, macdTxt, trend, rawTrend, score, supports, pressures, line, prec };
+  const line = buildPeriodLine(period, { close, chgPct, trend, volState, vRatio: vRatio || 0, volumeNote, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, cross, divergence, macdTxt, levels, priceSignal }, prec);
+  return { period, label: PERIOD_LABEL[period], ks, closes, vols, ma, boll, macd, close, prevClose, chgPct, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, bollWidth, vRatio, rawVRatio, volState, volumeUsable, volumeNote, cross, divergence, levels, priceSignal, macdTxt, trend, rawTrend, score, supports, pressures, structuralInvalid, line, prec };
 }
 
 function buildPeriodLine(period, a, prec) {
@@ -267,24 +276,37 @@ function buildPeriodLine(period, a, prec) {
   const divTxt = a.divergence ? (a.divergence.type === 'top' ? `${a.divergence.strength || ''}顶背离` : `${a.divergence.strength || ''}底背离`) : '无背离';
   const pos = a.bollUp && a.bollLow !== null ? (a.close > a.bollUp * 0.98 ? '靠近BOLL上轨' : a.close < a.bollLow * 1.02 ? '靠近BOLL下轨' : 'BOLL中部') : 'BOLL不足';
   const boxTxt = period === 'month' ? '' : `，${a.levels.minorState || a.levels.boxState}，${a.levels.centerState || '中枢不明'}`;
-  return `${PERIOD_LABEL[period]}：${a.trend}，${a.volState}(${a.vRatio.toFixed(1)}倍)，${a.macdTxt}，${crossTxt}，${divTxt}，${pos}${boxTxt}，${a.priceSignal.text}`;
+  const volumeTxt = a.volumeNote || `${a.volState}(${a.vRatio.toFixed(1)}倍)`;
+  return `${PERIOD_LABEL[period]}：${a.trend}，${volumeTxt}，${a.macdTxt}，${crossTxt}，${divTxt}，${pos}${boxTxt}，${a.priceSignal.text}`;
 }
 
 function overallConclusion(day, week, month) {
-  const weighted = day.score * PERIOD_WEIGHT.day + week.score * PERIOD_WEIGHT.week + month.score * PERIOD_WEIGHT.month;
-  let rating, style, stars;
-  if (weighted >= 1.2) { rating = '偏强'; style = '趋势持有 / 回踩低吸'; stars = '★★★★☆'; }
-  else if (weighted >= 0.4) { rating = '中性偏强'; style = '回踩确认 / 不追高'; stars = '★★★☆☆'; }
-  else if (weighted > -0.4) { rating = '震荡'; style = '高抛低吸 / 等方向'; stars = '★★★☆☆'; }
-  else if (weighted > -1.2) { rating = '中性偏弱'; style = '反弹观察 / 压力减仓'; stars = '★★☆☆☆'; }
-  else { rating = '偏弱'; style = '风险规避 / 反弹减仓'; stars = '★☆☆☆☆'; }
-  const reason = [];
-  if (month.score < 0) reason.push('月线偏弱'); else if (month.score > 0) reason.push('月线偏强');
-  if (week.score < 0) reason.push('周线压制'); else if (week.score > 0) reason.push('周线改善');
-  if (day.score < 0) reason.push('日线偏弱'); else if (day.score > 0) reason.push('日线修复');
-  return { weighted, rating, style, stars, reason: reason.join('，') || '多周期分歧' };
-}
+  // codeflicker-fix: TA-Issue-004/s8jm34fg6nv8n9a7y13u - 用“月线许可→周线阶段→日线执行→风险否决”替代线性加权评分。
+  const monthlyWeak = month.trend.includes('下降') || (month.ma20 && month.close < month.ma20);
+  const monthlyStrong = month.trend.includes('上升') || (month.ma20 && month.close > month.ma20);
+  const weeklyWeak = week.trend.includes('下降') || (week.ma20 && week.close < week.ma20);
+  const weeklyStrong = week.trend.includes('上升') || (week.ma20 && week.close > week.ma20);
+  const dailyBroken = day.priceSignal.type === 'breakdown' || (day.structuralInvalid && day.close < day.structuralInvalid);
+  const dailyStrong = day.trend.includes('上升') && day.close > (day.ma20 || 0);
+  const dailyRepair = day.cross?.type === 'gold' || day.divergence?.type === 'bottom' || day.macdTxt.includes('红柱');
 
+  let state, action, stars, reason;
+  if (dailyBroken || week.priceSignal.type === 'breakdown') {
+    state = '结构转弱'; action = '先控风险，等待重新站回关键位'; stars = '★☆☆☆☆';
+    reason = dailyBroken ? '日线结构破坏' : '周线出现破位信号';
+  } else if (weeklyStrong && !monthlyWeak && (dailyStrong || day.priceSignal.type === 'pullback')) {
+    state = dailyStrong ? '趋势可持有' : '上升趋势中的回踩';
+    action = dailyStrong ? '持有为主，回踩确认再看加仓' : '不追高，等止跌转强确认';
+    stars = '★★★★☆'; reason = '月线许可、周线阶段支持，日线未破结构';
+  } else if (weeklyWeak) {
+    state = '弱势反弹'; action = '不追反弹，压力位观察，确认后再升级判断'; stars = '★★☆☆☆';
+    reason = `${monthlyWeak ? '月线与' : ''}周线仍受压，${dailyRepair ? '日线仅有修复信号' : '日线尚未完成修复'}`;
+  } else {
+    state = '区间震荡'; action = '按区间处理，等待突破或跌破确认'; stars = '★★★☆☆';
+    reason = `${monthlyStrong ? '月线尚可' : '月线中性'}，周线未形成单边阶段，日线不宜单独定方向`;
+  }
+  return { state, action, stars, reason, monthlyWeak, weeklyWeak, weeklyStrong, dailyBroken };
+}
 function uniqPrices(arr, prec) {
   const seen = new Set(), out = [];
   for (const v of arr) {
@@ -302,118 +324,105 @@ function buildReport(name, code, quote, all, prec) {
   const chgPct = quote && isFinite(Number(quote.chgPct)) ? Number(quote.chgPct) : day.chgPct;
   const pressures = uniqPrices([...day.pressures, ...week.pressures].filter(v => v >= price && v <= price * 1.35).sort((a, b) => a - b), prec);
   const supports = uniqPrices([...day.supports, ...week.supports].filter(v => v <= price && v >= price * 0.75).sort((a, b) => b - a), prec);
-  const invalid = day.supports[0] ? fpBy(day.supports[0], prec) : (supports[0] || '-');
+  const confirm = pressures[0] || null;
+  const shortInvalid = day.structuralInvalid || day.supports[day.supports.length - 1] || null;
+  const swingInvalid = week.structuralInvalid || week.supports[week.supports.length - 1] || null;
   const L = [];
   L.push(`📊 ${name}（${code.toUpperCase()}）多周期技术分析`);
   L.push(`现价 ${fpBy(price, prec)}（${pct(chgPct)}）`);
   L.push('');
-  L.push('━━━ 综合结论 ━━━');
-  L.push(`综合评级：${oc.rating}  ${oc.stars}`);
-  L.push(`操作风格：${oc.style}`);
-  L.push(`核心依据：${oc.reason}`);
+  L.push('━━━ 结论 ━━━');
+  L.push(`市场状态：${oc.state}  ${oc.stars}`);
+  L.push(`当前动作：${oc.action}`);
+  L.push(`主要限制：${oc.reason}`);
   L.push(`一句话：${buildOneLine(oc, day, week, month)}`);
   L.push('');
-  L.push('━━━ 月线：长期结构 ━━━');
-  L.push(`· ${month.line}`);
-  L.push(`· MA20 ${fpBy(month.ma20, prec)} / BOLL ${fpBy(month.bollLow, prec)} ~ ${fpBy(month.bollUp, prec)}`);
-  L.push(`结论：${periodConclusion('month', month)}`);
+  L.push('━━━ 多周期结构 ━━━');
+  L.push(`· 月线（长期许可）：${month.line}`);
+  L.push(`  MA20 ${fpBy(month.ma20, prec)} / BOLL ${fpBy(month.bollLow, prec)} ~ ${fpBy(month.bollUp, prec)}`);
+  L.push(`  ${periodConclusion('month', month)}`);
+  L.push(`· 周线（当前阶段）：${week.line}`);
+  L.push(`  MA20 ${fpBy(week.ma20, prec)} / BOLL ${fpBy(week.bollLow, prec)} ~ ${fpBy(week.bollUp, prec)}`);
+  L.push(`  ${periodConclusion('week', week)}`);
+  L.push(`· 日线（执行条件）：${day.line}`);
+  L.push(`  MA5/10/20/60：${fpBy(day.ma5, prec)} / ${fpBy(day.ma10, prec)} / ${fpBy(day.ma20, prec)} / ${fpBy(day.ma60, prec)}`);
+  L.push(`  ${periodConclusion('day', day)}`);
   L.push('');
-  L.push('━━━ 周线：中期阶段 ━━━');
-  L.push(`· ${week.line}`);
-  L.push(`· MA20 ${fpBy(week.ma20, prec)} / BOLL ${fpBy(week.bollLow, prec)} ~ ${fpBy(week.bollUp, prec)}`);
-  L.push(`结论：${periodConclusion('week', week)}`);
+  L.push('━━━ 关键条件 ━━━');
+  L.push(`向上确认：${confirm ? `放量站回 ${fpBy(confirm, prec)}，且后续不跌回` : '等待放量突破近期压力'}`);
+  L.push(`短线失效：${shortInvalid ? `跌破 ${fpBy(shortInvalid, prec)}，日线结构转弱` : '跌破最近确认低点'}`);
+  L.push(`波段失效：${swingInvalid ? `跌破 ${fpBy(swingInvalid, prec)}，周线阶段转弱` : '跌破周线关键低点'}`);
+  L.push(`参考压力：${pressures.length ? pressures.join(' / ') : '暂无明显压力'}`);
+  L.push(`参考支撑：${supports.length ? supports.join(' / ') : '暂无明显支撑'}`);
   L.push('');
-  L.push('━━━ 日线：短线节奏 ━━━');
-  L.push(`· ${day.line}`);
-  L.push(`· MA5/10/20/60：${fpBy(day.ma5, prec)} / ${fpBy(day.ma10, prec)} / ${fpBy(day.ma20, prec)} / ${fpBy(day.ma60, prec)}`);
-  L.push(`结论：${periodConclusion('day', day)}`);
-  L.push('');
-  L.push('━━━ 结构与量价 ━━━');
-  L.push(`· 日线：${structureExplain(day, prec)}`);
-  L.push(`· 周线：${structureExplain(week, prec)}`);
+  L.push('━━━ 信号说明 ━━━');
+  L.push(`· 日线结构区：${structureExplain(day, prec)}`);
+  L.push(`· 周线结构区：${structureExplain(week, prec)}`);
   L.push(`· 量价：日线${stripPeriod(volumeExplain(day))}；周线${stripPeriod(volumeExplain(week))}`);
-  L.push('');
-  L.push('━━━ 关键价位 ━━━');
-  L.push(`压力：${pressures.length ? pressures.join(' / ') : '暂无明显压力'}`);
-  L.push(`支撑：${supports.length ? supports.join(' / ') : '暂无明显支撑'}`);
-  L.push(`失效位：跌破 ${invalid}，当前短线判断转弱`);
+  L.push(`· 动能：日线${day.macdTxt}${day.divergence ? `，${day.divergence.strength || ''}${day.divergence.type === 'top' ? '顶' : '底'}背离仅作预警` : ''}`);
   L.push('');
   L.push('━━━ 操作参考 ━━━');
   L.push(`已持仓：${holderAdvice(oc, day, week, prec)}`);
   L.push(`空仓：${emptyAdvice(oc, day, week, prec)}`);
-  L.push(`做T：靠近压力减，回踩支撑接；若周线偏弱，T量要小`);
+  L.push(`做T：靠近参考压力减，回踩参考支撑接；周线受压时只做小仓位节奏。`);
   L.push('');
   L.push('📈 多周期技术图正在生成...');
   L.push('⚠️ 非投资建议，仅供参考');
   return L.join('\n');
 }
-
 function buildOneLine(oc, day, week, month) {
-  if (oc.rating.includes('弱')) return `月线${month.trend}，周线${week.trend}，日线${day.trend}；短线先按反弹修复看，站回关键均线前不追高。`;
-  if (oc.rating.includes('强')) return `月线${month.trend}，周线${week.trend}，日线${day.trend}；趋势基础较好，回踩支撑不破可继续观察。`;
-  return `月线${month.trend}、周线${week.trend}、日线${day.trend}，多周期分歧较大，先按区间震荡处理。`;
+  if (oc.state === '结构转弱') return `日线/周线存在结构破坏风险，先按控风险处理，重新站回关键位后再评估。`;
+  if (oc.state === '弱势反弹') return `月线${month.trend}、周线${week.trend}，日线${day.trend}；短线信号只能按修复看，不视为趋势反转。`;
+  if (oc.state === '趋势可持有') return `月线许可、周线阶段与日线结构大体一致，回踩不破关键位可继续观察。`;
+  if (oc.state === '上升趋势中的回踩') return `大结构未坏，日线正在回踩；等缩量止跌或重新转强，不在回踩中提前加仓。`;
+  return `月线${month.trend}、周线${week.trend}、日线${day.trend}；多周期未共振，先按区间等待方向确认。`;
 }
 function periodConclusion(period, a) {
-  if (a.priceSignal.type === 'breakout') return `${a.label}放量突破前高，若回踩不破前高/MA20，可按突破确认观察。`;
-  if (a.priceSignal.type === 'breakdown') return `${a.label}放量跌破前低，优先控风险，等重新站回关键位。`;
-  if (a.priceSignal.type === 'stall') return `${a.label}放量滞涨并有上影，冲高回落风险增加。`;
-  if (a.priceSignal.type === 'pullback') return `${a.label}缩量回踩关键位，若次级别放量转强可作为低吸观察点。`;
-  if (a.trend.includes('上升')) return `${a.label}结构偏强，回踩均线/中轨不破仍按强势整理看。`;
-  if (a.trend.includes('下降')) return `${a.label}结构偏弱，反弹先按修复看，站回MA20前不算反转。`;
-  if (a.divergence && a.divergence.type === 'top') return `${a.label}出现${a.divergence.strength || ''}顶背离，冲高回落风险增加。`;
-  if (a.divergence && a.divergence.type === 'bottom') return `${a.label}出现${a.divergence.strength || ''}底背离，但需要放量阳线确认。`;
-  return `${a.label}偏震荡，等待放量突破或缩量回踩确认。`;
+  if (a.priceSignal.type === 'breakout') return `出现放量突破前高，仍需回踩不破再确认有效。`;
+  if (a.priceSignal.type === 'breakdown') return `出现放量跌破前低，优先控风险，等待重新站回关键位。`;
+  if (a.priceSignal.type === 'stall') return `放量滞涨并有上影，冲高回落风险增加。`;
+  if (a.priceSignal.type === 'pullback') return `缩量回踩参考区，需等待次级别转强确认。`;
+  if (a.priceSignal.type === 'weak_pullback') return `缩量靠近参考区，但趋势仍弱，尚不能视为有效承接。`;
+  if (a.trend.includes('上升')) return `结构偏强，回踩均线或中轨不破才继续按强势整理看。`;
+  if (a.trend.includes('下降')) return `结构偏弱，反弹先按修复看，站回 MA20 前不算反转。`;
+  if (a.divergence) return `出现${a.divergence.strength || ''}${a.divergence.type === 'top' ? '顶' : '底'}背离，仅作动能预警，仍需结构确认。`;
+  return `结构偏震荡，等待关键位突破或跌破确认。`;
 }
 function structureExplain(a, prec) {
   const l = a.levels || {};
-  const parts = [];
-  const minor = `小箱体${fpBy(l.minorLow, prec)}~${fpBy(l.minorHigh, prec)}（${l.minorState || l.boxState || '震荡'}）`;
-  const center = `中枢${fpBy(l.centerLow, prec)}~${fpBy(l.centerHigh, prec)}（${l.centerState || '中枢不明'}）`;
-  const major = `大箱体${fpBy(l.majorLow, prec)}~${fpBy(l.majorHigh, prec)}（宽${pct(l.majorWidthPct || 0)}）`;
-  if (a.period === 'week') {
-    parts.push(major);
-    parts.push(minor);
-    parts.push(center);
-  } else if (a.period === 'day') {
-    parts.push(minor);
-    parts.push(center);
-    parts.push(`大箱体背景${fpBy(l.majorLow, prec)}~${fpBy(l.majorHigh, prec)}`);
-  } else {
-    parts.push('月线不画箱体，仅看长期方向与均线/BOLL/MACD');
-  }
-  if (l.prevHigh20) parts.push(`近20期压力${fpBy(l.prevHigh20, prec)}`);
-  if (l.prevLow20) parts.push(`近20期支撑${fpBy(l.prevLow20, prec)}`);
-  parts.push(a.priceSignal.text);
-  return parts.join('，');
+  if (a.period === 'month') return '月线不画箱体，只作为长期均线、BOLL 与动能参考。';
+  const primary = a.period === 'week'
+    ? `阶段参考区${fpBy(l.majorLow, prec)}~${fpBy(l.majorHigh, prec)}`
+    : `短线参考区${fpBy(l.minorLow, prec)}~${fpBy(l.minorHigh, prec)}`;
+  const core = `核心价格带${fpBy(l.centerLow, prec)}~${fpBy(l.centerHigh, prec)}`;
+  return `${primary}（${a.period === 'week' ? l.majorState : l.minorState || l.boxState}），${core}（${l.centerState || '中枢不明'}）；近20期压力${fpBy(l.prevHigh20, prec)}，支撑${fpBy(l.prevLow20, prec)}`;
 }
 function stripPeriod(s) { return String(s || '').replace(/[。；;\s]+$/g, ''); }
 function volumeExplain(a) {
+  if (!a.volumeUsable) return `${a.volumeNote}，不据此判断资金强弱。`;
   const up = a.chgPct >= 0;
-  if (up && a.vRatio >= 1.2) return `上涨配合${a.volState}，主动资金较积极，突破可信度提升。`;
-  if (up && a.vRatio < 0.8) return `上涨但缩量，偏反弹，持续性需要继续确认。`;
+  if (up && a.vRatio >= 1.2) return `上涨配合${a.volState}，突破可信度有所提升。`;
+  if (up && a.vRatio < 0.8) return `上涨但缩量，偏修复，持续性仍待确认。`;
   if (!up && a.vRatio >= 1.2) return `下跌伴随${a.volState}，抛压较重，不急着接。`;
-  if (!up && a.vRatio < 0.8) return `下跌缩量，抛压有所减弱，但需看支撑是否守住。`;
+  if (!up && a.vRatio < 0.8) return `下跌缩量，不能单独视为承接，仍需看结构低点。`;
   return `量价中性，暂无强方向信号。`;
 }
 function holderAdvice(oc, day, week, prec) {
-  const p = day.pressures[0] ? fpBy(day.pressures[0], prec) : '上方压力';
-  const s = day.supports[0] ? fpBy(day.supports[0], prec) : '关键支撑';
-  if (day.priceSignal.type === 'breakdown') return `日线放量跌破前低，优先减风险；重新站回 ${p} 前少加仓。`;
-  if (day.priceSignal.type === 'breakout' && week.score >= 0) return `突破有效时可留底仓，回踩 ${s} 不破再看加仓，跌回突破位则减。`;
-  if (oc.weighted < -0.4) return `反弹到 ${p} 附近缩量可减仓，跌破 ${s} 需控制风险。`;
-  if (oc.weighted > 0.4) return `趋势未破可持有，回踩 ${s} 不破可观察，放量跌破则减。`;
-  return `区间内高抛低吸，靠近 ${p} 谨慎，回踩 ${s} 观察承接。`;
+  const p = day.pressures[0] ? fpBy(day.pressures[0], prec) : '近期压力';
+  const s = day.structuralInvalid ? fpBy(day.structuralInvalid, prec) : '日线结构低点';
+  if (oc.state === '结构转弱') return `优先控制风险；重新站回 ${p} 前不急于加仓，跌破 ${s} 严格执行风控。`;
+  if (oc.state === '弱势反弹') return `反弹到 ${p} 附近观察量能，缩量冲高可减；跌破 ${s} 不宜硬扛。`;
+  if (oc.state.includes('趋势')) return `趋势未破可持有，回踩 ${s} 上方企稳再观察；放量跌破则减仓。`;
+  return `按区间管理，靠近 ${p} 谨慎，回踩 ${s} 附近只观察承接，不提前加仓。`;
 }
 function emptyAdvice(oc, day, week, prec) {
-  const s = day.supports[0] ? fpBy(day.supports[0], prec) : '支撑位';
-  const p = day.pressures[0] ? fpBy(day.pressures[0], prec) : '压力位';
-  if (day.priceSignal.type === 'breakout') return `不直接追高，等回踩 ${p} 附近不破、或盘中缩量回踩 ${s} 后再评估。`;
-  if (day.priceSignal.type === 'pullback') return `可重点观察 ${s} 附近承接，但要等放量转强，不提前重仓。`;
-  if (oc.weighted < -0.4) return `不追反弹，等站回 ${p} 并放量后再评估。`;
-  if (oc.weighted > 0.4) return `等回踩 ${s} 缩量企稳，不追高。`;
-  return `等靠近 ${s} 的缩量回踩，或放量突破 ${p} 后确认。`;
+  const s = day.supports[0] ? fpBy(day.supports[0], prec) : '参考支撑';
+  const p = day.pressures[0] ? fpBy(day.pressures[0], prec) : '确认位';
+  if (oc.state === '结构转弱') return `不接破位，至少等重新站回 ${p} 且结构稳定后再评估。`;
+  if (oc.state === '弱势反弹') return `不追反弹；等放量站回 ${p}，或在 ${s} 附近出现明确止跌再评估。`;
+  if (oc.state.includes('趋势')) return `等回踩 ${s} 后缩量企稳或重新转强，不追高。`;
+  return `等靠近 ${s} 的止跌确认，或放量突破 ${p} 后再决定。`;
 }
-
 function renderAnPng(code, name, quote, all, prec) {
   const { createCanvas } = require('@napi-rs/canvas');
   const W = 1560, PAD = 56, TITLE_H = 88, ROW_H = 450, GAP = 14;
@@ -431,7 +440,8 @@ function renderAnPng(code, name, quote, all, prec) {
   ctx.fillStyle = panel; ctx.fillRect(0, 0, W, TITLE_H);
   ctx.fillStyle = chgPct >= 0 ? upC : downC; ctx.fillRect(PAD, 18, 5, 46);
   ctx.fillStyle = ink; ctx.font = 'bold 26px cjk'; ctx.textAlign = 'left'; ctx.fillText(`${name} 多周期技术分析`, PAD + 16, 34);
-  ctx.fillStyle = sub; ctx.font = '14px cjk'; ctx.fillText(`${code.toUpperCase()} · ${oc.rating} · ${oc.style}`, PAD + 16, 60);
+  const chartState = { '趋势可持有': 'TREND', '上升趋势中的回踩': 'PULLBACK', '区间震荡': 'RANGE', '弱势反弹': 'REBOUND', '结构转弱': 'RISK' }[oc.state] || 'WATCH';
+  ctx.fillStyle = sub; ctx.font = '14px cjk'; ctx.fillText(`${code.toUpperCase()} · ${chartState}`, PAD + 16, 60);
   ctx.textAlign = 'right'; ctx.fillStyle = chgPct >= 0 ? upC : downC; ctx.font = 'bold 30px cjk'; ctx.fillText(fpBy(price, prec), W - PAD, 34);
   ctx.font = '15px cjk'; ctx.fillText(pct(chgPct), W - PAD, 60);
   let y = TITLE_H;
@@ -459,7 +469,14 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   const macdTop = volTop + volH + 8;
   ctx.fillStyle = ink; ctx.font = 'bold 16px cjk'; ctx.textAlign = 'left'; ctx.fillText(`${title} · ${a.trend}`, x0, y0 + 18);
   ctx.fillStyle = sub; ctx.font = '12px cjk';
-  ctx.fillText(title === '月线' ? `MA20 ${fpBy(a.ma20, prec)}  BOLL ${fpBy(a.bollLow, prec)}~${fpBy(a.bollUp, prec)}  ${a.volState}  月线不画箱体` : `MA20 ${fpBy(a.ma20, prec)}  BOLL ${fpBy(a.bollLow, prec)}~${fpBy(a.bollUp, prec)}  ${a.volState}  BOX-S小箱体 CORE中枢 BOX-L大箱体`, x0 + 130, y0 + 18);
+  const volumeLabel = a.volumeUsable ? a.volState : 'VOL PENDING';
+  const weeklyZoneTooWide = title === '周线' && a.levels && a.levels.majorWidthPct > 45;
+  const zoneLabel = title === '日线'
+    ? 'ZONE-D + BAND'
+    : title === '周线'
+      ? (weeklyZoneTooWide ? 'BAND ONLY' : 'ZONE-W + BAND')
+      : 'NO ZONE';
+  ctx.fillText(`MA20 ${fpBy(a.ma20, prec)}  BOLL ${fpBy(a.bollLow, prec)}~${fpBy(a.bollUp, prec)}  ${volumeLabel}  ${zoneLabel}`, x0 + 130, y0 + 18);
   // 纵向定标：**以 K 线高低为准**，MA/BOLL 只在与 K 线范围相差 30% 以内时才参与。
   // 为什么必须这样：均线/布林是滞后指标，它们在窗口首根反映的是**窗口外**的旧数据。
   // 603986 日线 40 根如果不做这个过滤，窗口首根的 BOLL 上轨还是 871.32（20 天前那根 846 尖顶算出来的），
@@ -551,11 +568,11 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
       [by, by + bh].forEach(yy => { ctx.beginPath(); ctx.moveTo(x1, yy); ctx.lineTo(x2, yy); ctx.stroke(); });
       ctx.setLineDash([]);
     } else {
-      ctx.strokeStyle = stroke; ctx.lineWidth = label === 'BOX-S' ? 2 : 1.3; ctx.setLineDash(dash || []);
+      ctx.strokeStyle = stroke; ctx.lineWidth = label === 'ZONE-D' ? 1.6 : 1.2; ctx.setLineDash(dash || []);
       ctx.strokeRect(x1, by, x2 - x1, bh);
       ctx.setLineDash([]);
     }
-    const font = label === 'CORE' ? 'bold 12px cjk' : label === 'BOX-S' ? 'bold 12px cjk' : '11px cjk';
+    const font = label === 'BAND' ? '11px cjk' : label === 'ZONE-D' ? 'bold 11px cjk' : '11px cjk';
     const text = opts.noRange ? label : `${label} ${fpBy(low, prec)}~${fpBy(high, prec)}`;
     // 标注贴框内上沿；框太窄时移到框上方。位置先登记避让，实际绘制延后到最上层。
     ctx.font = font;
@@ -581,13 +598,21 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   ctx.save();
   ctx.beginPath(); ctx.rect(x0 - 2, plotTop - 1, w + 4, topH + 2); ctx.clip();
   if (a.levels && title !== '月线') {
-    // 框宽 = 计算窗口（算多少根就框多少根，且**不含当前K**）：
-    // 日线大箱体=近40根、周线=近30根、小箱体/中枢=近20根
-    // 三层错开呈现：大箱体只画上下通道线；小箱体画矩形；中枢最窄（蓝）
-    const mW = lv.majorWin || 40, sW = lv.minorWin || 20, cW = lv.coreWin || 20;
-    drawBoxArea(lv.majorLow, lv.majorHigh, n - mW - 1, mW, 'BOX-L', '#b37b00', 'rgba(250, 173, 20, 0.04)', [5, 4], { noRightText: true, railsOnly: true, dropFillIfTall: 0.55, minH: 4 });
-    drawBoxArea(lv.minorLow, lv.minorHigh, n - sW - 1, sW, 'BOX-S', '#d48806', 'rgba(250, 173, 20, 0.14)', [], { noRightText: true, minH: 5 });
-    drawBoxArea(lv.centerLow, lv.centerHigh, n - cW - 1, cW, 'CORE', '#1677ff', 'rgba(22, 119, 255, 0.34)', [], { noRightText: true, minH: 5 });
+    // codeflicker-fix: TA-Issue-005/s8jm34fg6nv8n9a7y13u - 每周期只强调一个主参考区，核心带低干扰显示，避免三层箱体重叠遮挡 K 线。
+    const primaryIsWeekly = title === '周线';
+    const primaryLow = primaryIsWeekly ? lv.majorLow : lv.minorLow;
+    const primaryHigh = primaryIsWeekly ? lv.majorHigh : lv.minorHigh;
+    const primaryWin = primaryIsWeekly ? (lv.majorWin || 30) : (lv.minorWin || 20);
+    const primaryLabel = primaryIsWeekly ? 'ZONE-W' : 'ZONE-D';
+    const primaryColor = primaryIsWeekly ? '#b37b00' : '#d48806';
+    const primaryWidthPct = primaryLow > 0 ? (primaryHigh - primaryLow) / primaryLow * 100 : Infinity;
+    // codeflicker-fix: TA-Issue-006/s8jm34fg6nv8n9a7y13u - 超宽区间只是历史波动背景，不是当前可交易箱体，隐藏以避免误导。
+    const maxZoneWidth = primaryIsWeekly ? 45 : 35;
+    if (primaryWidthPct <= maxZoneWidth) {
+      drawBoxArea(primaryLow, primaryHigh, n - primaryWin - 1, primaryWin, primaryLabel, primaryColor, 'rgba(250, 173, 20, 0.055)', [5, 4], { noRightText: true, railsOnly: true, dropFillIfTall: 0.35, minH: 3 });
+    }
+    // 核心带只保留半透明横带与简短标签，不再形成第二个重框。
+    drawBoxArea(lv.centerLow, lv.centerHigh, n - (lv.coreWin || 20) - 1, lv.coreWin || 20, 'BAND', '#1677ff', 'rgba(22, 119, 255, 0.12)', [], { noRightText: true, railsOnly: true, minH: 2, noRange: true });
   }
   // 上限从 8 放宽到 20：周线只显示 30 根、月线 24 根时，每根间距 50~60px，
   // 若仍按 8px 画会变成"牙签"，K 线实体几乎看不见。
