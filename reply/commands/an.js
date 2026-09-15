@@ -915,6 +915,51 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   [[`MA5 ${fpBy(a.ma5, prec)}`, maCols[5]], [`MA10 ${fpBy(a.ma10, prec)}`, maCols[10]], [`MA20 ${fpBy(a.ma20, prec)}`, maCols[20]], [`MA60 ${fpBy(a.ma60, prec)}`, maCols[60]], [`MACD ${a.macdTxt}`, '#7b61ff']].forEach(it => { ctx.fillStyle = it[1]; ctx.fillText(it[0], lx, y0 + h - 12); lx += 150; });
 }
 
+function renderAnSummaryCard(code, name, quote, all, prec, relative) {
+  const { createCanvas } = require('@napi-rs/canvas');
+  const W = 900, H = 630, PAD = 34;
+  const canvas = createCanvas(W * 1.2, H * 1.2), ctx = canvas.getContext('2d'); ctx.scale(1.2, 1.2);
+  const ink = '#262b33', sub = '#7a8492', panel = '#f6f7f9', red = '#f5222d', green = '#0aa869', blue = '#1677ff';
+  const day = all.day, week = all.week, month = all.month, oc = overallConclusion(day, week, month);
+  const price = Number(quote?.price) || day.close, chg = Number.isFinite(Number(quote?.chgPct)) ? Number(quote.chgPct) : day.chgPct;
+  const pressures = uniqPrices([...day.pressures, ...week.pressures].filter(v => v >= price).sort((a, b) => a - b), prec);
+  const confirm = pressures[0] || null, shortInvalid = day.structuralInvalid || day.supports.at(-1) || null, swingInvalid = week.structuralInvalid || week.supports.at(-1) || null;
+  const stateColor = oc.state === '结构转弱' ? green : oc.state.includes('趋势') ? red : blue;
+  const fp = v => fpBy(v, prec), pctText = pct(chg);
+  const box = (x, y, w, h, title, color = blue) => { ctx.fillStyle = panel; ctx.beginPath(); ctx.roundRect(x, y, w, h, 14); ctx.fill(); ctx.fillStyle = color; ctx.fillRect(x + 16, y + 14, 5, 20); ctx.fillStyle = ink; ctx.font = 'bold 15px cjk'; ctx.fillText(title, x + 30, y + 24); };
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.textBaseline = 'middle';
+  ctx.fillStyle = stateColor; ctx.fillRect(PAD, 26, 6, 58); ctx.fillStyle = ink; ctx.font = 'bold 27px cjk'; ctx.fillText(`${name} · 分析结论`, PAD + 16, 48);
+  ctx.fillStyle = sub; ctx.font = '13px cjk'; ctx.fillText(`${code.toUpperCase()} · 月线许可 / 周线阶段 / 日线执行`, PAD + 16, 72);
+  ctx.textAlign = 'right'; ctx.fillStyle = chg >= 0 ? red : green; ctx.font = 'bold 31px cjk'; ctx.fillText(fp(price), W - PAD, 48); ctx.font = '15px cjk'; ctx.fillText(pctText, W - PAD, 73); ctx.textAlign = 'left';
+  box(PAD, 108, W - PAD * 2, 92, '当前判断', stateColor);
+  ctx.fillStyle = stateColor; ctx.font = 'bold 25px cjk'; ctx.fillText(`${oc.state}  ${oc.stars}`, PAD + 20, 150); ctx.fillStyle = ink; ctx.font = '15px cjk'; ctx.fillText(oc.action, PAD + 20, 181);
+  const gap = 16, colW = (W - PAD * 2 - gap) / 2, y = 218;
+  box(PAD, y, colW, 164, '关键条件', red);
+  ctx.fillStyle = ink; ctx.font = '15px cjk';
+  const conditionLines = [
+    `向上确认  ${confirm ? `放量站回 ${fp(confirm)}` : '等待近期压力突破'}`,
+    `短线失效  ${shortInvalid ? `跌破 ${fp(shortInvalid)}` : '跌破日线结构低点'}`,
+    `波段失效  ${swingInvalid ? `跌破 ${fp(swingInvalid)}` : '跌破周线关键低点'}`,
+  ];
+  conditionLines.forEach((t, i) => { ctx.fillStyle = i === 0 ? red : i === 1 ? '#d48806' : green; ctx.fillText(t, PAD + 20, y + 58 + i * 31); });
+  box(PAD + colW + gap, y, colW, 164, '趋势与风险', blue);
+  const e = day.evidence || {}, atrText = e.atrPct ? `ATR ${fpBy(e.atrPct, 2)}%` : 'ATR 待计算';
+  const riskDist = shortInvalid && e.atr ? (price - shortInvalid) / e.atr : null;
+  const riskText = riskDist !== null ? `距短线失效 ${riskDist.toFixed(1)} ATR` : '失效距离待确认';
+  [[`日线 ${day.trend} · ${e.trendQuality || '-'}`, ink], [`DMI ${e.dmiDirection || '-'} · ${atrText}`, blue], [riskText, riskDist !== null && riskDist < 1 ? '#d48806' : ink]].forEach((it, i) => { ctx.fillStyle = it[1]; ctx.font = i === 0 ? 'bold 15px cjk' : '15px cjk'; ctx.fillText(it[0], PAD + colW + gap + 20, y + 58 + i * 31); });
+  const y2 = 400; box(PAD, y2, W - PAD * 2, 152, '相对强弱与执行提醒', '#722ed1');
+  const rs = relative?.vs300 || {}, fmt = v => Number.isFinite(v) ? pct(v) : '-';
+  ctx.fillStyle = ink; ctx.font = '15px cjk'; ctx.fillText(`相对沪深300  ${relative?.state || '数据暂不可用'} · 5/20/60日 ${fmt(rs[5])} / ${fmt(rs[20])} / ${fmt(rs[60])}`, PAD + 20, y2 + 57);
+  const ind = relative?.industry, ir = relative?.vsIndustry || {};
+  ctx.fillStyle = ind ? '#722ed1' : sub; ctx.fillText(ind ? `所属行业  ${ind.name} · 当日排名 ${ind.rank}/${ind.total} · 相对行业20日 ${fmt(ir[20])}` : '所属行业  ETF、指数、跨市场标的或未精确映射时不展示行业结论', PAD + 20, y2 + 88);
+  ctx.fillStyle = day.breakout?.state === '假突破风险' || day.breakout?.state === '破位' ? green : blue; ctx.font = 'bold 15px cjk'; ctx.fillText(`执行提示  ${day.breakout?.state || '区间内'} · ${day.evidence?.priceAction?.text || '价格行为待确认'}`, PAD + 20, y2 + 121);
+  ctx.fillStyle = sub; ctx.font = '11px cjk'; ctx.textAlign = 'right'; ctx.fillText('先看本卡行动条件，再看下一张技术图验证结构 · 非投资建议', W - PAD, H - 22);
+  return 'base64://' + canvas.toBuffer('image/png').toString('base64');
+}
+function buildAnMobileText(name, code, quote, all) {
+  const oc = overallConclusion(all.day, all.week, all.month), price = Number(quote?.price) || all.day.close;
+  return `📊 ${name}（${code.toUpperCase()}） ${fpBy(price, all.day.prec)}\n${oc.state}：${oc.action}\n下方依次为「结论卡」和「多周期技术图」`;
+}
 async function cmdAn(args) {
   const parts = (args || []).filter(Boolean);
   const codeArg = parts[0];
@@ -972,11 +1017,13 @@ async function cmdAn(args) {
     }
     relative = buildRelativeStrength(dayK, hs300K, industry, industryK, boards);
   }
-  const text = resolveNotice + buildReport(name, code, quote, all, prec, relative);
-  let img = null;
+  const detailText = resolveNotice + buildReport(name, code, quote, all, prec, relative);
+  const text = resolveNotice + buildAnMobileText(name, code, quote, all);
+  let img = null, summaryImg = null;
+  try { summaryImg = renderAnSummaryCard(code, name, quote, all, prec, relative); } catch (e) { console.error('[an] 结论卡生成失败:', e.message); }
   try { img = renderAnPng(code, name, quote, all, prec); }
   catch (e) { console.error('[an] 图表生成失败:', e.message); }
-  return { ok: true, text, img };
+  return { ok: true, text, detailText, summaryImg, img };
 }
 
-module.exports = { cmdAn, analyzePeriod, renderAnPng };
+module.exports = { cmdAn, analyzePeriod, renderAnPng, renderAnSummaryCard };

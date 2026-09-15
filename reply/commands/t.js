@@ -1068,6 +1068,41 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
   return 'base64://' + canvas.toBuffer('image/png').toString('base64');
 }
 
+function renderTSummaryCard(code, name, quote, autoForm, timeInfo, dayInfo, tPos) {
+  const { createCanvas } = require('@napi-rs/canvas');
+  const W = 900, H = 600, PAD = 34, prec = dayInfo.prec || 2;
+  const canvas = createCanvas(W * 1.2, H * 1.2), ctx = canvas.getContext('2d'); ctx.scale(1.2, 1.2);
+  const ink = '#262b33', sub = '#7a8492', panel = '#f6f7f9', red = '#f5222d', green = '#0aa869', blue = '#1677ff';
+  const price = timeInfo.lastPrice, chg = timeInfo.prevClose > 0 ? (price / timeInfo.prevClose - 1) * 100 : 0;
+  const fp = v => Number.isFinite(v) ? Number(v).toFixed(prec) : '-', pctText = v => `${v >= 0 ? '+' : ''}${Number(v).toFixed(2)}%`;
+  const formLabel = { uptrend: '上升单边', downtrend: '下降单边', swing: '震荡区间', unclear: '趋势不明' }[autoForm] || '趋势不明';
+  const signal = timeInfo.priceAction?.signal || 'wait';
+  const action = timeInfo.pureAuction ? '开盘数据不足，暂不生成完整T位' : signal === 'sell' ? '价格行为触发：优先T出/减仓' : signal === 'buy' ? '价格行为触发：可分批买回' : tPos?.inSellZone ? '进入卖出参考区，等价格行为确认' : tPos?.inBuyZone ? '进入买回参考区，等价格行为确认' : '中性区，等待均价线与5分钟结构共振';
+  const actionColor = signal === 'sell' || tPos?.inSellZone ? red : signal === 'buy' || tPos?.inBuyZone ? green : blue;
+  const box = (x, y, w, h, title, color) => { ctx.fillStyle = panel; ctx.beginPath(); ctx.roundRect(x, y, w, h, 14); ctx.fill(); ctx.fillStyle = color; ctx.fillRect(x + 16, y + 14, 5, 20); ctx.fillStyle = ink; ctx.font = 'bold 15px cjk'; ctx.fillText(title, x + 30, y + 24); };
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.textBaseline = 'middle'; ctx.fillStyle = actionColor; ctx.fillRect(PAD, 26, 6, 58);
+  ctx.fillStyle = ink; ctx.font = 'bold 27px cjk'; ctx.fillText(`${name} · 做T结论`, PAD + 16, 48); ctx.fillStyle = sub; ctx.font = '13px cjk'; ctx.fillText(`${code.toUpperCase()} · 分时价格行为优先，MACD只作辅助`, PAD + 16, 72);
+  ctx.textAlign = 'right'; ctx.fillStyle = chg >= 0 ? red : green; ctx.font = 'bold 31px cjk'; ctx.fillText(fp(price), W - PAD, 48); ctx.font = '15px cjk'; ctx.fillText(pctText(chg), W - PAD, 73); ctx.textAlign = 'left';
+  box(PAD, 108, W - PAD * 2, 94, '当前动作', actionColor); ctx.fillStyle = actionColor; ctx.font = 'bold 22px cjk'; ctx.fillText(action, PAD + 20, 151); ctx.fillStyle = ink; ctx.font = '15px cjk'; ctx.fillText(`日线 ${formLabel} · ${timeInfo.openPhase ? '开盘阶段，参考今开' : '盘中阶段，参考黄线'}`, PAD + 20, 181);
+  const gap = 16, colW = (W - PAD * 2 - gap) / 2, y = 220;
+  box(PAD, y, colW, 164, '做T价格区', red); ctx.font = 'bold 18px cjk';
+  if (tPos) { ctx.fillStyle = red; ctx.fillText(`卖出参考  ${fp(tPos.sellLow)} ~ ${fp(tPos.sellHigh)}`, PAD + 20, y + 61); ctx.fillStyle = green; ctx.fillText(`买回参考  ${fp(tPos.buyLow)} ~ ${fp(tPos.buyHigh)}`, PAD + 20, y + 101); ctx.fillStyle = ink; ctx.font = '14px cjk'; ctx.fillText(`预估T差  ${tPos.expectedTDiff || '-'}% · 仅限预留T仓`, PAD + 20, y + 133); }
+  else { ctx.fillStyle = blue; ctx.font = 'bold 18px cjk'; ctx.fillText('暂不生成完整T位', PAD + 20, y + 69); ctx.fillStyle = ink; ctx.font = '14px cjk'; ctx.fillText('先等第4~5分钟形成高低点和量能关系', PAD + 20, y + 107); }
+  box(PAD + colW + gap, y, colW, 164, '分时确认', blue);
+  const pa = timeInfo.priceAction || {}, five = pa.fiveMin === 'bull' ? '5分钟偏强' : pa.fiveMin === 'bear' ? '5分钟偏弱' : '5分钟震荡';
+  [[`${pa.aboveAvg ? '站上' : '跌破'}均价线 · ${five}`, pa.aboveAvg ? red : green], [`量能 ${pa.volBurst ? '突增' : pa.volDry ? '收缩' : '平稳'} · 买${pa.buyScore || 0}/卖${pa.sellScore || 0}分`, ink], [`MACD ${timeInfo.macdState?.crossText || '待形成'}（不单独触发）`, sub]].forEach((it, i) => { ctx.fillStyle = it[1]; ctx.font = i === 0 ? 'bold 16px cjk' : '14px cjk'; ctx.fillText(it[0], PAD + colW + gap + 20, y + 61 + i * 34); });
+  const y2 = 402; box(PAD, y2, W - PAD * 2, 126, '执行纪律', '#722ed1');
+  const warnings = timeInfo.amplitude < (/^(sh51|sz159)/.test(code) ? 0.08 : 0.45) ? `振幅 ${timeInfo.amplitude.toFixed(2)}%，空间可能不足手续费` : `日内振幅 ${timeInfo.amplitude.toFixed(2)}% · 当前位于日内 ${timeInfo.dayPosition.toFixed(0)}% 位置`;
+  ctx.fillStyle = ink; ctx.font = '15px cjk'; ctx.fillText(warnings, PAD + 20, y2 + 57); ctx.fillStyle = sub; ctx.fillText('没有价格行为共振就不操作；趋势单边时，T仓宜小于原持仓的 15%~20%。', PAD + 20, y2 + 89);
+  ctx.fillStyle = sub; ctx.font = '11px cjk'; ctx.textAlign = 'right'; ctx.fillText('先看本卡价格区与确认，再看下一张分时图 · 非投资建议', W - PAD, H - 22);
+  return 'base64://' + canvas.toBuffer('image/png').toString('base64');
+}
+function buildTMobileText(name, code, timeInfo, dayInfo, tPos) {
+  const fp = v => Number.isFinite(v) ? Number(v).toFixed(dayInfo.prec || 2) : '-';
+  const signal = timeInfo.priceAction?.signal || 'wait';
+  const action = timeInfo.pureAuction ? '先观察开盘结构' : signal === 'sell' ? '价格行为触发T出/减仓' : signal === 'buy' ? '价格行为触发买回' : '暂不操作，等待共振';
+  return `📍 ${name}（${code.toUpperCase()}）现价 ${fp(timeInfo.lastPrice)}\n${action}\n下方依次为「做T结论卡」和「分时技术图」`;
+}
 // ── 主命令函数 ──
 async function cmdT(args) {
   const parts = (args || []).filter(Boolean);
@@ -1166,9 +1201,11 @@ async function cmdT(args) {
     : dayInfo.form;
   // tPos 可能为 null（纯竞价阶段）
   const tPos = calcTPositions(activeForm, timeInfo, dayInfo);
-  const text = resolveNotice + buildTReport(name, code, dayInfo.form, userFormRaw, timeInfo, dayInfo, tPos);
+  const detailText = resolveNotice + buildTReport(name, code, dayInfo.form, userFormRaw, timeInfo, dayInfo, tPos);
+  const text = resolveNotice + buildTMobileText(name, code, timeInfo, dayInfo, tPos);
   // 生成图
-  let img = null;
+  let img = null, summaryImg = null;
+  try { summaryImg = renderTSummaryCard(code, name, effectiveQuote, activeForm, timeInfo, dayInfo, tPos); } catch (e) { console.error('[/t] 结论卡生成失败:', e.message); }
   try {
     if (timeKlines && timeKlines.length >= 5) {
       // 纯竞价阶段（tPos 为 null）：画简化分时图（无T位标注）
@@ -1179,7 +1216,7 @@ async function cmdT(args) {
       img = renderStockPng(code, name, '日线', dayKlines, { maPeriods: [5, 10, 20], boll: true, timeMode: false, prec: 2 }, quote);
     }
   } catch (e) { console.error('[/t] 图表生成失败:', e.message); }
-  return { ok: true, text, img };
+  return { ok: true, text, detailText, summaryImg, img };
 }
 
-module.exports = { cmdT, analyzeTDayForm, analyzeTTimeData, calcTPositions, buildTReport, renderTPngCanvas, calcMACD, analyzeMACDState, _openScenario };
+module.exports = { cmdT, analyzeTDayForm, analyzeTTimeData, calcTPositions, buildTReport, renderTPngCanvas, renderTSummaryCard, calcMACD, analyzeMACDState, _openScenario };
