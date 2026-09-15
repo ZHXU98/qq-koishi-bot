@@ -162,8 +162,8 @@ function _openScenario({ gapPct, openDirPct, pullbackPct, recoverPct, confirmTh,
 // ── 分时现状分析 ──
 // 三阶段逻辑：
 //   preMacd      ：有效分时 ≤ 3 根（约 9:30~9:32）— 不使用 MACD，只看首根实体、均价和量比
-//   macdForming  ：4~5 根（约 9:33~9:34）       — 仅观察 MACD 柱/DIFF 是否收敛或拐头，不给做T触发
-//   macdConfirm  ：6~10 根（约 9:35~9:39）      — 均价线、量能、前高前低和5分钟K先决定方向；MACD仅过滤
+//   macdForming  ：4~5 根（约 9:33~9:34）       — 观察首段高低点、均价线、量能和初步5分钟结构，不给T触发
+//   macdConfirm  ：6~10 根（约 9:35~9:39）      — 单层价格行为评分决定方向；MACD仅旁路展示
 //   盘中          ：有效分时 > 10 根             — 使用既有黄线、轨迹、量能与 MACD 共振
 function analyzeTTimeData(timeKlines, quote, code = '') {
   const hasTime = !!timeKlines && timeKlines.length >= 2;
@@ -259,7 +259,7 @@ function calcVolRef(dayKlines) {
 }
 
 // ── 日内价格行为主信号：均价线、量能、前高前低、5分钟K结构 ──
-// MACD 为滞后指标，仅保留为过滤器；绝不单独产生买卖触发。
+// MACD 为滞后指标，仅作为旁路展示；不单独产生买卖触发。
 function analyzePriceAction(klines, avgLine, lastPrice) {
   const rows = (klines || []).filter(k => Number(k.close) > 0);
   const n = rows.length;
@@ -494,7 +494,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   const gapTxt = gapPct > 1 ? `高开 +${gapPct.toFixed(2)}%` : gapPct < -1 ? `低开 ${gapPct.toFixed(2)}%` : `平开 ${gapPct.toFixed(2)}%`;
 
   if (pureAuction) {
-    // ── 前 3 分钟 / 3~5 分钟：不以 MACD 作为做T确认 ──
+    // ── 前 3 分钟 / 3~5 分钟：只观察价格结构与量能，不给做T信号 ──
     const first = timeInfo.timeKlines && timeInfo.timeKlines[0];
     const firstDir = first ? (first.close >= first.open ? '首根实体偏强' : '首根实体偏弱') : '首根实体待确认';
     L.push(`🔔 竞价结果：今开 ${fp(open)}（${gapTxt}）  /  量比 ${volRatio.toFixed(1)}  /  现价 ${fp(lastPrice)}`);
@@ -524,7 +524,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
       L.push(`   💡 平开看开盘后走势与量能，再判断T方向`);
     }
     L.push('');
-    L.push(`⏰ 当前有效分时 ${candleCount} 根，${preMacd ? '前3分钟：只看均价线、量比和首根实体，不用MACD' : `3~5分钟：${firstDir}，只观察MACD绿柱是否收敛、DIF是否拐头，不作为做T确认`}`);
+    L.push(`⏰ 当前有效分时 ${candleCount} 根，${preMacd ? '前3分钟：只看均价线、量比和首根实体，不用MACD' : `3~5分钟：${firstDir}，观察首段高低点、均价线、量能和初步5分钟结构，暂不触发做T`}`);
     L.push(`   ⚠️ 暂不给T位——${preMacd ? '先等至少3分钟形成初步价格结构' : '等到第6根分钟K后，观察均价线、量能、前高前低与5分钟结构'}`);
     L.push(`   📉 分时MACD：当天1分钟K线(12,26,9)，首根收盘价为EMA初始值，仅作辅助参考`);
     L.push('');
@@ -597,7 +597,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push(`现价 ${fp(lastPrice)}（盘后/非交易时段，无实时分时数据，以日线数据为参考）`);
   }
   if (macdConfirm) {
-    L.push(`→ ⏱ 开盘第6~10分钟：均价线、前高前低、量能与5分钟K先决定方向；MACD若同向出现，仅作为额外强印证。`);
+    L.push(`→ ⏱ 开盘第6~10分钟：单层价格行为评分（均价线、量能、前高前低、5分钟K）决定是否给出做T建议；MACD仅同步显示。`);
   }
   // ── 价格行为主信号：均价线 + 量能 + 前高前低 + 5分钟结构 ──
   if (priceAction) {
@@ -613,7 +613,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     else if (pa.signal === 'sell') L.push(`   ⚠️ T出/减仓信号：价格行为评分 ${pa.sellScore} 分（均价线/前低/5分钟K/量能共振）`);
     else L.push(`   ⏳ 价格行为未形成共振（买${pa.buyScore}分 / 卖${pa.sellScore}分），等待而非猜方向`);
   }
-  // ── MACD：可选强印证，不单独触发，也不否决价格行为信号 ──
+  // ── MACD：旁路辅助展示，不单独触发，也不影响价格行为信号 ──
   if (macdState && macd) {
     const crossTxt = macdState.crossText || (macdState.cross === 'gold' ? '金叉↑' : macdState.cross === 'dead' ? '死叉↓' : '无交叉');
     const zoneTxt = macdState.zeroAbove ? '零轴上方' : '零轴下方';
@@ -761,7 +761,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   L.push('');
   // ── 当前操作建议 ──
   L.push('━━━ 当前操作建议 ━━━');
-  // 价格行为负责触发；MACD若同向发生则强印证，未发生或反向均不撤销价格行为信号。
+  // 价格行为负责唯一触发；MACD仅同步展示，不影响价格行为信号。
   const macdEndorsesBuy = macdState && macdState.cross === 'gold';
   const macdEndorsesSell = macdState && macdState.cross === 'dead';
   const paSignal = priceAction ? priceAction.signal : 'wait';
