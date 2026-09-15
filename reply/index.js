@@ -45,7 +45,7 @@ const { sleep, uptimeText, nowText, extractMagnet } = require('./utils');
 // 网关
 const { napcat, sendReply, sendImagesSequential, parseMessage, ownerOpenid, ownerList, isOwnerCtx, ownerDeniedMsg } = require('./gateway');
 // 快讯/每日汇总
-const { NEWS_QUERY_LIMIT, DAILY_PUSH_HOUR, DAILY_PUSH_MIN, DAILY_PUSH_ENABLED, fetchImportantNews, formatNewsReply, sendDailySummary } = require('./commands/news');
+const { NEWS_QUERY_LIMIT, DAILY_PUSH_HOUR, DAILY_PUSH_MIN, DAILY_PUSH_ENABLED, fetchImportantNews, formatNewsReply, cmdNews, sendDailySummary } = require('./commands/news');
 // 指令域
 const { cmdHelp, cmdPing, cmdStatus, cmdEcho } = require('./commands/basic');
 const { cmdSS } = require('./commands/ss');
@@ -163,10 +163,10 @@ async function handleEvent(ev) {
   } else if (cmd.type === 'status') {
     await sendReply(ev, await cmdStatus(wsState));
   } else if (cmd.type === 'news') {
-    // 快讯查询（被动回复，不占主动配额）
-    const items = await fetchImportantNews(NEWS_QUERY_LIMIT);
-    const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-    await sendReply(ev, formatNewsReply(items, `📌 最新重要资讯（${now}）`));
+    // 被动 /快讯：固定最近 10 条重要资讯，使用 RSS 同款主题/等级卡片，一张长图承载。
+    const r = await cmdNews();
+    if (r.ok && r.img) await sendReply(ev, '', [r.img]);
+    else await sendReply(ev, r.text || '⚠️ 快讯获取失败');
   } else if (cmd.type === 'ss') {
     const r = await cmdSS();
     if (r.ok && r.img) {

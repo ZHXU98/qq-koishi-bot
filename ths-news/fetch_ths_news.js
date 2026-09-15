@@ -368,11 +368,21 @@ function levelStyle(it) {
   return { label: '重要资讯', color: '#64748B', bg: '#F1F5F9' };
 }
 
+function loadRenderModule(name) {
+  try { return require(name); }
+  catch (firstError) {
+    // /快讯 从 reply 进程复用该卡片时，依赖安装在 reply/node_modules；
+    // 主动推送容器仍优先走当前模块自己的依赖解析。
+    try { return require(path.join(__DIR, '..', 'reply', 'node_modules', name)); }
+    catch (_) { throw firstError; }
+  }
+}
+
 function renderCard(dateStr, items) {
   // 优先 resvg（容器，字体确认存在时）；fallback @napi-rs/canvas（本地开发）
   if (fs.existsSync(FONT_PATH)) {
     try {
-      const { Resvg } = require('@resvg/resvg-js');
+      const { Resvg } = loadRenderModule('@resvg/resvg-js');
       const svg = buildCardSvg(dateStr, items);
       const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: CARD_W }, font: { fontFiles: [FONT_PATH] } });
       return resvg.render().asPng();
@@ -384,7 +394,7 @@ function renderCard(dateStr, items) {
 }
 
 function renderCardCanvas(dateStr, items) {
-  const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
+  const { createCanvas, GlobalFonts } = loadRenderModule('@napi-rs/canvas');
   // 优先注册项目内置 WQY；再补充系统字体作 fallback
   const fontCandidates = [
     path.join(__DIR, 'fonts', 'cjk.ttc'),        // 项目内置 WQY（最优先）

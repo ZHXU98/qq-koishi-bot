@@ -4,6 +4,7 @@
 const { sleep } = require('../utils');
 const { napcat, sendReply } = require('../gateway');
 const { CONFIG } = require('../config');
+const { renderCard, loadNewsRules, classifyNews } = require('../../ths-news/fetch_ths_news');
 
 // ---------- 快讯查询（同花顺官方「重要」资讯，2026-08-26 从网关迁入，qq-reply 为统一命令中心） ----------
 const THS_URL = 'https://news.10jqka.com.cn/tapp/news/push/stock/?page=%s&tag=&pageSize=50';
@@ -16,7 +17,7 @@ const DAILY_PUSH_MIN = Number(process.env.DAILY_PUSH_MIN || 30);
 const DAILY_PUSH_ENABLED = (process.env.DAILY_PUSH_ENABLED || 'false') === 'true';
 const OWNER_QQ_FOR_WAKEUP = '1547450303'; // 每日汇总发送对象（网关 /send_wakeup 按 QQ 号映射 owner openid）
 
-async function fetchImportantNews(limit = NEWS_QUERY_LIMIT) {
+async function fetchImportantNewsData(limit = NEWS_QUERY_LIMIT) {
   try {
     const selected = [];
     const seen = new Set();
@@ -33,19 +34,50 @@ async function fetchImportantNews(limit = NEWS_QUERY_LIMIT) {
         const key = String(it.id || `${it.ctime}:${it.title}`);
         if (seen.has(key)) continue;
         seen.add(key);
-        selected.push(it);
+        selected.push({
+          title: String(it.title || ''),
+          desc: String(it.digest || it.short || ''),
+          time: Number(it.ctime) * 1000,
+          link: it.url || '',
+          tag: it.tag || '',
+          import: it.import,
+        });
         if (selected.length >= limit) break;
       }
       if (!list.length) break;
     }
-    return selected.map((it, i) => {
-      const t = new Date(Number(it.ctime) * 1000);
-      const p = (n) => String(n).padStart(2, '0');
-      return `${i + 1}. [${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}] ${it.title}`;
-    });
+    return selected;
   } catch (e) {
     console.error('[news] 快讯抓取失败:', e.message);
     return [];
+  }
+}
+
+async function fetchImportantNews(limit = NEWS_QUERY_LIMIT) {
+  const selected = await fetchImportantNewsData(limit);
+  return selected.map((it, i) => {
+    const t = new Date(it.time);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${i + 1}. [${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}] ${it.title}`;
+  });
+}
+
+// 被动 /快讯：固定最近 10 条同花顺重要资讯，一次生成一张长图；不沿用主动推送的 8 条拆图规则。
+async function cmdNews() {
+  const items = await fetchImportantNewsData(NEWS_QUERY_LIMIT);
+  const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+  const tag = `📌 最新重要资讯（${now}）`;
+  if (!items.length) return { ok: false, text: formatNewsReply([], tag) };
+  try {
+    loadNewsRules();
+    const classified = items.map(it => ({ ...it, ...classifyNews(it) }));
+    const dateStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+    const png = renderCard(dateStr, classified);
+    if (!png) throw new Error('未生成图片');
+    return { ok: true, img: 'base64://' + png.toString('base64'), text: tag };
+  } catch (e) {
+    console.error('[news] 快讯卡片渲染失败，回退文本:', e.message);
+    return { ok: false, text: formatNewsReply(await fetchImportantNews(NEWS_QUERY_LIMIT), tag) };
   }
 }
 function formatNewsReply(items, tag) {
@@ -64,4 +96,4 @@ async function sendDailySummary() {
   }
 }
 
-module.exports = { THS_URL, NEWS_MAX_PAGES, NEWS_QUERY_LIMIT, DAILY_PUSH_HOUR, DAILY_PUSH_MIN, DAILY_PUSH_ENABLED, OWNER_QQ_FOR_WAKEUP, fetchImportantNews, formatNewsReply, sendDailySummary };
+module.exports = { THS_URL, NEWS_MAX_PAGES, NEWS_QUERY_LIMIT, DAILY_PUSH_HOUR, DAILY_PUSH_MIN, DAILY_PUSH_ENABLED, OWNER_QQ_FOR_WAKEUP, fetchImportantNewsData, fetchImportantNews, cmdNews, formatNewsReply, sendDailySummary };
