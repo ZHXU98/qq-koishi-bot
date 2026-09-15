@@ -96,14 +96,16 @@ function buildStocksPng(items, meta) {
   const n = items.length;
   const cols = stocksGridCols(n);
   const rows = Math.ceil(n / cols);
-  const GAP = 1;
-  const base = Math.floor((W - (cols - 1)) / cols);
-  const rem = (W - (cols - 1)) - base * cols;
+  // codeflicker-fix: UX-Issue-002/9w1uayqs7526yog8f3nw
+  // 组合图不再像紧贴的表格：留出画布边缘和卡间距，手机缩放时更容易逐只扫读。
+  const OUTER = 18, GAP = 14;
+  const base = Math.floor((W - OUTER * 2 - (cols - 1) * GAP) / cols);
+  const rem = (W - OUTER * 2 - (cols - 1) * GAP) - base * cols;
   const colW = [], colX = [];
-  let acc = 0;
+  let acc = OUTER;
   for (let i = 0; i < cols; i++) { const w = base + (i < rem ? 1 : 0); colW.push(w); colX.push(acc); acc += w + GAP; }
 
-  const HEADER_H = 132, FOOTER_H = 54;
+  const HEADER_H = 144, FOOTER_H = 54;
   const F = cols <= 1 ? { name: 36, chg: 36, meta: 23 }
     : cols === 2 ? { name: 31, chg: 30, meta: 22 }
       : cols === 3 ? { name: 27, chg: 26, meta: 21 }
@@ -113,12 +115,12 @@ function buildStocksPng(items, meta) {
   const TITLE_ROW = Math.round(F.name * 1.55);
   const META_ROW = Math.round(F.meta * 1.8);
   const chartW = base - PADX * 2;
-  const chartH = Math.round(chartW * 0.56);
+  const chartH = Math.round(chartW * 0.58);
   const cellH = PADY + TITLE_ROW + chartH + META_ROW + PADY;
   const gridH = rows * cellH + (rows - 1) * GAP;
-  const GY = HEADER_H + 1;
-  const FOY = GY + gridH;
-  const H = FOY + 1 + FOOTER_H;
+  const GY = HEADER_H + OUTER;
+  const FOY = GY + gridH + OUTER;
+  const H = FOY + FOOTER_H;
 
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
@@ -143,17 +145,17 @@ function buildStocksPng(items, meta) {
   ctx.fillStyle = SUB; ctx.font = '23px cjk';
   ctx.fillText(meta.statsTxt, W - MX, 92);
 
-  // —— 网格：白底 + 1px 分隔线（不满一行的空格子保持白底，不出现灰块） ——
-  ctx.fillStyle = BG; ctx.fillRect(0, GY, W, gridH);
-  ctx.fillStyle = LINE;
-  for (let c0 = 1; c0 < cols; c0++) ctx.fillRect(colX[c0] - GAP, GY, GAP, gridH);
-  for (let r = 1; r < rows; r++) ctx.fillRect(0, GY + r * (cellH + GAP) - GAP, W, GAP);
+  // —— 卡片画布：浅灰背景上的独立白卡，避免多标的图像表格一样粘连 ——
+  ctx.fillStyle = '#f5f6f8'; ctx.fillRect(0, HEADER_H, W, FOY - HEADER_H);
 
   for (let i = 0; i < n; i++) {
     const it = items[i];
     const r = Math.floor(i / cols), c0 = i % cols;
     const cx = colX[c0], cy = GY + r * (cellH + GAP), cwid = colW[c0];
-    if (it.error) { ctx.fillStyle = '#f4f5f7'; ctx.fillRect(cx, cy, cwid, cellH); }
+    ctx.fillStyle = it.error ? '#f4f5f7' : '#ffffff';
+    ctx.beginPath(); ctx.roundRect(cx, cy, cwid, cellH, 14); ctx.fill();
+    ctx.strokeStyle = '#e7eaf0'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(cx + 0.5, cy + 0.5, cwid - 1, cellH - 1, 14); ctx.stroke();
 
     if (it.error) {
       ctx.textAlign = 'center';
@@ -181,6 +183,7 @@ function buildStocksPng(items, meta) {
 
     // —— 迷你走势 ——
     const chX = cx + PADX, chY = cy + PADY + TITLE_ROW, dn = it.disp.length;
+    const cellChartW = cwid - PADX * 2;
     const closes = it.disp.map(k => k.close);
     let lo = Math.min(...it.disp.map(k => k.low)), hi = Math.max(...it.disp.map(k => k.high));
     if (!isFinite(lo) || !isFinite(hi)) { lo = Math.min(...closes); hi = Math.max(...closes); }
@@ -194,7 +197,7 @@ function buildStocksPng(items, meta) {
     ctx.strokeStyle = GRIDL; ctx.lineWidth = 1;
     [1 / 3, 2 / 3].forEach(f => {
       const yy = Math.round(chY + f * chartH) + 0.5;
-      ctx.beginPath(); ctx.moveTo(chX, yy); ctx.lineTo(chX + chartW, yy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(chX, yy); ctx.lineTo(chX + cellChartW, yy); ctx.stroke();
     });
     // 区间起点基准虚线（分时为昨收）。标签不在这里画——曲线后画会盖住标签，
     // 挪到下方 time 分支末尾（价格线画完后）做冲突避让。
@@ -202,7 +205,7 @@ function buildStocksPng(items, meta) {
       const yb = Y(it.baseline);
       if (yb > chY - 1 && yb < chY + chartH + 1) {
         ctx.strokeStyle = BASE; ctx.lineWidth = 1; ctx.setLineDash([5, 5]);
-        ctx.beginPath(); ctx.moveTo(chX, yb); ctx.lineTo(chX + chartW, yb); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(chX, yb); ctx.lineTo(chX + cellChartW, yb); ctx.stroke();
         ctx.setLineDash([]);
       }
     }
@@ -221,8 +224,8 @@ function buildStocksPng(items, meta) {
         return Math.min(TOT - 1, Math.max(0, m <= 690 ? m - 571 : m - 660));
       };
       const px = i2 => it.mkt === 'hf'
-        ? chX + (dn <= 1 ? 0 : (i2 / (dn - 1)) * chartW)
-        : chX + (tmin(it.disp[i2].t) / TOT) * chartW;
+        ? chX + (dn <= 1 ? 0 : (i2 / (dn - 1)) * cellChartW)
+        : chX + (tmin(it.disp[i2].t) / TOT) * cellChartW;
       // 渐变填充（价格线下方半透明区域）
       const fillRgb = it.chgPct >= 0 ? '245,34,45' : '10,168,105';
       const fillGrad = ctx.createLinearGradient(0, chY, 0, chY + chartH);
@@ -256,15 +259,15 @@ function buildStocksPng(items, meta) {
         const lh = 18;
         const ly = it.chgPct >= 0 ? (chY + chartH - lh - 2) : (chY + 2);
         ctx.fillStyle = 'rgba(201,206,214,0.88)';
-        ctx.beginPath(); ctx.roundRect(chX + chartW - lw, ly, lw, lh, 4); ctx.fill();
+        ctx.beginPath(); ctx.roundRect(chX + cellChartW - lw, ly, lw, lh, 4); ctx.fill();
         ctx.fillStyle = '#6b7280';
         ctx.textAlign = 'center';
-        ctx.fillText(lb, chX + chartW - lw / 2, ly + lh / 2);
+        ctx.fillText(lb, chX + cellChartW - lw / 2, ly + lh / 2);
         ctx.textAlign = 'left';
       }
     } else {
       // K线：蜡烛（涨红跌绿）
-      const step = chartW / dn;
+      const step = cellChartW / dn;
       const bw = Math.max(1.2, Math.min(9, step * 0.62));
       for (let k = 0; k < dn; k++) {
         const d = it.disp[k];
@@ -290,7 +293,7 @@ function buildStocksPng(items, meta) {
       const liveTxt = it.livePxTxt;
       ctx.font = `bold ${Math.max(16, F.meta - 1)}px cjk`;
       const lw = ctx.measureText(liveTxt).width + 12;
-      const lx = chX + chartW - lw;
+      const lx = chX + cellChartW - lw;
       const ly = meta.period === 'time'
         ? (it.chgPct >= 0 ? (chY + 2) : (chY + chartH - 22))
         : (chY + 2);

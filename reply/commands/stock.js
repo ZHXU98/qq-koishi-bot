@@ -133,12 +133,21 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   const canvas = createCanvas(Math.round(W * 1.2), Math.round(H * 1.2));
   const ctx = canvas.getContext('2d');
   ctx.scale(1.2, 1.2);
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  // codeflicker-fix: UX-Issue-003/9w1uayqs7526yog8f3nw
+  // 单股图按主图、指标、量能、基本面分区，保留全部行情字段但降低连续白底的阅读负担。
+  ctx.fillStyle = '#f5f6f8'; ctx.fillRect(0, 0, W, H);
   ctx.font = '13px cjk';
   ctx.textBaseline = 'middle';
 
   // 标题区
-  ctx.fillStyle = panel; ctx.fillRect(0, 0, W, TITLE_H);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, TITLE_H);
+  ctx.strokeStyle = '#e8eaed'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, TITLE_H - 0.5); ctx.lineTo(W, TITLE_H - 0.5); ctx.stroke();
+  // 主图白卡：Y轴与时间标签也包含在卡片内，避免信息贴到画布边缘。
+  ctx.fillStyle = '#ffffff'; ctx.beginPath();
+  ctx.roundRect(PAD - 18, TITLE_H + 8, W - PAD * 2 + 36, plotH + 30, 12); ctx.fill();
+  ctx.strokeStyle = '#e7eaf0'; ctx.lineWidth = 1; ctx.beginPath();
+  ctx.roundRect(PAD - 17.5, TITLE_H + 8.5, W - PAD * 2 + 35, plotH + 29, 12); ctx.stroke();
   // 左侧渐变 accent 竖条
   const titleAccGrad = ctx.createLinearGradient(PAD, 14, PAD, 52);
   titleAccGrad.addColorStop(0, '#f5222d'); titleAccGrad.addColorStop(1, '#ff7875');
@@ -255,8 +264,9 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
         ctx.stroke();
       }
     }
-    // 图例（整体下移 16px，避开 X 轴时间标签；色块与文字垂直中心对齐）
-    ctx.fillStyle = panel; ctx.fillRect(PAD - 8, yLegend, W - PAD * 2 + 16, 30);
+    // 图例：独立浅卡，和主图区分开。
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.roundRect(PAD - 8, yLegend, W - PAD * 2 + 16, 30, 8); ctx.fill();
+    ctx.strokeStyle = '#e7eaf0'; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(PAD - 7.5, yLegend + 0.5, W - PAD * 2 + 15, 29, 8); ctx.stroke();
     const lg = [[`价格 ${fp(lastPrice)}`, priceCol]];
     if (avgSeries) lg.push([`均价 ${fp(avgSeries[dn - 1])}`, '#f0b90b']);
     if (prevCloseRef) lg.push([`昨收 ${fp(prevCloseRef)}`, sub]);
@@ -314,8 +324,9 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   ctx.fillStyle = markCol; ctx.fillRect(W - PAD, yLast - 12, 64, 24);
     ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = 'bold 13px cjk';
     ctx.fillText(fp(lastPrice), W - PAD + 32, yLast + 4);
-    // 图例（整体下移 16px，避开 X 轴时间标签；色块与文字垂直中心对齐，颜色与所画线一一对应）
-    ctx.fillStyle = panel; ctx.fillRect(PAD - 8, yLegend, W - PAD * 2 + 16, LEG_H);
+    // 图例：独立浅卡，颜色与所画线一一对应。
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.roundRect(PAD - 8, yLegend, W - PAD * 2 + 16, LEG_H, 8); ctx.fill();
+    ctx.strokeStyle = '#e7eaf0'; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(PAD - 7.5, yLegend + 0.5, W - PAD * 2 + 15, LEG_H - 1, 8); ctx.stroke();
     const legendItems = [];
     if (bollS) legendItems.push(['BOLL', bollCol, bollS.mid[dn - 1]]);
     (maPeriods || []).forEach((p, idx) => legendItems.push([`MA${p}`, maCols[idx % maCols.length], maSeries[idx][n - 1]]));
@@ -337,8 +348,10 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   const volOf = (k, i) => k.vol;
   const vols = display.map((k, i) => volOf(k, i));
   const volBase = Math.max(...vols.slice(1), 1);
-  const volTop = yLegend + LEG_H + 6;
-  const volH = VOL_H - 22;
+  const volTop = yLegend + LEG_H + 12;
+  const volH = VOL_H - 30;
+  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.roundRect(PAD - 8, volTop - 8, W - PAD * 2 + 16, volH + 30, 8); ctx.fill();
+  ctx.strokeStyle = '#e7eaf0'; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(PAD - 7.5, volTop - 7.5, W - PAD * 2 + 15, volH + 29, 8); ctx.stroke();
   // 外盘商品部分品种数据源不给量（黄金/白银/原油/天然气/美铜恒为 0）→ 画占位说明，不留空面板
   const noVol = !vols.some(v => Number(v) > 0);
   if (noVol) {
@@ -360,8 +373,12 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
 
   // 基本面面板（个股）
   if (showInfo) {
-    const infoTop = volTop + volH + 26;
-    ctx.fillStyle = panel; ctx.fillRect(PAD - 8, infoTop - 6, W - PAD * 2 + 16, INFO_H);
+    const infoTop = volTop + volH + 32;
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.roundRect(PAD - 8, infoTop - 7, W - PAD * 2 + 16, INFO_H, 10); ctx.fill();
+    ctx.strokeStyle = '#e7eaf0'; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(PAD - 7.5, infoTop - 6.5, W - PAD * 2 + 15, INFO_H - 1, 10); ctx.stroke();
+    // 基本面四行间加极轻分隔，长字段仍保持原有六列布局。
+    ctx.strokeStyle = '#f0f1f3'; ctx.lineWidth = 1;
+    for (let ri = 1; ri < 4; ri++) { const yy = infoTop + ri * 24 - 11; ctx.beginPath(); ctx.moveTo(PAD + 4, yy); ctx.lineTo(W - PAD - 4, yy); ctx.stroke(); }
     ctx.fillStyle = ink;
     // 数值格式化：无值(0/NaN)一律留空（ETF 无 PE/PB 等基本面字段 → 空白）
     const fb = (v, d = 2) => (v && isFinite(v) && Number(v) !== 0) ? Number(v).toFixed(d) : '';
