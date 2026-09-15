@@ -92,7 +92,7 @@ function parseList(v) {
 }
 
 // ---------- 事件等级与主题规则（每轮热加载，维护词库无需重启） ----------
-let NEWS_RULES = { redRisk: [], yellowEvent: [], topics: {} };
+let NEWS_RULES = { redRisk: [], priceShock: [], predictiveWords: [], clarificationWords: [], equityMarketWords: [], yellowEvent: [], topics: {} };
 let lastRulesSig = '';
 function loadNewsRules() {
   try {
@@ -101,6 +101,10 @@ function loadNewsRules() {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('规则文件必须是对象');
     const next = {
       redRisk: Array.isArray(parsed.redRisk) ? parsed.redRisk.map(String).filter(Boolean) : [],
+      priceShock: Array.isArray(parsed.priceShock) ? parsed.priceShock.map(String).filter(Boolean) : [],
+      predictiveWords: Array.isArray(parsed.predictiveWords) ? parsed.predictiveWords.map(String).filter(Boolean) : [],
+      clarificationWords: Array.isArray(parsed.clarificationWords) ? parsed.clarificationWords.map(String).filter(Boolean) : [],
+      equityMarketWords: Array.isArray(parsed.equityMarketWords) ? parsed.equityMarketWords.map(String).filter(Boolean) : [],
       yellowEvent: Array.isArray(parsed.yellowEvent) ? parsed.yellowEvent.map(String).filter(Boolean) : [],
       topics: parsed.topics && typeof parsed.topics === 'object' ? parsed.topics : {},
     };
@@ -108,7 +112,7 @@ function loadNewsRules() {
     if (sig !== lastRulesSig) {
       NEWS_RULES = next;
       lastRulesSig = sig;
-      console.log(`[rules] 已加载：红色 ${next.redRisk.length} 词 / 黄色 ${next.yellowEvent.length} 词 / ${Object.keys(next.topics).length} 个主题`);
+      console.log(`[rules] 已加载：风险 ${next.redRisk.length} 词 / 价格冲击 ${next.priceShock.length} 词 / 黄色 ${next.yellowEvent.length} 词 / ${Object.keys(next.topics).length} 个主题`);
     }
   } catch (e) {
     console.error('[rules] 读取失败（沿用上轮规则）:', e.message);
@@ -121,31 +125,50 @@ function matchedKeywords(text, words) {
   return (words || []).filter(k => k && text.includes(k));
 }
 function classifyNews(item) {
-  const text = `${item.title || ''} ${item.desc || ''}`;
+  const title = String(item.title || '');
+  const desc = String(item.desc || '');
+  const text = `${title} ${desc}`;
   const rules = NEWS_RULES;
   let topic = 'market', topicRule = null, topicScore = 0;
+  const shockTopics = new Set(['gold', 'energy', 'gas_coal', 'industrial_metals', 'new_energy_resources', 'agriculture', 'rates_fx']);
   const commodityTopics = new Set(['gold', 'energy', 'gas_coal', 'industrial_metals', 'new_energy_resources', 'agriculture']);
   for (const [key, rule] of Object.entries(rules.topics || {})) {
-    const hits = matchedKeywords(text, rule.keywords);
-    const strongHits = matchedKeywords(text, rule.strong);
-    // 商品名命中时优先作为主主题；地缘/宏观/利率仍会通过等级与命中词保留为背景。
-    const score = hits.length + strongHits.length * 3 + (commodityTopics.has(key) && hits.length ? 5 : 0);
+    const titleHits = matchedKeywords(title, rule.keywords);
+    const descHits = matchedKeywords(desc, rule.keywords);
+    // 主题只由标的/行业词决定；“涨超、失守、跳水”等通用异动词只决定等级，不能抢走主题。
+    // 标题是新闻主语，摘要只是辅助：避免一个概览稿因罗列多个品种而抢错主题。
+    const score = titleHits.length * 5 + descHits.length
+      + (commodityTopics.has(key) && titleHits.length ? 4 : 0);
     if (score > topicScore) { topic = key; topicRule = rule; topicScore = score; }
   }
-  const redHits = matchedKeywords(text, rules.redRisk);
-  const yellowHits = matchedKeywords(text, rules.yellowEvent);
-  const topicStrongHits = topicRule ? matchedKeywords(text, topicRule.strong) : [];
-  const level = (redHits.length || topicStrongHits.length) ? 'red' : yellowHits.length ? 'yellow' : 'normal';
+  let redHits = matchedKeywords(text, rules.redRisk);
+  // 新闻标题明确是澄清/否认时，常会引用第三方风险背景（如“未参与破产企业投资”），
+  // 不应把被引用对象的风险误报给当前主体。
+  const clarificationTitle = (rules.clarificationWords || []).some(word => new RegExp(word).test(title));
+  if (clarificationTitle) redHits = [];
+  let yellowHits = matchedKeywords(text, rules.yellowEvent);
+  const titleShockHits = matchedKeywords(title, rules.priceShock);
+  const predictiveHits = matchedKeywords(text, rules.predictiveWords);
+  const titleTopicStrongHits = topicRule ? matchedKeywords(title, topicRule.strong) : [];
+  const equityMarketTitle = matchedKeywords(title, rules.equityMarketWords).length > 0;
+  // A股板块/个股行情不应因“煤炭、锂、黄金”等行业词自动升级为商品关注事件。
+  if (equityMarketTitle || clarificationTitle) yellowHits = [];
+  const priceShock = shockTopics.has(topic) && titleShockHits.length > 0 && !equityMarketTitle;
+  // 预测性文字只表达预期，不能因“预计加息/降息”自动升级；真实价格冲击与明确风险仍保留红色。
+  const predictedRateOnly = topic === 'rates_fx' && predictiveHits.length > 0 && !priceShock && !redHits.length;
+  const level = !clarificationTitle && (redHits.length || priceShock || (titleTopicStrongHits.length && !predictedRateOnly)) ? 'red' : yellowHits.length ? 'yellow' : 'normal';
   return {
     topic,
     topicLabel: topicRule?.label || '市场资讯',
     topicColor: topicRule?.color || '#C0392B',
     topicSoftColor: topicRule?.softColor || '#FFF1F1',
     level,
-    levelLabel: level === 'red' ? '红色风险' : level === 'yellow' ? '关注事件' : '重要资讯',
+    levelLabel: level === 'red' ? '重大异动' : level === 'yellow' ? '关注事件' : '重要资讯',
     redHits,
     yellowHits,
-    topicStrongHits,
+    shockHits: priceShock ? titleShockHits : [],
+    predictiveHits,
+    topicStrongHits: titleTopicStrongHits,
   };
 }
 
@@ -333,14 +356,14 @@ function cardMeta(dateStr, items) {
   const hasRed = items.some(it => it.level === 'red');
   const hasYellow = items.some(it => it.level === 'yellow');
   return {
-    title: sameTopic ? `${first.topicLabel}快讯` : (hasRed ? '市场风险快讯' : hasYellow ? '市场关注事件' : '同花顺重要金融资讯'),
+    title: sameTopic ? `${first.topicLabel}快讯` : (hasRed ? '市场重大异动' : hasYellow ? '市场关注事件' : '同花顺重要金融资讯'),
     color: sameTopic ? first.topicColor : (hasRed ? '#C0392B' : hasYellow ? '#D97706' : '#C0392B'),
     softColor: sameTopic ? first.topicSoftColor : (hasRed ? '#FFF1F1' : hasYellow ? '#FFF7E6' : '#FFF1F1'),
     subtitle: sameTopic ? `${dateStr} · ${first.topicLabel} · 共 ${items.length} 条` : `${dateStr} · 同花顺官方「重要」· 共 ${items.length} 条`,
   };
 }
 function levelStyle(it) {
-  if (it.level === 'red') return { label: '红色风险', color: '#C0392B', bg: '#FFF1F1' };
+  if (it.level === 'red') return { label: '重大异动', color: '#C0392B', bg: '#FFF1F1' };
   if (it.level === 'yellow') return { label: '关注事件', color: '#B45309', bg: '#FFF7E6' };
   return { label: '重要资讯', color: '#64748B', bg: '#F1F5F9' };
 }
