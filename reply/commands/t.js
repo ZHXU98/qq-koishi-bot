@@ -622,12 +622,12 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push(`→ 📉 分时MACD：DIFF ${fp(macd.dif)} / DEA ${fp(macd.dea)} / ${histTxt}${histDir}，${zoneTxt}，${crossTxt}`);
     if (macdState.cross === 'gold') {
       L.push(macdState.crossZone === 'water_up'
-        ? `   ⭐ 强印证：水上金叉与价格行为同向时，买回/持有信心提高；没有价格行为触发时仍不追`
-        : `   ℹ️ 参考：水下金叉代表修复，若价格行为已转强可增加信心；未转强时继续观察`);
+        ? `   ℹ️ MACD水上金叉：动能状态偏强，仅供观察；没有价格行为信号时不单独追买`
+        : `   ℹ️ MACD水下金叉：动能修复信息，仅供观察；不改变价格行为建议`);
     } else if (macdState.cross === 'dead') {
       L.push(macdState.crossZone === 'water_up'
-        ? `   ⭐ 强印证：水上死叉与价格行为走弱同向时，T出/减仓信心提高；单独发生不卖`
-        : `   ℹ️ 参考：水下死叉说明弱势未改，但仍以均价线、前低、量能和5分钟K为准`);
+        ? `   ℹ️ MACD水上死叉：动能转弱信息，仅供观察；单独发生不卖`
+        : `   ℹ️ MACD水下死叉：弱势状态信息，仍以均价线、前低、量能和5分钟K为准`);
     }
     if (macdState.divergence === 'top') L.push(`   ⚠️ 顶背离：价格创新高但MACD未跟上 → 冲高回落前兆，卖出信号加强！`);
     else if (macdState.divergence === 'bottom') L.push(`   🟢 底背离：价格创新低但MACD未跟跌 → 跌势衰竭，买回信号加强！`);
