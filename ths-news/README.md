@@ -5,8 +5,8 @@
 - 数据源：同花顺官方 7×24 接口，每条自带 `import` 字段（`import>0` 即官方标记的「重要」），比关键词加权更准。
 - 渲染：纯 Rust 的 `@resvg/resvg-js` 把 SVG 渲染成 PNG（**无 Chrome / 无 puppeteer 依赖**）。
 - 推送：经 **`official-bot-gateway`**（官方开放平台通道，OneBot 兼容 HTTP）推到 QQ。
-- 自动化：容器内 `start_news_cron.sh` 每 **5 分钟**拉取一次，**分级聚合推送**——命中必推关键词（`URGENT_KEYWORDS`）的极重要资讯立即推；其余重要资讯先入缓冲，攒够 8 条（`AGG_COUNT`）或到整点/半点（每 30 分钟）才推一批。
-- 部署：整个仓库是一个 Docker Compose 项目，克隆后 `docker compose up -d` 即可，**换电脑零环境配置**。
+- 自动化：容器内 `start_news_cron.sh` 每 **5 分钟**拉取一次；同花顺已标记为重要（`import>0`）的资讯再经过**事件等级 + 主题规则**分类：红色风险/商品强事件立即推，黄色关注与普通重要仍按原有缓冲聚合推送。
+- 主题：覆盖黄金避险、原油能源、天然气煤炭、工业金属、新能源资源、农产品、利率汇率、宏观政策、地缘供应链、科技产业、地产金融；同一条卡片展示时间、主题和事件等级标签。
 
 > 历史上推送走 NapCat（个人号），2026-08-26 起改接官方网关；环境变量名沿用 `NAPCAT_URL` 未改。
 
@@ -18,7 +18,7 @@
 同花顺官方接口 (import>0 即「重要」)
         │  每 5 分钟（start_news_cron.sh 循环）
         ▼
-fetch_ths_news.js  ── 过滤(import>0) + 去重(seen) + 组装条目
+fetch_ths_news.js  ── 过滤(import>0) + 去重(seen) + 事件/主题分类 + 队列聚合
         │
         ▼  buildCardSvg() → 中文 SVG 卡片
    @resvg/resvg-js  →  PNG（挂载的中文字体 cjk.ttc）
@@ -42,6 +42,7 @@ qq-koishi-bot/
 ├── napcat/                   # NapCat 运行数据（登录态，已 gitignore，通道已停用）
 └── ths-news/                 # ★ 本服务全部源码与文档
     ├── fetch_ths_news.js        # 主脚本（含全部渲染/过滤/推送逻辑）
+    ├── news_rules.json             # ★ 事件等级/主题词库（每轮热加载，无需重启）
     ├── start_news_cron.sh       # 容器内 5 分钟循环 + 首启装 resvg
     ├── ths_news_targets.json.example  # 推送目标模板
     ├── setup_fonts.sh           # 从本机复制中文字体（避免提交 22MB）
@@ -101,6 +102,18 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run   # 看筛选结果�
 
 脚本优先读取 `ths_news_targets.json`，不存在时回退 `push_targets.json`，再回退默认（仅私聊空）。
 
+### `news_rules.json`：事件等级与主题词库
+
+规则文件由 `ths-news` 每轮抓取时重新读取，修改后**无需重启容器**。它只对同花顺已标记为重要（`import>0`）的资讯做内部优先级整理，不会把普通快讯无条件放大。
+
+- `redRisk`：红色风险/突发词。命中后立即推送；包括监管与公司重大风险、重大政策、地缘冲突、供应中断、剧烈价格波动等。
+- `yellowEvent`：黄色关注词。包括业绩预告、回购增减持、重组合同、宏观数据、库存数据和行业供需数据等；进入原有聚合缓冲。
+- `topics`：主题词库。目前包含 `gold`、`energy`、`gas_coal`、`industrial_metals`、`new_energy_resources`、`agriculture`、`rates_fx`、`macro_policy`、`geopolitics`、`technology`、`real_estate_finance`。每个主题定义显示名称、卡片配色、普通命中词与强事件词。
+
+主题强事件（例如“原油 + 供应中断”“黄金 + 刷新历史高位”）会升级为红色立即推；仅提到黄金、原油、EIA、业绩预告等则保持黄色关注或普通重要，不会因为单个商品名而滥发。
+
+> 私聊和群聊推送目标、发送节流、重试、拆图逻辑均未改变，仍完全读取 `ths_news_targets.json` 的 `private` 与 `groups`。
+
 ### 环境变量（容器 / docker-compose 已设）
 
 | 变量 | 默认 | 说明 |
@@ -110,6 +123,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run   # 看筛选结果�
 | `THS_STATE` | `/app/state/ths_news_state.json` | 去重状态文件路径 |
 | `THS_CONFIG` | `/app/ths_news_targets.json` | 推送目标配置路径 |
 | `THS_FONT` | `/app/fonts/cjk.ttc` | 中文字体路径 |
+| `THS_RULES` | `/app/news_rules.json` | 事件等级与主题词库路径；默认每轮热加载 |
 | `NEWS_INTERVAL` | `300` | 拉取间隔（秒，即 5 分钟） |
 | `IMPORT_ONLY` | `true` | `true`=仅同花顺「重要」；`false`=退化为关键词加权筛选 |
 

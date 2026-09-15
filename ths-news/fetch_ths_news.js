@@ -30,6 +30,7 @@ const path = require('path');
 const __DIR = __dirname;
 const CONFIG_PATH = path.join(__DIR, 'push_targets.json');
 const NEWS_TARGETS_PATH = process.env.THS_CONFIG || path.join(__DIR, 'ths_news_targets.json');
+const RULES_PATH = process.env.THS_RULES || path.join(__DIR, 'news_rules.json');
 const STATE_PATH = process.env.THS_STATE || '/tmp/ths_news_state.json';
 const NAPCAT_URL = process.env.NAPCAT_URL || 'http://127.0.0.1:3100'; // 官方网关（变量名沿用历史命名）
 const TOKEN = process.env.NAPCAT_TOKEN || '';
@@ -90,7 +91,65 @@ function parseList(v) {
   return arr.map(x => String(x).trim()).filter(Boolean);
 }
 
-// ---------- 加权打分 ----------
+// ---------- 事件等级与主题规则（每轮热加载，维护词库无需重启） ----------
+let NEWS_RULES = { redRisk: [], yellowEvent: [], topics: {} };
+let lastRulesSig = '';
+function loadNewsRules() {
+  try {
+    if (!fs.existsSync(RULES_PATH)) return NEWS_RULES;
+    const parsed = JSON.parse(fs.readFileSync(RULES_PATH, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('规则文件必须是对象');
+    const next = {
+      redRisk: Array.isArray(parsed.redRisk) ? parsed.redRisk.map(String).filter(Boolean) : [],
+      yellowEvent: Array.isArray(parsed.yellowEvent) ? parsed.yellowEvent.map(String).filter(Boolean) : [],
+      topics: parsed.topics && typeof parsed.topics === 'object' ? parsed.topics : {},
+    };
+    const sig = JSON.stringify(next);
+    if (sig !== lastRulesSig) {
+      NEWS_RULES = next;
+      lastRulesSig = sig;
+      console.log(`[rules] 已加载：红色 ${next.redRisk.length} 词 / 黄色 ${next.yellowEvent.length} 词 / ${Object.keys(next.topics).length} 个主题`);
+    }
+  } catch (e) {
+    console.error('[rules] 读取失败（沿用上轮规则）:', e.message);
+  }
+  return NEWS_RULES;
+}
+loadNewsRules();
+
+function matchedKeywords(text, words) {
+  return (words || []).filter(k => k && text.includes(k));
+}
+function classifyNews(item) {
+  const text = `${item.title || ''} ${item.desc || ''}`;
+  const rules = NEWS_RULES;
+  let topic = 'market', topicRule = null, topicScore = 0;
+  const commodityTopics = new Set(['gold', 'energy', 'gas_coal', 'industrial_metals', 'new_energy_resources', 'agriculture']);
+  for (const [key, rule] of Object.entries(rules.topics || {})) {
+    const hits = matchedKeywords(text, rule.keywords);
+    const strongHits = matchedKeywords(text, rule.strong);
+    // 商品名命中时优先作为主主题；地缘/宏观/利率仍会通过等级与命中词保留为背景。
+    const score = hits.length + strongHits.length * 3 + (commodityTopics.has(key) && hits.length ? 5 : 0);
+    if (score > topicScore) { topic = key; topicRule = rule; topicScore = score; }
+  }
+  const redHits = matchedKeywords(text, rules.redRisk);
+  const yellowHits = matchedKeywords(text, rules.yellowEvent);
+  const topicStrongHits = topicRule ? matchedKeywords(text, topicRule.strong) : [];
+  const level = (redHits.length || topicStrongHits.length) ? 'red' : yellowHits.length ? 'yellow' : 'normal';
+  return {
+    topic,
+    topicLabel: topicRule?.label || '市场资讯',
+    topicColor: topicRule?.color || '#C0392B',
+    topicSoftColor: topicRule?.softColor || '#FFF1F1',
+    level,
+    levelLabel: level === 'red' ? '红色风险' : level === 'yellow' ? '关注事件' : '重要资讯',
+    redHits,
+    yellowHits,
+    topicStrongHits,
+  };
+}
+
+// ---------- 加权打分（仅用于同一聚合批次内排序；事件等级由规则库决定） ----------
 const KEYWORDS = {
   '降准': 3, '降息': 3, '央行': 2, '证监会': 3, '汇金': 3, '证金': 2,
   '财政部': 2, '国务院': 2, 'MLF': 2, '逆回购': 1, '互换便利': 2, '互换': 1,
@@ -110,18 +169,9 @@ function scoreNews(item) {
   const text = (item.title || '') + ' ' + (item.desc || '');
   for (const [k, w] of Object.entries(KEYWORDS)) if (text.includes(k)) s += w;
   if (item.tag) for (const t of String(item.tag).split(',')) { const tw = TAG_WEIGHT[t.trim()]; if (tw) s += tw; }
+  if (item.level === 'red') s += 20;
+  else if (item.level === 'yellow') s += 8;
   return s;
-}
-
-// 必推关键词：在「重要」（import>0）资讯内部再分档——命中即「极重要」，立即推送、不聚合。
-// 同花顺只有 import>0 一档「重要」，这里用关键词在内部再分「极重要 / 重要普通」两级。
-// 默认取最重磅的政策/突发词；可用环境变量 URGENT_KEYWORDS 覆盖（逗号分隔）。
-const URGENT_KEYWORDS = (process.env.URGENT_KEYWORDS
-  || '降准,降息,加息,证监会,汇金,关税,美联储,印花税,国家队,特别国债,平准基金,熔断,退市,突发,紧急,黄金,石油')
-  .split(',').map(s => s.trim()).filter(Boolean);
-function isUrgent(item) {
-  const text = (item.title || '') + ' ' + (item.desc || '');
-  return URGENT_KEYWORDS.some(k => text.includes(k));
 }
 
 // ---------- 数据源 ----------
@@ -277,6 +327,24 @@ async function buildMessageSegs(batch, dateStr) {
   }
 }
 
+function cardMeta(dateStr, items) {
+  const first = items[0] || {};
+  const sameTopic = items.length > 0 && items.every(it => it.topic && it.topic === first.topic);
+  const hasRed = items.some(it => it.level === 'red');
+  const hasYellow = items.some(it => it.level === 'yellow');
+  return {
+    title: sameTopic ? `${first.topicLabel}快讯` : (hasRed ? '市场风险快讯' : hasYellow ? '市场关注事件' : '同花顺重要金融资讯'),
+    color: sameTopic ? first.topicColor : (hasRed ? '#C0392B' : hasYellow ? '#D97706' : '#C0392B'),
+    softColor: sameTopic ? first.topicSoftColor : (hasRed ? '#FFF1F1' : hasYellow ? '#FFF7E6' : '#FFF1F1'),
+    subtitle: sameTopic ? `${dateStr} · ${first.topicLabel} · 共 ${items.length} 条` : `${dateStr} · 同花顺官方「重要」· 共 ${items.length} 条`,
+  };
+}
+function levelStyle(it) {
+  if (it.level === 'red') return { label: '红色风险', color: '#C0392B', bg: '#FFF1F1' };
+  if (it.level === 'yellow') return { label: '关注事件', color: '#B45309', bg: '#FFF7E6' };
+  return { label: '重要资讯', color: '#64748B', bg: '#F1F5F9' };
+}
+
 function renderCard(dateStr, items) {
   // 优先 resvg（容器，字体确认存在时）；fallback @napi-rs/canvas（本地开发）
   if (fs.existsSync(FONT_PATH)) {
@@ -340,6 +408,7 @@ function renderCardCanvas(dateStr, items) {
   const ctx = canvas.getContext('2d');
   ctx.textBaseline = 'alphabetic';
 
+  const meta = cardMeta(dateStr, items);
   // 背景
   ctx.fillStyle = '#ffffff';
   ctx.beginPath(); ctx.roundRect(0, 0, CARD_W, H, 20); ctx.fill();
@@ -347,14 +416,14 @@ function renderCardCanvas(dateStr, items) {
   let y = PAD;
   // 标题栏：左侧渐变 accent 竖条
   const hGrad = ctx.createLinearGradient(PAD, y, PAD, y + 34);
-  hGrad.addColorStop(0, '#f5222d'); hGrad.addColorStop(1, '#ff7875');
+  hGrad.addColorStop(0, meta.color); hGrad.addColorStop(1, meta.color);
   ctx.fillStyle = hGrad; ctx.fillRect(PAD, y, 6, 34);
   ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 30px cjk';
-  ctx.fillText('同花顺重要金融资讯', PAD + 20, y + 28);
+  ctx.fillText(meta.title, PAD + 20, y + 28);
   y += 34 + 12;
 
   ctx.fillStyle = '#888888'; ctx.font = '20px cjk';
-  ctx.fillText(`${dateStr} · 同花顺官方「重要」·共 ${items.length} 条`, PAD, y + 18);
+  ctx.fillText(meta.subtitle, PAD, y + 18);
   y += 18 + 22;
 
   ctx.strokeStyle = '#eeeeee'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CARD_W, y); ctx.stroke();
@@ -369,15 +438,22 @@ function renderCardCanvas(dateStr, items) {
     ctx.fillStyle = rowBg; ctx.fillRect(0, y, CARD_W, rowH);
     y += 14;
 
-    // 时间 badge
+    // 时间与事件标签
     const timeTxt = fmtTime(it.time);
+    const lev = levelStyle(it);
     ctx.font = '13px cjk';
-    const badgeW = ctx.measureText(timeTxt).width + 14;
-    ctx.fillStyle = '#edf0f4'; ctx.beginPath(); ctx.roundRect(PAD, y, badgeW, 20, 4); ctx.fill();
-    ctx.fillStyle = '#8b919e'; ctx.textAlign = 'center';
-    ctx.fillText(timeTxt, PAD + badgeW / 2, y + 13.5);
+    const timeW = ctx.measureText(timeTxt).width + 14;
+    const topicW = ctx.measureText(it.topicLabel || '市场资讯').width + 14;
+    const levelW = ctx.measureText(lev.label).width + 14;
+    const badgeY = y;
+    ctx.fillStyle = '#edf0f4'; ctx.beginPath(); ctx.roundRect(PAD, badgeY, timeW, 20, 4); ctx.fill();
+    ctx.fillStyle = '#8b919e'; ctx.textAlign = 'center'; ctx.fillText(timeTxt, PAD + timeW / 2, badgeY + 13.5);
+    ctx.fillStyle = it.topicSoftColor || '#F1F5F9'; ctx.beginPath(); ctx.roundRect(PAD + timeW + 6, badgeY, topicW, 20, 4); ctx.fill();
+    ctx.fillStyle = it.topicColor || '#64748B'; ctx.fillText(it.topicLabel || '市场资讯', PAD + timeW + 6 + topicW / 2, badgeY + 13.5);
+    ctx.fillStyle = lev.bg; ctx.beginPath(); ctx.roundRect(PAD + timeW + topicW + 12, badgeY, levelW, 20, 4); ctx.fill();
+    ctx.fillStyle = lev.color; ctx.fillText(lev.label, PAD + timeW + topicW + 12 + levelW / 2, badgeY + 13.5);
     ctx.textAlign = 'left';
-    y += 26; // badge 20 + 间距 6
+    y += 26; // 标签高20 + 间距6
 
     // 标题（去掉时间戳，字号稍收）
     ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 22px cjk';
@@ -435,12 +511,13 @@ function buildCardSvg(dateStr, items) {
     return { lines: kept, clipped: true };
   };
   const x = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const meta = cardMeta(dateStr, items);
   let y = PAD; const blocks = [];
   blocks.push(`<defs><style>@font-face{font-family:'CJK';src:url('${FONT_PATH}')}</style></defs>`);
-  blocks.push(`<rect x="${PAD}" y="${y}" width="6" height="34" rx="3" fill="#c0392b"/>`);
-  blocks.push(`<text x="${PAD + 20}" y="${y + 28}" font-family="CJK" font-size="30" font-weight="700" fill="#1a1a1a">同花顺重要金融资讯</text>`);
+  blocks.push(`<rect x="${PAD}" y="${y}" width="6" height="34" rx="3" fill="${meta.color}"/>`);
+  blocks.push(`<text x="${PAD + 20}" y="${y + 28}" font-family="CJK" font-size="30" font-weight="700" fill="#1a1a1a">${x(meta.title)}</text>`);
   y += 34 + 12;
-  blocks.push(`<text x="${PAD}" y="${y + 18}" font-family="CJK" font-size="20" fill="#888888">${dateStr} · 同花顺官方「重要」·共 ${items.length} 条</text>`);
+  blocks.push(`<text x="${PAD}" y="${y + 18}" font-family="CJK" font-size="20" fill="#888888">${x(meta.subtitle)}</text>`);
   y += 18 + 22;
   blocks.push(`<line x1="${PAD}" y1="${y}" x2="${CARD_W - PAD}" y2="${y}" stroke="#eeeeee" stroke-width="2"/>`);
   y += 24;
@@ -453,12 +530,20 @@ function buildCardSvg(dateStr, items) {
     const estH = 20 + estTitleLines * 30 + (estDescLines > 0 ? 8 + estDescLines * 26 : 0) + 20;
     blocks.push(`<rect x="0" y="${y}" width="${CARD_W}" height="${estH}" fill="${rowBg}"/>`);
     y += 12;
-    // 时间戳 badge
+    // 时间 + 主题 + 事件等级标签
     const timeTxt = fmtTime(it.time);
+    const lev = levelStyle(it);
     const timeBadgeW = timeTxt.length * 11 + 14;
+    const topicTxt = it.topicLabel || '市场资讯';
+    const topicBadgeW = topicTxt.length * 13 + 14;
+    const levelBadgeW = lev.label.length * 13 + 14;
     blocks.push(`<rect x="${PAD}" y="${y}" width="${timeBadgeW}" height="20" rx="4" fill="#f0f2f5"/>`);
     blocks.push(`<text x="${PAD + timeBadgeW / 2}" y="${y + 14}" text-anchor="middle" font-family="CJK" font-size="13" fill="#8b919e">${x(timeTxt)}</text>`);
-    y += 26; // badge 高20 + 间距6
+    blocks.push(`<rect x="${PAD + timeBadgeW + 6}" y="${y}" width="${topicBadgeW}" height="20" rx="4" fill="${it.topicSoftColor || '#F1F5F9'}"/>`);
+    blocks.push(`<text x="${PAD + timeBadgeW + 6 + topicBadgeW / 2}" y="${y + 14}" text-anchor="middle" font-family="CJK" font-size="13" fill="${it.topicColor || '#64748B'}">${x(topicTxt)}</text>`);
+    blocks.push(`<rect x="${PAD + timeBadgeW + topicBadgeW + 12}" y="${y}" width="${levelBadgeW}" height="20" rx="4" fill="${lev.bg}"/>`);
+    blocks.push(`<text x="${PAD + timeBadgeW + topicBadgeW + 12 + levelBadgeW / 2}" y="${y + 14}" text-anchor="middle" font-family="CJK" font-size="13" fill="${lev.color}">${x(lev.label)}</text>`);
+    y += 26; // 标签高20 + 间距6
     // 标题（无时间戳，字号稍小）
     const titleLines = wrap(it.title, 23, INNER);
     for (const ln of titleLines) { blocks.push(`<text x="${PAD}" y="${y + 20}" font-family="CJK" font-size="23" font-weight="700" fill="#1a1a1a">${x(ln)}</text>`); y += 28; }
@@ -481,6 +566,7 @@ function buildCardSvg(dateStr, items) {
 // ---------- 主流程 ----------
 async function main() {
   loadTargets(); // 热加载推送目标：每个推送周期重新读盘，改配置无需重启容器
+  loadNewsRules(); // 热加载事件/主题词库：改 news_rules.json 无需重启容器
   const dt = new Date();
   const dateStr = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
   console.log('=== 同花顺重要资讯聚合', dateStr, DRY ? '(dry-run)' : FORCE ? '(force)' : '', '===');
@@ -496,6 +582,8 @@ async function main() {
   for (const it of raw) {
     if (!it.link || seenSet.has(it.link)) continue;       // 去重
     if (!it.time || it.time < cutoff) continue;            // 仅最近 72 小时
+    const classified = classifyNews(it);
+    Object.assign(it, classified);
     it.score = scoreNews(it);
     if (IMPORT_ONLY) {
       if (!(Number(it.import) > 0)) continue;              // 仅同花顺官方「重要」标记
@@ -509,8 +597,8 @@ async function main() {
 
   if (DRY) {
     console.log('[targets] private=', JSON.stringify(PRIVATE_IDS), 'groups=', JSON.stringify(GROUP_IDS));
-    console.log(`本轮新候选 ${candidates.length} 条（同花顺「重要」+最近72h+未推送）——极重要(立即推) ${candidates.filter(isUrgent).length} 条 / 普通重要(聚合) ${candidates.filter(c => !isUrgent(c)).length} 条`);
-    candidates.slice(0, 12).forEach((c, i) => console.log(`  ${i + 1}. [${isUrgent(c) ? '⚡极重要' : '聚合'}] [重要 import=${c.import}][分${c.score}] ${fmtTime(c.time)} ${c.title}`));
+    console.log(`本轮新候选 ${candidates.length} 条（同花顺「重要」且最近72h且未推送）——红色即时 ${candidates.filter(c => c.level === 'red').length} 条 / 黄色关注 ${candidates.filter(c => c.level === 'yellow').length} 条 / 普通 ${candidates.filter(c => c.level === 'normal').length} 条`);
+    candidates.slice(0, 12).forEach((c, i) => console.log(`  ${i + 1}. [${c.level === 'red' ? '🔴即时' : c.level === 'yellow' ? '🟡关注' : '聚合'}] [${c.topicLabel}][分${c.score}] ${fmtTime(c.time)} ${c.title}`));
     return;
   }
 
@@ -528,33 +616,33 @@ async function main() {
     return;
   }
 
-  // —— 分级：命中必推关键词 → 极重要立即推；其余重要 → 聚合 ——
-  const urgent = candidates.filter(isUrgent);
-  const normal = candidates.filter(c => !isUrgent(c));
+  // —— 分级：红色风险/主题强事件立即推；黄色关注和普通重要进入原有聚合缓冲 ——
+  const urgent = candidates.filter(c => c.level === 'red');
+  const normal = candidates.filter(c => c.level !== 'red');
 
-  // 1) 极重要：立即推送（命中必推关键词）
+  // 1) 红色风险 / 商品强事件：立即推送（保持既有私聊+群聊目标和发送节流）
   if (urgent.length > 0) {
     for (const c of urgent) seenSet.add(c.link);
     if (await checkLogin()) {
       const ures = await pushToTargets(urgent, dateStr);
       if (ures.privateFail > 0) {
         for (const c of urgent) seenSet.delete(c.link); // 失败回滚，下轮重试
-        console.error(`⚠️ 极重要私聊失败 ${ures.privateFail} 个，回滚 seen 下轮重试`);
+        console.error(`⚠️ 红色风险私聊失败 ${ures.privateFail} 个，回滚 seen 下轮重试`);
       } else {
-        console.log(`✅ 极重要推送完成，共 ${urgent.length} 条`);
+        console.log(`✅ 红色风险推送完成，共 ${urgent.length} 条`);
       }
     } else {
       for (const c of urgent) seenSet.delete(c.link); // 登录异常，回滚 seen 下轮重试
-      console.error('登录态异常，极重要资讯暂不推送，下轮重试');
+      console.error('登录态异常，红色风险资讯暂不推送，下轮重试');
     }
   }
 
-  // 2) 重要普通：入缓冲，攒够 AGG_COUNT 条或到整点/半点再推
+  // 2) 黄色关注 + 普通重要：保留原有缓冲策略，攒够 AGG_COUNT 条或到整点/半点再推
   if (normal.length > 0) {
     for (const c of normal) seenSet.add(c.link);
     if (!Array.isArray(st.pending)) st.pending = [];
     st.pending.push(...normal);
-    console.log(`普通重要入缓冲，当前待推 ${st.pending.length} 条`);
+    console.log(`黄色/普通资讯入缓冲，当前待推 ${st.pending.length} 条`);
   }
   st.seen = Array.from(seenSet).slice(-SEEN_KEEP);
   saveState(st);
@@ -613,4 +701,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildCardSvg, renderCard, CARD_W, FONT_PATH };
+module.exports = { buildCardSvg, renderCard, cardMeta, levelStyle, loadNewsRules, classifyNews, CARD_W, FONT_PATH };

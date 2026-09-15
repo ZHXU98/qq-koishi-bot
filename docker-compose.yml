@@ -50,6 +50,7 @@ services:
     volumes:
       - ./ths-news/fetch_ths_news.js:/app/fetch_ths_news.js:ro
       - ./ths-news/ths_news_targets.json:/app/ths_news_targets.json:ro
+      - ./ths-news/news_rules.json:/app/news_rules.json:ro
       - ./ths-news/start_news_cron.sh:/app/start_news_cron.sh:ro
       - ./ths-news/fonts:/app/fonts:ro
       - ths-news-state:/app/state
