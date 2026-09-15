@@ -59,9 +59,8 @@ const { cmdAn } = require('./commands/an');
 
 let wsState = 'idle';
 let reconnectTimer = null; // WS 重连定时器（连接失败时 ws 库可能不触发 onclose，必须独立调度）
-const { GlobalFonts } = require('@napi-rs/canvas');
-try { GlobalFonts.registerFromPath('/app/fonts/cjk_sub.ttf', 'cjk'); } catch (_) { /* 不可用时回退 resvg */ }
-try { GlobalFonts.registerFromPath('/app/fonts/cjk_sub.ttf'); } catch (_) {}
+const { initChartFonts } = require('./chart-fonts');
+initChartFonts();
 
 // ---------- 指令路由 ----------
 function routeCommand(text) {

@@ -1,6 +1,7 @@
 // ============================================================
 // /ss 指数行情：上证/沪深300/深证综指 + 成交额对比 + 申万二级资金流
 // ============================================================
+const { resolveCjkFont } = require('../chart-fonts');
 const { NAPCAT_URL, TOKEN } = require('../config');
 const { cacheGet, cacheSet, fmtAmountWan, fmtAmountYuan, estFullDayAmount, isTradingDay, normStockName, esc } = require('../utils');
 const { emFetchJson } = require('../market');
@@ -16,7 +17,6 @@ const SS_QUOTES = 'https://qt.gtimg.cn/q=sh000001,sh000300,sz399106';
 const SS_MIN30 = 'https://d.10jqka.com.cn/v6/line/%s/41/last.js';
 // 腾讯代码 → 同花顺代码（sz399106=深证综指，全市场=上证+深证综指）
 const SS_THS = { sh000001: 'hs_1A0001', sh000300: 'hs_399300', sz399106: 'hs_399106' };
-
 // 上一交易日成交额（元）与多日稳健预测比例。返回：
 // { sameTime, fullDay, ratio }；sameTime/fullDay 仍专用于昨日放缩量比较，ratio 取最近 5 个完整交易日
 // 在当前时点的「全天 / 同时刻累计」中位数，避免单个异常放量日把全天预估严重拉偏。
@@ -184,7 +184,7 @@ async function prevTradingAmount(code, nowHHMM) {
       return [txt, col];
     };
     // 计算总高度（与 SVG 版布局一致）
-    let H = 18 + 44 + (data.indices.length * (186 + 12)) + 132 + 12 + (data.sw2 && data.sw2.inflow.length ? 150 + 12 : 0) + 16;
+    let H = 18 + 44 + (data.indices.length * (202 + 12)) + 132 + 12 + (data.sw2 && data.sw2.inflow.length ? 206 + 12 : 0) + 16;
     const { createCanvas } = require('@napi-rs/canvas');
     const canvas = createCanvas(Math.round(W * 1.2), Math.round(H * 1.2)); // 1.2x 分辨率，兼顾清晰与生成速度
     const ctx = canvas.getContext('2d');
@@ -208,7 +208,7 @@ async function prevTradingAmount(code, nowHHMM) {
     const rrect = (x, yy, w, h, r, fill) => { ctx.fillStyle = fill; ctx.beginPath(); ctx.roundRect(x, yy, w, h, r); ctx.fill(); };
     // 指数卡片
     for (const it of data.indices) {
-      const cardH = 186;
+      const cardH = 202;
       const c = comp(it.curYuan, it.prevAmt);
       const chgCol = it.chg >= 0 ? upC : downC;
       rrect(x0, y, cw, cardH, 14, panel);
@@ -242,7 +242,7 @@ async function prevTradingAmount(code, nowHHMM) {
       // 两列：成交额 / 预计全天
       const amtCols = data.closed
         ? [['全天成交额', `${f1(it.amountWan / 10000)}亿`], ['较上一交易日', (() => { const t2 = compLine(c, false)[0]; return t2.replace('较上一交易日', ''); })()]]
-        : [[`成交额（${data.nowHHMM}）`, `${f1(it.amountWan / 10000)}亿`], ['稳健预估', `${f1(it.est / 10000)}亿`]];
+        : [[`成交额（${data.nowHHMM}）`, `${f1(it.amountWan / 10000)}亿`], ['预计全天成交量', `${f1(it.est / 10000)}亿`]];
       const colW2 = (cw - 36) / 2;
       amtCols.forEach((c2, i) => {
         const cx = x0 + 18 + colW2 * i;
@@ -254,9 +254,10 @@ async function prevTradingAmount(code, nowHHMM) {
       // 放量缩量条
       const [ct, cc] = compLine(c, !data.closed);
       const barA = cc === upC ? 'rgba(245,34,45,0.08)' : cc === downC ? 'rgba(10,168,105,0.08)' : 'rgba(138,145,158,0.08)';
-      ctx.fillStyle = barA; ctx.beginPath(); ctx.roundRect(x0 + 18, y + 168, cw - 36, 16, 7); ctx.fill();
+      // 底部量能提示与“预计全天成交量”数值之间留出 14px，避免字体下沿重叠。
+      ctx.fillStyle = barA; ctx.beginPath(); ctx.roundRect(x0 + 18, y + 184, cw - 36, 18, 7); ctx.fill();
       ctx.fillStyle = cc; ctx.textAlign = 'left'; ctx.font = 'bold 12px cjk';
-      ctx.fillText(ct, x0 + 28, y + 176);
+      ctx.fillText(ct, x0 + 28, y + 193);
       y += cardH + 12;
     }
 
@@ -270,7 +271,7 @@ async function prevTradingAmount(code, nowHHMM) {
     ctx.fillText(`${f1(data.mkt.amountWan / 10000)}亿`, x0 + 18, y + 64);
     if (!data.closed) {
       ctx.fillStyle = sub; ctx.textAlign = 'right'; ctx.font = '15px cjk';
-      ctx.fillText(`稳健预估 ${f1(data.mkt.est / 10000)}亿`, x0 + cw - 18, y + 62);
+      ctx.fillText(`预计全天成交量 ${f1(data.mkt.est / 10000)}亿`, x0 + cw - 18, y + 62);
     }
     // 涨跌家数：醒目横条（三段等宽色块：上涨红 / 下跌绿 / 平盘灰）
     if (data.ud) {
@@ -301,10 +302,10 @@ async function prevTradingAmount(code, nowHHMM) {
 
     // 申万二级行业资金流
     if (data.sw2 && data.sw2.inflow.length) {
-      const swH = 150;
+      const swH = 206;
       rrect(x0, y, cw, swH, 14, panel);
       ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 16px cjk';
-      ctx.fillText('申万二级行业资金流 · 主力净流入 TOP3', x0 + 18, y + 26);
+      ctx.fillText('申万二级行业资金流 · 主力净流入 TOP5', x0 + 18, y + 26);
       const halfW = (cw - 36 - 12) / 2;
       const maxIn = Math.max(...data.sw2.inflow.map(r => r.yiyi), 1);
       const maxOut = Math.max(...data.sw2.outflow.map(r => Math.abs(r.yiyi)), 1);
@@ -314,8 +315,8 @@ async function prevTradingAmount(code, nowHHMM) {
       ctx.beginPath(); ctx.moveTo(divX, y + 38); ctx.lineTo(divX, y + swH - 10); ctx.stroke();
       // 左：流入
       ctx.fillStyle = upC; ctx.font = 'bold 14px cjk'; ctx.textAlign = 'left';
-      ctx.fillText('流入 TOP3', x0 + 18, y + 48);
-      data.sw2.inflow.slice(0, 3).forEach((r, i) => {
+      ctx.fillText('流入 TOP5', x0 + 18, y + 48);
+      data.sw2.inflow.forEach((r, i) => {
         const ry = y + 68 + i * 28;
         // 占比横条（右对齐，从列右边往左延伸）
         const bw = Math.round((r.yiyi / maxIn) * (halfW - 16));
@@ -329,8 +330,8 @@ async function prevTradingAmount(code, nowHHMM) {
       // 右：流出
       const rx2 = divX + 6;
       ctx.fillStyle = downC; ctx.font = 'bold 14px cjk'; ctx.textAlign = 'left';
-      ctx.fillText('流出 TOP3', rx2, y + 48);
-      data.sw2.outflow.slice(0, 3).forEach((r, i) => {
+      ctx.fillText('流出 TOP5', rx2, y + 48);
+      data.sw2.outflow.forEach((r, i) => {
         const ry = y + 68 + i * 28;
         const bw = Math.round((Math.abs(r.yiyi) / maxOut) * (halfW - 16));
         ctx.fillStyle = 'rgba(10,168,105,0.18)';
@@ -393,7 +394,7 @@ async function prevTradingAmount(code, nowHHMM) {
     const x0 = PAD, cw = W - PAD * 2;
     // 指数卡片
     for (const it of data.indices) {
-      const cardH = 186;
+      const cardH = 202;
       const c = comp(it.curYuan, it.prevAmt);
       const chgCol = it.chg >= 0 ? upC : downC;
       s += `<rect x="${x0}" y="${y}" width="${cw}" height="${cardH}" rx="14" fill="${panel}"/>`;
@@ -414,17 +415,16 @@ async function prevTradingAmount(code, nowHHMM) {
       // 两列：成交额 / 预计全天（收盘态：全天成交额 / 较上一交易日）
       const amtCols = data.closed
         ? [['全天成交额', `${f1(it.amountWan / 10000)}亿`], ['较上一交易日', (() => { const t2 = compLine(c, false)[0]; return t2.replace('较上一交易日', ''); })()]]
-        : [[`成交额（${data.nowHHMM}）`, `${f1(it.amountWan / 10000)}亿`], ['稳健预估', `${f1(it.est / 10000)}亿`]];
+        : [[`成交额（${data.nowHHMM}）`, `${f1(it.amountWan / 10000)}亿`], ['预计全天成交量', `${f1(it.est / 10000)}亿`]];
       const colW2 = (cw - 36) / 2;
       amtCols.forEach((c2, i) => {
         const cx = x0 + 18 + colW2 * i;
         s += `<text x="${cx}" y="${y + 148}" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">${c2[0]}</text>`;
         s += `<text x="${cx}" y="${y + 166}" font-family="PingFang SC,cjk" font-size="16" font-weight="bold" fill="${ink}">${esc(c2[1])}</text>`;
       });
-      // 放量缩量条（bar top y+178，h=24）
-      const [ct, cc] = compLine(c, !data.closed);
-      s += `<rect x="${x0 + 18}" y="${y + 168}" width="${cw - 36}" height="16" rx="7" fill="${barBg(cc)}"/>`;
-      s += `<text x="${x0 + 28}" y="${y + 176}" font-family="PingFang SC,cjk" font-size="12" font-weight="bold" fill="${cc}">${esc(ct)}</text>`;
+      // 与 Canvas 布局一致：量能提示条下移，避免覆盖成交额/预计全天成交量数值。
+      s += `<rect x="${x0 + 18}" y="${y + 184}" width="${cw - 36}" height="18" rx="7" fill="${barBg(cc)}"/>`;
+      s += `<text x="${x0 + 28}" y="${y + 193}" font-family="PingFang SC,cjk" font-size="12" font-weight="bold" fill="${cc}">${esc(ct)}</text>`;
       y += cardH + 12;
     }
 
@@ -435,7 +435,7 @@ async function prevTradingAmount(code, nowHHMM) {
     s += `<text x="${x0 + 18}" y="${y + 28}" font-family="PingFang SC,cjk" font-size="18" font-weight="bold" fill="${ink}">全市场（沪深两市合计）</text>`;
     s += `<text x="${x0 + 18}" y="${y + 64}" font-family="PingFang SC,cjk" font-size="30" font-weight="bold" fill="${ink}">${f1(data.mkt.amountWan / 10000)}亿</text>`;
     if (!data.closed) {
-      s += `<text x="${x0 + cw - 18}" y="${y + 62}" text-anchor="end" font-family="PingFang SC,cjk" font-size="15" fill="${sub}">稳健预估 ${f1(data.mkt.est / 10000)}亿</text>`;
+      s += `<text x="${x0 + cw - 18}" y="${y + 62}" text-anchor="end" font-family="PingFang SC,cjk" font-size="15" fill="${sub}">预计全天成交量 ${f1(data.mkt.est / 10000)}亿</text>`;
     }
     // 涨跌家数：醒目横条（三段等宽色块：上涨红 / 下跌绿 / 平盘灰）
     if (data.ud) {
@@ -462,21 +462,21 @@ async function prevTradingAmount(code, nowHHMM) {
 
     // 申万二级行业资金流
     if (data.sw2 && data.sw2.inflow.length) {
-      const swH = 150;
+      const swH = 206;
       s += `<rect x="${x0}" y="${y}" width="${cw}" height="${swH}" rx="14" fill="${panel}"/>`;
-      s += `<text x="${x0 + 18}" y="${y + 26}" font-family="PingFang SC,cjk" font-size="16" font-weight="bold" fill="${ink}">申万二级行业资金流 · 主力净流入 TOP3</text>`;
+      s += `<text x="${x0 + 18}" y="${y + 26}" font-family="PingFang SC,cjk" font-size="16" font-weight="bold" fill="${ink}">申万二级行业资金流 · 主力净流入 TOP5</text>`;
       const halfW = (cw - 36 - 12) / 2;
-      // 左：流入 TOP3
-      s += `<text x="${x0 + 18}" y="${y + 48}" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${upC}">流入 TOP3</text>`;
-      data.sw2.inflow.slice(0, 3).forEach((r, i) => {
+      // 左：流入 TOP5
+      s += `<text x="${x0 + 18}" y="${y + 48}" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${upC}">流入 TOP5</text>`;
+      data.sw2.inflow.forEach((r, i) => {
         const ry = y + 72 + i * 28;
         s += `<text x="${x0 + 18}" y="${ry}" font-family="PingFang SC,cjk" font-size="14" fill="${ink}">${esc(r.name.length > 9 ? r.name.slice(0, 9) + '…' : r.name)}</text>`;
         s += `<text x="${x0 + 18 + halfW - 6}" y="${ry}" text-anchor="end" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${upC}">+${r.yiyi.toFixed(1)}亿</text>`;
       });
-      // 右：流出 TOP3
+      // 右：流出 TOP5
       const rx2 = x0 + 18 + halfW + 12;
-      s += `<text x="${rx2}" y="${y + 48}" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${downC}">流出 TOP3</text>`;
-      data.sw2.outflow.slice(0, 3).forEach((r, i) => {
+      s += `<text x="${rx2}" y="${y + 48}" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${downC}">流出 TOP5</text>`;
+      data.sw2.outflow.forEach((r, i) => {
         const ry = y + 72 + i * 28;
         s += `<text x="${rx2}" y="${ry}" font-family="PingFang SC,cjk" font-size="14" fill="${ink}">${esc(r.name.length > 9 ? r.name.slice(0, 9) + '…' : r.name)}</text>`;
         s += `<text x="${rx2 + halfW - 6}" y="${ry}" text-anchor="end" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${downC}">${r.yiyi.toFixed(1)}亿</text>`;
@@ -491,7 +491,11 @@ async function prevTradingAmount(code, nowHHMM) {
 <rect x="0" y="0" width="${W}" height="${H}" rx="18" fill="${bg}"/>${s}<text x="${W - PAD}" y="${H - 12}" text-anchor="end" font-family="PingFang SC,cjk" font-size="11" fill="${sub}">生成 ${genT}</text></svg>`;
     try {
       const { Resvg } = require('@resvg/resvg-js');
-      const r = new Resvg(svg, { fitTo: { mode: 'width', value: W }, font: { fontFiles: ['/app/fonts/cjk_sub.ttf'], loadSystemFonts: false, defaultFontFamily: 'PingFang SC' } });
+      const font = resolveCjkFont();
+      const r = new Resvg(svg, {
+        fitTo: { mode: 'width', value: W },
+        font: font ? { fontFiles: [font], loadSystemFonts: false, defaultFontFamily: 'cjk' } : undefined,
+      });
       const png = r.render().asPng();
       return 'base64://' + png.toString('base64'); // 官方网关图片仅认 base64:// 前缀
     } catch (e) {
@@ -565,7 +569,7 @@ async function prevTradingAmount(code, nowHHMM) {
       // 盘中：现价 / 今日高低 / 当前成交额 + 预计全天 / 较上一交易日同时刻
       lines.push(`现价 ${price.toFixed(2)}  ${chgTxt}`);
       lines.push(`今开 ${open.toFixed(2)}  最高 ${high.toFixed(2)}  最低 ${low.toFixed(2)}`);
-      lines.push(`成交额 ${fmtAmountWan(amountWan)}（${nowHHMM}）  稳健预估 ${fmtAmountWan(est)}`);
+      lines.push(`成交额 ${fmtAmountWan(amountWan)}（${nowHHMM}）  预计全天成交量 ${fmtAmountWan(est)}`);
       lines.push(amountCompareTxt(curYuan, prevCmp));
     }
     lines.push('');
@@ -587,7 +591,7 @@ async function prevTradingAmount(code, nowHHMM) {
     lines.push(`全天成交额 ${fmtAmountWan(mktAmountWan)}`);
     lines.push(amountCompareTxt(mkt.curYuan, mktPrev));
   } else {
-    lines.push(`成交额 ${fmtAmountWan(mktAmountWan)}（${nowHHMM}）  稳健预估 ${fmtAmountWan(mkt.est)}`);
+    lines.push(`成交额 ${fmtAmountWan(mktAmountWan)}（${nowHHMM}）  预计全天成交量 ${fmtAmountWan(mkt.est)}`);
     lines.push(amountCompareTxt(mkt.curYuan, mktPrev));
   }
   lines.push('');
