@@ -761,10 +761,13 @@ async function cmdStock(args) {
   // 解析代码：数字直用，名称走搜索
   let code = normalizeCode(codeInput);
   let resolvedName = '';
+  let resolveNotice = '';
   if (!code) {
-    code = await resolveStockCode(codeInput);
+    const resolved = await resolveStockCode(codeInput, { details: true });
+    code = resolved.code;
     if (!code) return { ok: false, text: `⚠️ 未找到「${codeInput}」，请用代码或股票/ETF/港股/美股名称` };
-    resolvedName = codeInput;
+    resolvedName = resolved.name || codeInput;
+    if (!resolved.exact) resolveNotice = `🔎 已按「${resolvedName}」查询\n`;
   }
   const isUS = code.startsWith('us');
   const isHF = code.startsWith('hf_');
@@ -818,7 +821,7 @@ async function cmdStock(args) {
   const capCode = code.replace(/\.\w+$/, '').toUpperCase(); // usAAPL.OQ → USAAPL（图内代码去交易所后缀）
   const fp = v => isFinite(v) ? Number(v).toFixed(prec) : '-';
   const lastPx = (quote && isFinite(quote.price) && Number(quote.price) > 0) ? Number(quote.price) : last.close; // 现价用快照（K线末根可能丢精度）
-  const caption = `📈 ${name}（${capCode}）${periodLabel}\n现价 ${fp(lastPx)}${quote?.chgPct != null ? `  ${quote.chg >= 0 ? '+' : ''}${fp(Number(quote.chg))} (${quote.chgPct >= 0 ? '+' : ''}${Number(quote.chgPct).toFixed(2)}%)` : ''}`;
+  const caption = `${resolveNotice}📈 ${name}（${capCode}）${periodLabel}\n现价 ${fp(lastPx)}${quote?.chgPct != null ? `  ${quote.chg >= 0 ? '+' : ''}${fp(Number(quote.chg))} (${quote.chgPct >= 0 ? '+' : ''}${Number(quote.chgPct).toFixed(2)}%)` : ''}`;
   return { ok: true, text: caption, img };
 }
 

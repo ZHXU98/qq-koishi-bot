@@ -2,7 +2,7 @@
 // 行情数据层：代码解析 / K线分时拉取 / 指标计算 / 全球商品
 // 数据源：腾讯 qfq / 分钟K / 分时 + 东财K线 + 新浪全球期货
 // ============================================================
-const { cacheGet, cacheSet, normStockName } = require('./utils');
+const { cacheGet, cacheSet, coalesceRequest, normStockName } = require('./utils');
 
 const STOCK_QUOTE = 'https://qt.gtimg.cn/q=%s';                    // 实时快照（名称/现价，GBK）
 const STOCK_FQKLINE = 'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s,%s,,,320,qfq'; // 日/周/月K（320根，qfq 前复权）
@@ -59,26 +59,43 @@ const GLOBAL_TEXT = { 'usDJI': 1, 'usIXIC': 1, 'usINX': 1 };
 // 美股指数 → 东财 secid（日/周/月 K 线可用；分时口径与个股不同，不接）
 const EM_IDX_SECID = { 'usDJI': '100.DJIA', 'usINX': '100.SPX' };
 
-async function resolveStockCode(q) {
-  const key = String(q || '').trim().toLowerCase();
-  if (GLOBAL_ALIAS[key]) return GLOBAL_ALIAS[key];
+async function resolveStockCode(q, { details = false } = {}) {
+  const rawQuery = String(q || '').trim();
+  const key = rawQuery.toLowerCase();
+  const result = { code: '', name: '', exact: false };
+  if (GLOBAL_ALIAS[key]) {
+    result.code = GLOBAL_ALIAS[key];
+    result.name = rawQuery;
+    result.exact = true;
+    return details ? result : result.code;
+  }
   try {
-    const resp = await fetch(STOCK_SEARCH.replace('%s', encodeURIComponent(q)), {
+    const resp = await fetch(STOCK_SEARCH.replace('%s', encodeURIComponent(rawQuery)), {
       headers: { 'User-Agent': 'Mozilla/5.0' },
       signal: AbortSignal.timeout(6000),
     });
     const buf = Buffer.from(await resp.arrayBuffer());
     const text = new TextDecoder('gbk').decode(buf);
     const m = text.match(/v_hint="([^"]+)"/);
-    if (!m) return '';
-    const first = m[1].split('^')[0]; // "sh~600519~贵州茅台~gzmt~GP-A" / "hk~00700~腾讯控股~txkg~GP" / "us~aapl.oq~苹果~pg~GP"
-    const parts = first.split('~');
-    if (parts.length >= 3) {
-      if (parts[0] === 'us') return 'us' + String(parts[1]).toUpperCase(); // us~aapl.oq → usAAPL.OQ（带交易所后缀，供K线）
-      if (/^\d{5,6}$/.test(parts[1])) return parts[0] + parts[1]; // A股6位 / 港股5位
-    }
-    return '';
-  } catch (_) { return ''; }
+    if (!m) return details ? result : '';
+    const candidates = m[1].split('^').map(row => {
+      const parts = row.split('~');
+      if (parts.length < 3) return null;
+      const market = parts[0], rawCode = String(parts[1]);
+      const name = normStockName(parts[2].replace(/\\u([\dA-Fa-f]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))));
+      let code = '';
+      if (market === 'us') code = 'us' + rawCode.toUpperCase();
+      else if (/^\d{5,6}$/.test(rawCode)) code = market + rawCode;
+      return code ? { code, name } : null;
+    }).filter(Boolean);
+    if (!candidates.length) return details ? result : '';
+    const normalizedQuery = normStockName(rawQuery).toLowerCase();
+    const hit = candidates.find(item => item.name.toLowerCase() === normalizedQuery) || candidates[0];
+    result.code = hit.code;
+    result.name = hit.name;
+    result.exact = hit.name.toLowerCase() === normalizedQuery;
+    return details ? result : result.code;
+  } catch (_) { return details ? result : ''; }
 }
 
 function calcSMA(arr, period) { // arr 为收盘价数组（旧→新），返回同长数组（前 period-1 为 null）
@@ -131,6 +148,9 @@ async function fetchStockKline(code, period) {
   const ckey = 'kline:' + code + ':' + period;
   const cached = cacheGet(ckey);
   if (cached) return cached;
+  return coalesceRequest(ckey, async () => {
+    const cachedAgain = cacheGet(ckey);
+    if (cachedAgain) return cachedAgain;
   const parse = (j, key) => {
     const d = j?.data?.[key];
     if (!d) return null;
@@ -196,6 +216,7 @@ async function fetchStockKline(code, period) {
   if (!result) return null;
   cacheSet(ckey, result, 5000); // K线分钟级变化，5 秒缓存足够
   return result;
+  });
 }
 
 async function fetchEmKline(secid, klt) {
@@ -367,6 +388,9 @@ async function fetchStockMinuteKline(code, period = 'm1', limit = 400) {
   const ckey = `minute:${code}:${period}:${lim}`;
   const cached = cacheGet(ckey);
   if (cached) return cached;
+  return coalesceRequest(ckey, async () => {
+    const cachedAgain = cacheGet(ckey);
+    if (cachedAgain) return cachedAgain;
   try {
     const url = STOCK_MINUTE.replace('%s', code).replace('%s', period).replace(/,320$/, ',' + lim);
     const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) });
@@ -381,13 +405,16 @@ async function fetchStockMinuteKline(code, period = 'm1', limit = 400) {
     cacheSet(ckey, out, 5000);
     return out;
   } catch (_) { return null; }
+  });
 }
-
 async function fetchStockQuote(code) {
   const ckey = 'quote:' + code;
   const cached = cacheGet(ckey);
   if (cached) return cached;
-  try {
+  return coalesceRequest(ckey, async () => {
+    const cachedAgain = cacheGet(ckey);
+    if (cachedAgain) return cachedAgain;
+    try {
     if (code.startsWith('hf_')) {
       const resp = await fetch(STOCK_QUOTE.replace('%s', code), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(6000) });
       const buf = Buffer.from(await resp.arrayBuffer());
@@ -447,6 +474,7 @@ async function fetchStockQuote(code) {
     cacheSet(ckey, result, 5000);
     return result;
   } catch (_) { return null; }
+  });
 }
 
 const EM_HOSTS = ['push2his.eastmoney.com', 'push2.eastmoney.com', 'push2delay.eastmoney.com'];

@@ -4,6 +4,8 @@
 const { NAPCAT_URL, TOKEN, BOT_UIN, CONFIG } = require('./config');
 const { sleep } = require('./utils');
 
+const SEND_TIMEOUT_MS = Number(process.env.NAPCAT_SEND_TIMEOUT_MS || 12000);
+
 async function napcat(ep, body, { retry = false } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
@@ -14,7 +16,10 @@ async function napcat(ep, body, { retry = false } = {}) {
   for (let i = 1; i <= maxTry; i++) {
     ok = false;
     try {
-      const r = await fetch(NAPCAT_URL + ep, { method: 'POST', headers, body: JSON.stringify(body) });
+      // 单次发送必须有上限，避免网关半开连接让整个命令链路永久等待。
+      const r = await fetch(NAPCAT_URL + ep, {
+        method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+      });
       t = await r.text();
       ok = r.ok;
       try {
@@ -100,4 +105,4 @@ function ownerDeniedMsg() {
     : '🛡️ 组合的增删改仅限机器人主人；当前未配置 owners，请在 reply/config.json 中填写 owners 名单';
 }
 
-module.exports = { napcat, sendReply, sendImagesSequential, parseMessage, ownerOpenid, ownerList, isOwnerCtx, ownerDeniedMsg };
+module.exports = { SEND_TIMEOUT_MS, napcat, sendReply, sendImagesSequential, parseMessage, ownerOpenid, ownerList, isOwnerCtx, ownerDeniedMsg };

@@ -262,10 +262,13 @@ async function cmdInfo(args) {
   // 解析代码
   let code = normalizeCode(codeInput);
   let resolvedName = '';
+  let resolveNotice = '';
   if (!code) {
-    code = await resolveStockCode(codeInput);
+    const resolved = await resolveStockCode(codeInput, { details: true });
+    code = resolved.code;
     if (!code) return { ok: false, text: `⚠️ 未找到「${codeInput}」，请用代码或名称` };
-    resolvedName = codeInput;
+    resolvedName = resolved.name || codeInput;
+    if (!resolved.exact) resolveNotice = `🔎 已按「${resolvedName}」查询\n`;
   }
   if (/^(hk|us)/.test(code) || code.startsWith('hf_')) return { ok: false, text: '⚠️ /info 暂仅支持A股（公司资料来自东财F10）\n港股/美股/商品可用 /stock 看行情：/stock 00700　/stock AAPL　/stock 布伦特原油' };
   const mk = infoMarket(code);
@@ -281,7 +284,7 @@ async function cmdInfo(args) {
   ]);
   const data = { name, code: code.toUpperCase(), quote, co, anns, news, nAnn, nNews, deadQuote };
   // 纯文本输出（手机端阅读友好，图渲染易错位已弃用）
-  return { ok: true, text: infoText(data) };
+  return { ok: true, text: resolveNotice + infoText(data) };
 }
 
 // 覆盖：A股场内 ETF / LOF / ETF联接 / 场外基金均可识别；持仓明细仅支持 A股/港股标的（美股持仓不展示）
@@ -351,8 +354,13 @@ async function cmdEtfInfo(args) {
   if (!parts.length) return { ok: false, text: '📋 用法：/etfinfo <代码或名称>\n查 ETF 前十持仓 + 跟踪指数，并提示该代码/名称是不是 ETF\n例：/etfinfo 510300　/etfinfo 沪深300ETF　/etfinfo 159915　/etfinfo 纳指ETF' };
   const q = parts[0];
   let code = normalizeCode(q);
-  if (!code) code = await resolveStockCode(q);
-  if (!code) return { ok: false, text: `⚠️ 未找到「${q}」，请用 A股基金 6 位代码或名称（如 510300 / 沪深300ETF）` };
+  let resolveNotice = '';
+  if (!code) {
+    const resolved = await resolveStockCode(q, { details: true });
+    code = resolved.code;
+    if (!code) return { ok: false, text: `⚠️ 未找到「${q}」，请用 A股基金 6 位代码或名称（如 510300 / 沪深300ETF）` };
+    if (!resolved.exact) resolveNotice = `🔎 已按「${resolved.name || q}」查询\n`;
+  }
   const pre = code.slice(0, 2);
   const raw = code.slice(2).toUpperCase();
   // —— 非 A股市场：明确提示不是 A股 ETF ——
@@ -394,7 +402,7 @@ async function cmdEtfInfo(args) {
   if (hasHolds ? cnHk.length === 0 : usWord.test(basic.indexName || '')) {
     L.push(`📭 该基金为美股类（${hasIdx ? basic.indexName : basic.fullType}），etfinfo 只做 A股/港股、不做美股`);
     L.push('📌 数据来源：基金定期报告（天天基金）');
-    return { ok: true, text: L.join('\n') };
+    return { ok: true, text: resolveNotice + L.join('\n') };
   }
   if (hasIdx) L.push(`🎯 跟踪指数：${basic.indexName}${basic.indexCode && basic.indexCode !== '--' ? `（${basic.indexCode}）` : ''}`);
   else L.push('🎯 跟踪指数：无（非指数型基金）');

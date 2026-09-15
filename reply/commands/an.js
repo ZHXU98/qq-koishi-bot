@@ -746,9 +746,13 @@ async function cmdAn(args) {
   }
   let code = normalizeCode(codeArg);
   let name = codeArg;
+  let resolveNotice = '';
   if (!code) {
-    code = await resolveStockCode(normStockName(codeArg));
+    const resolved = await resolveStockCode(normStockName(codeArg), { details: true });
+    code = resolved.code;
     if (!code) return { ok: false, text: `⚠️ 找不到「${codeArg}」，请检查代码或名称` };
+    name = resolved.name || codeArg;
+    if (!resolved.exact) resolveNotice = `🔎 已按「${name}」查询\n`;
   }
   const [dayK, weekK, monthK, quote] = await Promise.all([
     fetchStockKline(code, 'day').catch(() => null),
@@ -766,7 +770,7 @@ async function cmdAn(args) {
     week: analyzePeriod('week', weekK, prec),
     month: analyzePeriod('month', monthK, prec),
   };
-  const text = buildReport(name, code, quote, all, prec);
+  const text = resolveNotice + buildReport(name, code, quote, all, prec);
   let img = null;
   try { img = renderAnPng(code, name, quote, all, prec); }
   catch (e) { console.error('[an] 图表生成失败:', e.message); }

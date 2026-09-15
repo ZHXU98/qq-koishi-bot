@@ -1090,9 +1090,13 @@ async function cmdT(args) {
   // 解析代码
   let code = normalizeCode(codeArg);
   let name = codeArg;
+  let resolveNotice = '';
   if (!code) {
-    code = await resolveStockCode(codeArg);
+    const resolved = await resolveStockCode(codeArg, { details: true });
+    code = resolved.code;
     if (!code) return { ok: false, text: `⚠️ 找不到「${codeArg}」，请检查代码或名称` };
+    name = resolved.name || codeArg;
+    if (!resolved.exact) resolveNotice = `🔎 已按「${name}」查询\n`;
   }
   // 并行拉取：当天分时 + 日线 + 快照
   const [timeResult, dayResult, quote] = await Promise.all([
@@ -1162,7 +1166,7 @@ async function cmdT(args) {
     : dayInfo.form;
   // tPos 可能为 null（纯竞价阶段）
   const tPos = calcTPositions(activeForm, timeInfo, dayInfo);
-  const text = buildTReport(name, code, dayInfo.form, userFormRaw, timeInfo, dayInfo, tPos);
+  const text = resolveNotice + buildTReport(name, code, dayInfo.form, userFormRaw, timeInfo, dayInfo, tPos);
   // 生成图
   let img = null;
   try {

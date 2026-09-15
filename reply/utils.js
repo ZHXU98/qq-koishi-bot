@@ -39,8 +39,17 @@ function isTradingDay(d) { // 粗略：周一至周五视为交易日（节假�
 }
 // ---- 行情数据内存缓存（降低重复接口请求；key 带日期/TTL 自动失效） ----
 const __CACHE = new Map();
+const __INFLIGHT = new Map();
 function cacheGet(key) { const c = __CACHE.get(key); return c && c.exp > Date.now() ? c.val : undefined; }
 function cacheSet(key, val, ttlMs) { __CACHE.set(key, { exp: Date.now() + ttlMs, val }); }
+// 同一份行情仍在请求时复用 Promise，避免缓存写入前被并发命令重复打上游。
+function coalesceRequest(key, loader) {
+  const running = __INFLIGHT.get(key);
+  if (running) return running;
+  const task = Promise.resolve().then(loader).finally(() => __INFLIGHT.delete(key));
+  __INFLIGHT.set(key, task);
+  return task;
+}
 
 function normStockName(s) {
   const v = String(s || '').trim();
@@ -111,5 +120,5 @@ function fmtSize(n) {
 
 module.exports = {
   uptimeText, nowText, sleep, fmtAmountWan, fmtAmountYuan, estFullDayAmount, isTradingDay,
-  cacheGet, cacheSet, normStockName, isFundCode, esc, mapLimit, wrapText, extractMagnet, fmtSize, f2p,
+  cacheGet, cacheSet, coalesceRequest, normStockName, isFundCode, esc, mapLimit, wrapText, extractMagnet, fmtSize, f2p,
 };
