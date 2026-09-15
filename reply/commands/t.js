@@ -159,6 +159,39 @@ function _openScenario({ gapPct, openDirPct, pullbackPct, recoverPct, confirmTh,
   return 'flat_neutral';
 }
 
+// ── 开盘快讯：前 2~3 分钟只识别明确的竞价兑现或恐慌收回 ──
+// 这是独立于盘中评分的微观结构；只给小仓建议，不生成完整T位，且不使用MACD。
+function analyzeOpenFlash(klines, avgLine, open, gapPct, volRatio) {
+  const rows = (klines || []).filter(k => Number(k.close) > 0);
+  const n = rows.length;
+  const empty = { signal: 'observe', reason: '分钟数据不足', highFromOpen: 0, lowFromOpen: 0, aboveOpen: false, aboveAvg: false, higherLows: false, lowerHighs: false };
+  if (n < 2 || n > 3 || !(open > 0)) return empty;
+  const last = rows[n - 1];
+  const high = Math.max(...rows.map(k => Number(k.high) || 0));
+  const low = Math.min(...rows.map(k => Number(k.low) || Infinity));
+  const highFromOpen = (high - open) / open * 100;
+  const lowFromOpen = (open - low) / open * 100;
+  const avg = avgLine && avgLine.length === n ? avgLine[n - 1] : 0;
+  const aboveOpen = Number(last.close) >= open;
+  const aboveAvg = !(avg > 0) || Number(last.close) >= avg;
+  const higherLows = n >= 3 && Number(rows[n - 1].low) > Number(rows[n - 2].low);
+  const lowerHighs = n >= 3 && Number(rows[n - 1].high) < Number(rows[n - 2].high);
+  // 高开/冲高兑现：先冲高至少0.6%，随后失守今开，并出现降低高点或跌破早盘均价，才允许小仓T出。
+  // 前3分钟均价线仍会快速移动，不能要求它与今开同时失守，否则容易错过竞价兑现。
+  if ((gapPct >= 0.8 || highFromOpen >= 0.6) && highFromOpen >= 0.6 && !aboveOpen && (lowerHighs || !aboveAvg)) {
+    return { signal: 'small_sell', reason: '冲高后失守今开，且降低高点/跌破早盘均价', highFromOpen, lowFromOpen, aboveOpen, aboveAvg, higherLows, lowerHighs };
+  }
+  // 低开恐慌收回：先下探至少0.6%，再收回今开和早盘均价，才允许小仓买回。
+  if ((gapPct <= -0.8 || lowFromOpen >= 0.6) && lowFromOpen >= 0.6 && aboveOpen && aboveAvg) {
+    return { signal: 'small_buy', reason: '下探后收回今开与早盘均价', highFromOpen, lowFromOpen, aboveOpen, aboveAvg, higherLows, lowerHighs };
+  }
+  // 强承接：抬高低点并守住今开/均价，避免在强势开盘过早T出。
+  if (aboveOpen && aboveAvg && (higherLows || Number(last.close) >= high * 0.997)) {
+    return { signal: 'hold', reason: '承接强，守住今开与早盘均价', highFromOpen, lowFromOpen, aboveOpen, aboveAvg, higherLows, lowerHighs };
+  }
+  return { signal: 'observe', reason: volRatio > 1.5 ? '放量但方向未定' : '早盘结构尚未明确', highFromOpen, lowFromOpen, aboveOpen, aboveAvg, higherLows, lowerHighs };
+}
+
 // ── 分时现状分析 ──
 // 三阶段逻辑：
 //   preMacd      ：有效分时 ≤ 3 根（约 9:30~9:32）— 不使用 MACD，只看首根实体、均价和量比
@@ -222,6 +255,7 @@ function analyzeTTimeData(timeKlines, quote, code = '') {
   const macd = closesArr.length ? calcMACD(closesArr) : null;
   const macdState = macd ? analyzeMACDState(macd, closesArr) : null;
   const priceAction = analyzePriceAction(validKlines, avgLine, lastPrice);
+  const openFlash = preMacd ? analyzeOpenFlash(validKlines, avgLine, open, gapPct, volRatio) : null;
   // 开盘场景由价格、量能与轨迹决定；MACD不参与场景识别或触发。
   const openScenario = (!pureAuction && openPhase) ? _openScenario({ gapPct, openDirPct, pullbackPct, recoverPct, confirmTh, hiFromOpen, loFromOpen }) : null;
   // 黄线斜率（近15分钟；开盘阶段无意义）
@@ -235,7 +269,7 @@ function analyzeTTimeData(timeKlines, quote, code = '') {
     preMacd, macdForming, macdConfirm,
     gapPct, openDirPct, openScenario, candleCount,
     dayHigh, dayLow, dayPosition, amplitude, volRatio, avgSlope, avgLine, timeKlines,
-    pullbackPct, recoverPct, hiFromOpen, loFromOpen, confirmTh, macd, macdState, priceAction,
+    pullbackPct, recoverPct, hiFromOpen, loFromOpen, confirmTh, macd, macdState, priceAction, openFlash,
   };
 }
 
@@ -414,7 +448,7 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
 function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos) {
   const { lastPrice, currentAvg, avgDev, dayHigh, dayLow, dayPosition, volRatio, amplitude,
           avgSlope, openPhase, pureAuction, preMacd, macdForming, macdConfirm, open, gapPct, openDirPct, openScenario, candleCount,
-          pullbackPct, recoverPct, hiFromOpen, loFromOpen, confirmTh, macd, macdState, priceAction } = timeInfo;
+          pullbackPct, recoverPct, hiFromOpen, loFromOpen, confirmTh, macd, macdState, priceAction, openFlash } = timeInfo;
   const { ma5, ma10, ma20, bollUp, bollLow, bollMid, bollWidth } = dayInfo;
   const now = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, hour: '2-digit', minute: '2-digit' });
   const isETF = /^(sh51|sz159)/.test(code);
@@ -494,7 +528,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   const gapTxt = gapPct > 1 ? `高开 +${gapPct.toFixed(2)}%` : gapPct < -1 ? `低开 ${gapPct.toFixed(2)}%` : `平开 ${gapPct.toFixed(2)}%`;
 
   if (pureAuction) {
-    // ── 前 3 分钟 / 3~5 分钟：只观察价格结构与量能，不给做T信号 ──
+    // ── 前 3 分钟开盘快讯 / 3~5 分钟观察 ──
     const first = timeInfo.timeKlines && timeInfo.timeKlines[0];
     const firstDir = first ? (first.close >= first.open ? '首根实体偏强' : '首根实体偏弱') : '首根实体待确认';
     L.push(`🔔 竞价结果：今开 ${fp(open)}（${gapTxt}）  /  量比 ${volRatio.toFixed(1)}  /  现价 ${fp(lastPrice)}`);
@@ -523,9 +557,28 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
       L.push(`➡️ 平开（${gapTxt}），无方向性缺口`);
       L.push(`   💡 平开看开盘后走势与量能，再判断T方向`);
     }
+    if (preMacd && openFlash) {
+      const flash = openFlash;
+      const hiTxt = flash.highFromOpen > 0 ? `最高较今开 +${fpp(flash.highFromOpen)}%` : '';
+      const loTxt = flash.lowFromOpen > 0 ? `最低较今开 -${fpp(flash.lowFromOpen)}%` : '';
+      L.push(`━━━ 开盘快讯（前${candleCount}分钟）━━━`);
+      L.push(`→ ${[hiTxt, loTxt].filter(Boolean).join(' / ') || '首段振幅有限'}；${flash.reason}`);
+      if (flash.signal === 'small_sell') {
+        L.push(`🔴 小仓T出：高开/冲高兑现后失守今开，且出现降低高点或跌破早盘均价，建议仅用老仓的 10%~15% 先做T出。`);
+        L.push(`   若重新站回今开或早盘均价，停止继续卖出；不使用MACD作为条件。`);
+      } else if (flash.signal === 'small_buy') {
+        L.push(`🟢 小仓买回：低开下探后同时收回今开和早盘均价，建议仅用预留T仓的 10%~15% 买回。`);
+        L.push(`   若再次失守今开或早盘均价，停止继续买入；不使用MACD作为条件。`);
+      } else if (flash.signal === 'hold') {
+        L.push(`🟡 持有观察：早盘承接强，守住今开与均价，避免过早T出造成踏空。`);
+      } else {
+        L.push(`⏳ 暂不操作：开盘结构未明确，等待第4~5分钟形成更完整的高低点和量能关系。`);
+      }
+      L.push(`   注：这是开盘快讯，只给小仓方向，不生成完整盘中T区间。`);
+    }
     L.push('');
-    L.push(`⏰ 当前有效分时 ${candleCount} 根，${preMacd ? '前3分钟：只看均价线、量比和首根实体，不用MACD' : `3~5分钟：${firstDir}，观察首段高低点、均价线、量能和初步5分钟结构，暂不触发做T`}`);
-    L.push(`   ⚠️ 暂不给T位——${preMacd ? '先等至少3分钟形成初步价格结构' : '等到第6根分钟K后，观察均价线、量能、前高前低与5分钟结构'}`);
+    L.push(`⏰ 当前有效分时 ${candleCount} 根，${preMacd ? '前3分钟：以开盘快讯识别竞价兑现、恐慌收回或强承接；MACD不参与' : `3~5分钟：${firstDir}，观察首段高低点、均价线、量能和初步5分钟结构，暂不触发做T`}`);
+    L.push(`   ${preMacd ? '第4~5分钟继续观察；第6根分钟K起启用单层价格行为评分。' : '第6根分钟K起启用单层价格行为评分。'}`);
     L.push(`   📉 分时MACD：当天1分钟K线(12,26,9)，首根收盘价为EMA初始值，仅作辅助参考`);
     L.push('');
     L.push(`📈 图表分析正在生成...`);
