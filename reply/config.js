@@ -25,15 +25,22 @@ const DEFAULTS = {
   unknownMsg: '未知指令，发送 /help 查看可用指令',
   welcome: '👋 你好，我是机器人助手。群聊请 @我 + 指令，私聊可直接发送指令；发送 /help 查看全部指令。',
 };
-let CONFIG = { ...DEFAULTS };
+// 保持对象身份稳定：index/gateway 等模块会在启动时持有 CONFIG 引用；
+// 热加载只能原地写入，不能整体替换对象。
+const CONFIG = { ...DEFAULTS };
 function loadConfig() {
+  let next = { ...DEFAULTS };
   try {
     if (fs.existsSync(CONFIG_PATH)) {
-      CONFIG = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) };
+      const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) next = { ...DEFAULTS, ...parsed };
     }
   } catch (e) {
-    console.error('[config] 读取失败（沿用默认）:', e.message);
+    console.error('[config] 读取失败（恢复默认）:', e.message);
   }
+  // codeflicker-fix: LOGIC-Issue-001/88kfhqxizxofpamlat74
+  Object.assign(CONFIG, next);
+  return CONFIG;
 }
 loadConfig();
 
