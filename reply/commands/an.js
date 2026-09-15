@@ -776,10 +776,18 @@ function drawPeriod(ctx, a, x0, y0, w, h, title, prec, maCols) {
   // 若仍按 8px 画会变成"牙签"，K 线实体几乎看不见。
   const cw = Math.max(2, Math.min(20, w / n * 0.58));
   for (let i = 0; i < n; i++) {
-    const k = ks[i], col = k.close >= k.open ? upC : downC;
+    const k = ks[i], isUp = k.close >= k.open, col = isUp ? upC : downC;
     const xx = X(i), yo = Y(k.open), yc = Y(k.close), yh = Y(k.high), yl = Y(k.low);
+    const top = Math.min(yo, yc), bodyH = Math.max(1, Math.abs(yo - yc));
     ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(xx, yh); ctx.lineTo(xx, yl); ctx.stroke();
-    ctx.fillStyle = col; ctx.fillRect(xx - cw / 2, Math.min(yo, yc), cw, Math.max(1, Math.abs(yo - yc)));
+    // codeflicker-fix: UX-Issue-001/kym2we78i4conjtmrmzp
+    // A股常用K线语义：上涨红色空心、下跌绿色实心；成交量和MACD仍按原红绿实体色绘制。
+    if (isUp) {
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(xx - cw / 2, top, cw, bodyH);
+      ctx.strokeStyle = upC; ctx.lineWidth = 1.35; ctx.strokeRect(xx - cw / 2, top, cw, bodyH);
+    } else {
+      ctx.fillStyle = downC; ctx.fillRect(xx - cw / 2, top, cw, bodyH);
+    }
   }
   // MA + BOLL
   const drawLine = (series, color, dash) => {
