@@ -823,6 +823,12 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push(`🚨 低开续跌中——做T难度极高，不建议操作`);
     L.push(`   优先方案：若跌幅已大（>3%），考虑部分减仓止损`);
     L.push(`   等缩量止跌、5分钟K转强并重新站回均价线后，才考虑分批接回`);
+  } else if (paSignal === 'sell' && inBuyZone) {
+    // 买回区内的短线走弱不等于应该低位追卖：区间位置优先于离场动量。
+    // 与卖出区内抑制“买回”保持对称，确保文字建议和技术图区间不冲突。
+    L.push(`⚠️ 短线空头信号出现，但现价 ${fp(lastPrice)} 已在买回参考区（≤ ${fp(buyHigh)}）`);
+    L.push(`   不追卖、不在此处T出；如需做T，等待反弹到卖出区 ${fp(sellLow)} ~ ${fp(sellHigh)} 再结合量价确认。`);
+    if (macdEndorsesSell) L.push(`   ℹ️ MACD死叉仅说明短线动能转弱，不能覆盖当前买回区的位置约束。`);
   } else if (paSignal === 'sell') {
     L.push(`🎯 价格行为触发T出/减仓：均价线、前低、5分钟K与量能形成空头共振`);
     if (macdEndorsesSell) L.push(`   ℹ️ MACD死叉同向，可作为辅助参考；操作仍以价格行为为准`);
