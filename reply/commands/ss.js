@@ -64,9 +64,21 @@ async function prevTradingAmount(code, nowHHMM) {
     } catch (_) { return null; }
   }
   try {
-    // 先按日期收集原始30分钟成交额；再逐日清理累计快照，避免同一成交额被多次相加。
+    // 同花顺 30 分钟行的时间戳是桶的结束时刻：10:00 实际覆盖 09:30-10:00，13:30 覆盖 13:00-13:30。
+    // 当前金额来自实时快照（精确到分钟）；历史同刻额必须对跨越 nowHHMM 的桶按已走分钟线性折算，
+    // 否则 09:45 会漏掉整个首桶、11:20 会漏掉 11:00-11:20，令 fullDay/sameTime 被人为抬高。
+    const minuteOf = hhmm => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(2));
+    const targetMinute = minuteOf(nowHHMM.replace(':', ''));
+    const amountAtTime = entries => entries.reduce((sum, item) => {
+      const endMinute = minuteOf(item.hhmm);
+      const startMinute = item.hhmm === '1330' ? 13 * 60 : endMinute - 30;
+      if (endMinute <= targetMinute) return sum + item.amount;
+      if (targetMinute > startMinute && targetMinute < endMinute) {
+        return sum + item.amount * (targetMinute - startMinute) / (endMinute - startMinute);
+      }
+      return sum;
+    }, 0);
     const byDate = new Map();
-    const hhmmCmp = nowHHMM.replace(':', '');
     for (const line of rows) {
       const date = line.slice(0, 8);
       const hhmm = line.slice(8, 12);
@@ -79,7 +91,7 @@ async function prevTradingAmount(code, nowHHMM) {
     for (const [date, entries] of byDate) {
       const cleaned = sanitizeDayAmounts(entries);
       daily.set(date, {
-        sameTime: cleaned.filter(item => item.hhmm <= hhmmCmp).reduce((sum, item) => sum + item.amount, 0),
+        sameTime: amountAtTime(cleaned),
         fullDay: cleaned.reduce((sum, item) => sum + item.amount, 0),
       });
     }
