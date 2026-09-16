@@ -22,8 +22,8 @@ function fmtAmountWan(v) { return (v / 10000).toFixed(1) + '亿'; }
 function fmtAmountYuan(v) { return (v / 1e8).toFixed(1) + '亿'; }
 // 预计全天成交额（万）。优先按上一交易日同时刻完成度比例校正（ratio=全天/同时刻>1，
 // 天然含"上午量>下午量"分布与午休处理）；无历史比例时回退 240 分钟线性外推。
+// 开盘前15个有效交易分钟的累计额波动极大，任何外推都容易失真，故返回 0 表示“待稳定”。
 function estFullDayAmount(amountWan, now, ratio) {
-  if (ratio && ratio > 1) return Math.round(amountWan * ratio);
   const min = now.getHours() * 60 + now.getMinutes();
   let traded = 0;
   if (min <= 570) traded = 0;              // 9:30 前
@@ -31,7 +31,12 @@ function estFullDayAmount(amountWan, now, ratio) {
   else if (min <= 780) traded = 120;       // 午休
   else if (min <= 900) traded = 120 + (min - 780); // 13:00-15:00
   else traded = 240;                       // 15:00 后
-  return traded > 0 ? Math.round(amountWan * 240 / traded) : 0;
+  if (traded < 15) return 0;
+  // 历史30分钟数据若偶有残留累计快照，ratio 仍可能偏大；上限随实际交易进度收紧。
+  // 例如 9:45 最多约 24 倍、10:30 最多约 6 倍、14:30 最多约 1.7 倍。
+  const maxRatio = Math.max(1.05, 1.5 * 240 / traded);
+  const safeRatio = ratio > 1 ? Math.min(ratio, maxRatio) : 0;
+  return safeRatio ? Math.round(amountWan * safeRatio) : Math.round(amountWan * 240 / traded);
 }
 function isTradingDay(d) { // 粗略：周一至周五视为交易日（节假日不单独判断，收盘态自动兜底）
   const w = d.getDay();

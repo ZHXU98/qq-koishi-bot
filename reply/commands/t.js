@@ -198,10 +198,11 @@ function analyzeOpenFlash(klines, avgLine, open, gapPct, volRatio) {
 //   preMacd      ：有效分时 ≤ 3 根（约 9:30~9:32）— 不使用 MACD，只看首根实体、均价和量比
 //   macdForming  ：4~5 根（约 9:33~9:34）       — 观察首段高低点、均价线、量能和初步5分钟结构，不给T触发
 //   macdConfirm  ：6~10 根（约 9:35~9:39）      — 单层价格行为评分决定方向；MACD仅旁路展示
-//   盘中          ：有效分时 > 10 根             — 使用既有黄线、轨迹、量能与 MACD 共振
+//   盘中          ：有效分时 > 30 根            — 使用黄线方向、轨迹、量能与价格行为；MACD仅旁路展示
 function analyzeTTimeData(timeKlines, quote, code = '') {
   const hasTime = !!timeKlines && timeKlines.length >= 2;
   const validKlines = hasTime ? filterTDisplayKlines(code, timeKlines) : [];
+  const hasValidTime = validKlines.length >= 2;
   const candleCount = validKlines.length;
   const preMacd = candleCount <= 3;
   const macdForming = candleCount >= 4 && candleCount <= 5;
@@ -209,28 +210,28 @@ function analyzeTTimeData(timeKlines, quote, code = '') {
   const pureAuction = preMacd || macdForming;
   const openPhase = candleCount <= 30;
   const lastPrice = (quote && Number(quote.price) > 0) ? Number(quote.price)
-    : (hasTime ? timeKlines[timeKlines.length - 1].close : 0);
+    : (hasValidTime ? validKlines[validKlines.length - 1].close : 0);
   const prevClose = (quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : 0;
   const open = (quote && Number(quote.open) > 0) ? Number(quote.open) : prevClose;
-  const avgLine = hasTime ? buildAvgLine(timeKlines) : null;
+  const avgLine = hasValidTime ? buildAvgLine(validKlines) : null;
   const currentAvg = (avgLine && avgLine.length > 0) ? avgLine[avgLine.length - 1] : 0;
   // 基准价：开盘用今开（黄线不可靠），盘中用黄线
   const baseRef = openPhase ? (open || prevClose || lastPrice) : (currentAvg || lastPrice);
   const avgDev = baseRef > 0 ? (lastPrice - baseRef) / baseRef * 100 : 0;
   // 日内位置
   const dayHigh = (quote && Number(quote.high) > 0) ? Number(quote.high)
-    : (hasTime ? Math.max(...timeKlines.map(k => k.high)) : 0);
+    : (hasValidTime ? Math.max(...validKlines.map(k => k.high)) : 0);
   const dayLow = (quote && Number(quote.low) > 0) ? Number(quote.low)
-    : (hasTime ? Math.min(...timeKlines.map(k => k.low)) : 0);
+    : (hasValidTime ? Math.min(...validKlines.map(k => k.low)) : 0);
   const range = dayHigh - dayLow;
   const dayPosition = range > 0 ? (lastPrice - dayLow) / range * 100 : 50;
   const amplitude = prevClose > 0 ? range / prevClose * 100 : 0;
   // 量能：开盘用快照量比（竞价量/5日均量）；盘中用近5min vs 前5min
   let volRatio;
-  if (hasTime && !openPhase) {
-    const dn = timeKlines.length;
-    const rv = timeKlines.slice(-5).map(k => k.vol || 0);
-    const pv = dn >= 10 ? timeKlines.slice(-10, -5).map(k => k.vol || 0) : rv;
+  if (hasValidTime && !openPhase) {
+    const dn = validKlines.length;
+    const rv = validKlines.slice(-5).map(k => k.vol || 0);
+    const pv = dn >= 10 ? validKlines.slice(-10, -5).map(k => k.vol || 0) : rv;
     const recentAvgVol = rv.reduce((a, b) => a + b, 0) / rv.length;
     const prevAvgVol = pv.reduce((a, b) => a + b, 0) / pv.length;
     volRatio = prevAvgVol > 0 ? recentAvgVol / prevAvgVol : 1;
@@ -371,7 +372,7 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
   // ── 纯竞价阶段：数据不足，不给T位 ──
   if (pureAuction || macdForming) return null;
 
-  // ── 开盘模式（5<=分时<30）：基于「开盘场景 x 日线形态」给动态T位 ──
+  // ── 开盘模式（6<=分时<=30）：基于「开盘场景 x 日线形态」给动态T位 ──
   if (openPhase) {
     const base = open || prevClose || lastPrice;
     let sellThLow, sellThHigh, buyThHigh, buyThLow;
@@ -429,7 +430,7 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
     const inSellZone = lastPrice >= sellLow;
     const inBuyZone = lastPrice <= buyHigh;
     const expectedTDiff = ((sellHigh - buyLow) / base * 100).toFixed(1);
-    return { sellLow, sellHigh, buyLow, buyHigh, inSellZone, inBuyZone, inNeutral: !inSellZone && !inBuyZone, expectedTDiff, base, openPhase, openScenario, confirmTh: timeInfo.confirmTh, pullbackPct: timeInfo.pullbackPct, recoverPct: timeInfo.recoverPct, macdState: timeInfo.macdState, macd: timeInfo.macd };
+    return { sellLow, sellHigh, buyLow, buyHigh, inSellZone, inBuyZone, inNeutral: !inSellZone && !inBuyZone, expectedTDiff, base, prec, openPhase, openScenario, confirmTh: timeInfo.confirmTh, pullbackPct: timeInfo.pullbackPct, recoverPct: timeInfo.recoverPct, macdState: timeInfo.macdState, macd: timeInfo.macd };
   }
 
   // ── 盘中模式：基准=黄线 ──
@@ -462,12 +463,83 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
   const inSellZone = lastPrice >= sellLow;
   const inBuyZone = lastPrice <= buyHigh;
   const expectedTDiff = ((sellHigh - buyLow) / base * 100).toFixed(1);
-  return { sellLow, sellHigh, buyLow, buyHigh, inSellZone, inBuyZone, inNeutral: !inSellZone && !inBuyZone, expectedTDiff, base, avgTrend, macd: timeInfo.macd, macdState: timeInfo.macdState, confirmTh: timeInfo.confirmTh };
+  return { sellLow, sellHigh, buyLow, buyHigh, inSellZone, inBuyZone, inNeutral: !inSellZone && !inBuyZone, expectedTDiff, base, prec, avgTrend, macd: timeInfo.macd, macdState: timeInfo.macdState, confirmTh: timeInfo.confirmTh };
+}
+
+// ── 操作建议证据：只展示本次结论用到的事实；MACD始终标注为旁路，不承担触发。 ──
+function buildTActionEvidence(timeInfo, tPos) {
+  const { avgTrend = 'flat', avgSlope = 0, priceAction, volRatio, macdState, openPhase, pureAuction } = timeInfo;
+  if (pureAuction) return '证据：开盘数据不足，等待首段高低点、均价线与量能结构';
+  const trendLabel = openPhase ? '开盘阶段（黄线暂不判方向）'
+    : `${avgTrend === 'rising' ? '黄线上行' : avgTrend === 'falling' ? '黄线下行' : '黄线走平'} ${avgSlope >= 0 ? '+' : ''}${Number(avgSlope).toFixed(2)}%`;
+  const zoneLabel = !tPos ? '未生成T区' : tPos.inSellZone ? '卖出区' : tPos.inBuyZone ? '买回区' : '中性区';
+  const pa = priceAction || {};
+  const volumeLabel = Number.isFinite(volRatio) ? `近5分量 ${volRatio.toFixed(1)}×` : '量能待确认';
+  const macdLabel = !macdState ? 'MACD待形成'
+    : macdState.cross === 'gold' ? 'MACD金叉（辅助）'
+      : macdState.cross === 'dead' ? 'MACD死叉（辅助）'
+        : `${macdState.hist >= 0 ? 'MACD红柱' : 'MACD绿柱'}（辅助）`;
+  return `证据：${trendLabel}｜${zoneLabel}｜买${pa.buyScore || 0}/卖${pa.sellScore || 0}分｜${volumeLabel}｜${macdLabel}`;
+}
+
+// ── 最终操作建议：唯一决策入口，文字长图与技术图必须共用，避免展示层各自判断。 ──
+function resolveTAction(timeInfo, tPos) {
+  const { lastPrice, openPhase, pureAuction, openScenario, priceAction, avgTrend = 'flat' } = timeInfo;
+  const signal = priceAction?.signal || 'wait';
+  const evidence = buildTActionEvidence(timeInfo, tPos);
+  const downtrendT = !openPhase && avgTrend === 'falling';
+  const uptrendT = !openPhase && avgTrend === 'rising';
+  const fmt = value => Number.isFinite(value) ? Number(value).toFixed(tPos?.prec ?? 2) : '-';
+
+  const withEvidence = action => ({ ...action, evidence });
+  if (pureAuction || !tPos) {
+    return withEvidence({ kind: 'wait', color: '#8a919c', title: '开盘观察：暂不生成完整T位', detail: '等待首段高低点、均价线与量能结构完成' });
+  }
+  const { sellLow, sellHigh, buyLow, buyHigh, inSellZone, inBuyZone } = tPos;
+  if (openPhase && openScenario === 'gap_down_panic') {
+    return withEvidence({ kind: 'risk', color: '#f5222d', title: '低开续跌：优先防守，暂不做T', detail: '等缩量止跌、5分钟转强并重新站回均价线' });
+  }
+  // 位置约束优先：不在买回区追卖，也不在卖出区追买。
+  if (signal === 'sell' && inBuyZone) {
+    return withEvidence({ kind: 'wait', color: '#fa8c16', title: '买回区内走弱：不追卖', detail: `等待反弹到卖出区 ${fmt(sellLow)} ~ ${fmt(sellHigh)} 再确认` });
+  }
+  if (signal === 'buy' && inSellZone) {
+    return withEvidence({ kind: 'wait', color: '#fa8c16', title: '卖出区内转强：不追买', detail: `等待回落到买回区 ${fmt(buyLow)} ~ ${fmt(buyHigh)} 再确认` });
+  }
+  // 黄线方向是位置之后的过滤器：下行不逆势接回，上行不在区间外追卖。
+  if (signal === 'buy' && downtrendT) {
+    return withEvidence({ kind: 'wait', color: '#fa8c16', title: '黄线下行：暂不逆势买回', detail: '买回区仅作止跌观察，等黄线走平/上拐并站稳' });
+  }
+  if (signal === 'sell' && uptrendT && !inSellZone) {
+    return withEvidence({ kind: 'wait', color: '#fa8c16', title: '黄线上行：暂不因回落追卖', detail: `等待进入兑现区 ${fmt(sellLow)} ~ ${fmt(sellHigh)} 再确认` });
+  }
+  // 价格行为只在匹配区间内给交易许可；中性区信号只记录方向，等待位置。
+  if (signal === 'sell' && inSellZone) {
+    return withEvidence({ kind: 'sell', color: '#f5222d', title: '价格行为确认：可分批T出 / 减仓', detail: `当前在卖出区 ${fmt(sellLow)} ~ ${fmt(sellHigh)}，空头结构已共振` });
+  }
+  if (signal === 'buy' && inBuyZone) {
+    return withEvidence({ kind: 'buy', color: '#0aa869', title: '价格行为确认：可分批买回', detail: `当前在买回区 ${fmt(buyLow)} ~ ${fmt(buyHigh)}，止跌/转强结构已共振` });
+  }
+  if (signal === 'sell') {
+    return withEvidence({ kind: 'wait', color: '#fa8c16', title: '短线走弱：不追卖', detail: `现价未进卖出区，等反弹到 ${fmt(sellLow)} ~ ${fmt(sellHigh)}` });
+  }
+  if (signal === 'buy') {
+    return withEvidence({ kind: 'wait', color: '#fa8c16', title: '短线转强：不追买', detail: `现价未进买回区，等回踩到 ${fmt(buyLow)} ~ ${fmt(buyHigh)}` });
+  }
+  if (inSellZone) {
+    return withEvidence({ kind: 'wait', color: '#fa8c16', title: '进入卖出参考区：等待走弱确认', detail: '观察反抽均价线失败、跌破前低、5分钟转阴或量能转弱' });
+  }
+  if (inBuyZone) {
+    return downtrendT
+      ? withEvidence({ kind: 'wait', color: '#fa8c16', title: '进入止跌观察区：暂不接回', detail: '黄线仍下行，等待走平/上拐、站回均价线和5分钟转强' })
+      : withEvidence({ kind: 'wait', color: '#fa8c16', title: '进入买回参考区：等待转强确认', detail: '等待均价线突破/回踩、量能与5分钟结构共振' });
+  }
+  return withEvidence({ kind: 'wait', color: '#8a919c', title: '中性区间：持有观察', detail: '等待价格进入买卖区，再由价格行为确认' });
 }
 
 // ── 生成文字报告（教学式）──
 // tPos 可能为 null（纯竞价阶段），需特殊处理
-function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos) {
+function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos, resolvedAction = null) {
   const { lastPrice, currentAvg, avgDev, dayHigh, dayLow, dayPosition, volRatio, amplitude,
           avgSlope, avgTrend, openPhase, pureAuction, preMacd, macdForming, macdConfirm, open, gapPct, openDirPct, openScenario, candleCount,
           pullbackPct, recoverPct, hiFromOpen, loFromOpen, confirmTh, macd, macdState, priceAction, openFlash } = timeInfo;
@@ -506,6 +578,9 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   const inBuyZone = tPos ? tPos.inBuyZone : false;
   const inNeutral = tPos ? tPos.inNeutral : true;
   const tTrend = tPos?.avgTrend || avgTrend || 'flat';
+  // 模式必须在价格行为说明前确定；后续仅用于过滤操作，不替代价格位置与结构确认。
+  const downtrendT = !openPhase && tTrend === 'falling';
+  const uptrendT = !openPhase && tTrend === 'rising';
   const AVG_TREND_LABEL = { rising: '↗️ 黄线上行', falling: '↘️ 黄线下行', flat: '➡️ 黄线走平' };
   const avgSlopeText = !openPhase && currentAvg > 0 ? `近15分钟 ${avgSlope >= 0 ? '+' : ''}${avgSlope.toFixed(2)}%` : '开盘阶段暂不判定';
   // 实际阈值（用于文案）：随波动率自适应缩放，不能写死
@@ -666,12 +741,12 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push(`现价 ${fp(lastPrice)}  /  黄线均价 ${fp(currentAvg)}  /  偏离 ${fpct(avgDev)}`);
     L.push(`→ 黄线趋势：${AVG_TREND_LABEL[tTrend]}（${avgSlopeText}）`);
     const devLabel = Math.abs(avgDev) < 0.5 ? '均值附近，T的空间有限'
-      : avgDev > 2 ? `📍 明显偏贵，处于T卖出窗口区`
-      : avgDev > 0.5 ? `轻微偏贵，可准备挂卖单等待`
-      : avgDev < -2 ? `📍 明显偏低，处于T买回窗口区`
-      : `轻微偏低，接近买回区域`;
+      : avgDev > 2 ? (uptrendT ? '明显偏高，接近上行黄线兑现区' : '明显偏高，接近T卖出窗口区')
+      : avgDev > 0.5 ? (uptrendT ? '轻微偏高，上行趋势中先持有观察' : '轻微偏高，可准备挂卖单等待')
+      : avgDev < -2 ? (downtrendT ? '明显偏低，但黄线下行仅作止跌观察' : '明显偏低，接近T买回窗口区')
+      : (downtrendT ? '轻微偏低，黄线下行中不急于接回' : '轻微偏低，接近买回区域');
     L.push(`→ 【${devLabel}】`);
-    L.push(`   💡 黄线 = 今日所有成交的加权均价。偏贵=持有者平均在亏（有出货压力）；偏低=持有者有浮盈（有支撑）`);
+    L.push(`   💡 黄线 = 今日所有成交的加权均价。现价高于黄线表示平均持仓浮盈，低于黄线表示平均持仓浮亏；它是日内成本参考，不单独构成买卖理由。`);
   } else {
     L.push(`现价 ${fp(lastPrice)}（盘后/非交易时段，无实时分时数据，以日线数据为参考）`);
   }
@@ -691,11 +766,11 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     if (pa.signal === 'buy') {
       L.push(downtrendT
         ? `   ⚠️ 短线修复评分 ${pa.buyScore} 分：黄线仍下行，仅观察止跌，不等同于买回信号`
-        : `   ✅ 买回信号：价格行为评分 ${pa.buyScore} 分（均价线/前高/5分钟K/量能共振）`);
+        : `   ✅ 多头价格行为评分 ${pa.buyScore} 分（均价线/前高/5分钟K/量能共振；是否买回仍以当前区间为准）`);
     } else if (pa.signal === 'sell') {
       L.push(uptrendT
         ? `   ⚠️ 短线走弱评分 ${pa.sellScore} 分：黄线仍上行，仅观察回落，不等同于T出信号`
-        : `   ⚠️ T出/减仓信号：价格行为评分 ${pa.sellScore} 分（均价线/前低/5分钟K/量能共振）`);
+        : `   ⚠️ 空头价格行为评分 ${pa.sellScore} 分（均价线/前低/5分钟K/量能共振；是否T出仍以当前区间为准）`);
     } else L.push(`   ⏳ 价格行为未形成共振（买${pa.buyScore}分 / 卖${pa.sellScore}分），等待而非猜方向`);
   }
   // ── MACD：旁路辅助展示，不单独触发，也不影响价格行为信号 ──
@@ -714,8 +789,8 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
         ? `   ℹ️ MACD水上死叉：动能转弱信息，仅供观察；单独发生不卖`
         : `   ℹ️ MACD水下死叉：弱势状态信息，仍以均价线、前低、量能和5分钟K为准`);
     }
-    if (macdState.divergence === 'top') L.push(`   ⚠️ 顶背离：价格创新高但MACD未跟上 → 冲高回落前兆，卖出信号加强！`);
-    else if (macdState.divergence === 'bottom') L.push(`   🟢 底背离：价格创新低但MACD未跟跌 → 跌势衰竭，买回信号加强！`);
+    if (macdState.divergence === 'top') L.push(`   ⚠️ 顶背离：价格创新高但MACD未跟上，提示冲高回落风险；仍需价格位置与价格行为确认，不单独卖出。`);
+    else if (macdState.divergence === 'bottom') L.push(`   🟢 底背离：价格创新低但MACD未跟跌，提示下跌动能可能衰竭；仍需止跌结构确认，不单独买回。`);
   } else if (hasTData) {
     L.push(`→ 📉 分时MACD：分时数据过少，暂不判断`);
   }
@@ -735,10 +810,14 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     ? (volRatio > 1.5 ? `量比 ${volRatio.toFixed(1)}（放量）` : volRatio < 0.7 ? `量比 ${volRatio.toFixed(1)}（缩量）` : `量比 ${volRatio.toFixed(1)}（正常）`)
     : (volRatio > 1.5 ? `放量 +${((volRatio - 1) * 100).toFixed(0)}%` : volRatio < 0.7 ? `缩量 -${((1 - volRatio) * 100).toFixed(0)}%` : '量能正常');
   L.push(`量能：${openPhase ? '量比（vs 5日均量）' : '近5min vs 前5min'}  →  ${volDesc}`);
-  if (inSellZone && volRatio < 0.8) L.push(`→ 📍 价涨量缩 = 上涨乏力，T的经典卖出信号`);
-  else if (inSellZone && volRatio > 1.4) L.push(`→ ⚠️ 价涨放量 = 趋势突破风险，谨慎T出`);
-  else if (inBuyZone && volRatio < 0.8) L.push(`→ 📍 价跌量缩 = 下跌钝化，T的买回信号`);
-  else if (inBuyZone && volRatio > 1.4) L.push(`→ ⚠️ 价跌放量 = 有人在砸，等量缩后再买回`);
+  if (inSellZone && volRatio < 0.8) L.push(uptrendT
+    ? `→ 📍 进入上行黄线兑现区且量能收缩：观察冲高回落，不因缩量直接卖出`
+    : `→ 📍 价涨量缩 = 上涨乏力，卖出区内可等待走弱确认`);
+  else if (inSellZone && volRatio > 1.4) L.push(`→ ⚠️ 价涨放量 = 突破可能增加，谨慎T出`);
+  else if (inBuyZone && volRatio < 0.8) L.push(downtrendT
+    ? `→ 📍 价跌量缩但黄线仍下行：仅观察止跌，等待黄线走平/上拐`
+    : `→ 📍 价跌量缩 = 下跌钝化，买回区内可等待转强确认`);
+  else if (inBuyZone && volRatio > 1.4) L.push(`→ ⚠️ 价跌放量 = 抛压未释放，等量缩并形成止跌结构再考虑买回`);
   else L.push(`→ 量价中性，暂无明显T信号`);
   L.push('');
 
@@ -811,7 +890,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
         : '相对今开的冲高区';
       L.push(`   理由：${sellR}`);
     } else {
-      L.push(`   理由：偏离黄线+${fpp(sellDevPct)}%以上（今日持仓者平均亏损，有出货压力）`);
+      L.push(`   理由：偏离黄线+${fpp(sellDevPct)}%以上（现价高于当日平均成本，持仓者整体浮盈，需观察兑现压力）`);
     }
     if (bollUp) L.push(`   ↑ BOLL上轨(${fp(bollUp)}) 是强压力`);
     L.push('');
@@ -822,7 +901,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
         : '相对今开的回落区，低吸';
       L.push(`   理由：${buyR}`);
     } else {
-      L.push(`   理由：黄线附近（-${fpp(buyDevPct)}%内），持仓者有浮盈，下跌意愿弱`);
+      L.push(`   理由：黄线附近（-${fpp(buyDevPct)}%内），现价低于当日平均成本，需等止跌结构而非机械接回`);
     }
     if (bollLow) L.push(`   ↓ BOLL下轨(${fp(bollLow)}) 是强支撑`);
     L.push('');
@@ -851,58 +930,13 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   }
 
   L.push('');
-  // ── 当前操作建议 ──
+  // ── 当前操作建议（唯一决策入口：与第二张技术图共用）──
   L.push('━━━ 当前操作建议 ━━━');
-  // 价格行为负责唯一触发；MACD仅同步展示，不影响价格行为信号。
-  const macdEndorsesBuy = macdState && macdState.cross === 'gold';
-  const macdEndorsesSell = macdState && macdState.cross === 'dead';
-  const paSignal = priceAction ? priceAction.signal : 'wait';
-  const downtrendT = !openPhase && tTrend === 'falling';
-  const uptrendT = !openPhase && tTrend === 'rising';
-  if (openScenario === 'gap_down_panic' && openPhase) {
-    L.push(`🚨 低开续跌中——做T难度极高，不建议操作`);
-    L.push(`   优先方案：若跌幅已大（>3%），考虑部分减仓止损`);
-    L.push(`   等缩量止跌、5分钟K转强并重新站回均价线后，才考虑分批接回`);
-  } else if (paSignal === 'sell' && inBuyZone) {
-    // 买回区内的短线走弱不等于应该低位追卖：区间位置优先于离场动量。
-    // 与卖出区内抑制“买回”保持对称，确保文字建议和技术图区间不冲突。
-    L.push(`⚠️ 短线空头信号出现，但现价 ${fp(lastPrice)} 已在买回参考区（≤ ${fp(buyHigh)}）`);
-    L.push(`   不追卖、不在此处T出；如需做T，等待反弹到卖出区 ${fp(sellLow)} ~ ${fp(sellHigh)} 再结合量价确认。`);
-    if (macdEndorsesSell) L.push(`   ℹ️ MACD死叉仅说明短线动能转弱，不能覆盖当前买回区的位置约束。`);
-  } else if (paSignal === 'sell' && uptrendT && !inSellZone) {
-    L.push(`⚠️ 短线空头信号出现，但黄线持续上行，暂不因回落追卖`);
-    L.push(`   上行黄线是动态支撑；仅在进入兑现区 ${fp(sellLow)} ~ ${fp(sellHigh)} 后，再结合冲高回落或跌回黄线确认小仓T出。`);
-    if (macdEndorsesSell) L.push(`   ℹ️ MACD死叉仅作短线动能提示，不能覆盖黄线上行的持有约束。`);
-  } else if (paSignal === 'sell') {
-    L.push(`🎯 价格行为触发T出/减仓：均价线、前低、5分钟K与量能形成空头共振`);
-    if (macdEndorsesSell) L.push(`   ℹ️ MACD死叉同向，可作为辅助参考；操作仍以价格行为为准`);
-    else L.push(`   可结合卖出区 ${fp(sellLow)} ~ ${fp(sellHigh)} 分批执行；MACD不作为等待条件`);
-  } else if (paSignal === 'buy' && downtrendT) {
-    L.push(`⚠️ 短线多头信号出现，但黄线持续下行，暂不逆势买回`);
-    L.push(`   下行黄线是动态压力；买回区 ${fp(buyLow)} ~ ${fp(buyHigh)} 仅作止跌观察，需先看到黄线走平/上拐并站稳后再考虑。`);
-    if (macdEndorsesBuy) L.push(`   ℹ️ MACD金叉仅说明短线修复，不能覆盖黄线下行的防守约束。`);
-  } else if (paSignal === 'buy' && inSellZone) {
-    // 价格行为短线转强不等于可以在做T卖出区追买：区间位置优先于入场动量。
-    // 否则会出现“文字说买回、技术图标卖出区”的自相矛盾。
-    L.push(`⚠️ 短线多头信号出现，但现价 ${fp(lastPrice)} 已在卖出参考区（≥ ${fp(sellLow)}）`);
-    L.push(`   不追买、不在此处买回；如已有T仓，等待回落到买回区 ${fp(buyLow)} ~ ${fp(buyHigh)} 再结合量价确认。`);
-    if (macdEndorsesBuy) L.push(`   ℹ️ MACD金叉仅说明短线动能转强，不能覆盖当前卖出区的位置约束。`);
-  } else if (paSignal === 'buy') {
-    L.push(`🎯 价格行为触发买回：均价线、前高、5分钟K与量能形成多头共振`);
-    if (macdEndorsesBuy) L.push(`   ℹ️ MACD金叉同向，可作为辅助参考；操作仍以价格行为为准`);
-    else L.push(`   可在买回区 ${fp(buyLow)} ~ ${fp(buyHigh)} 分批执行；MACD不作为等待条件`);
-  } else if (inSellZone) {
-    L.push(`⏳ 当前进入${uptrendT ? '上行黄线下的兑现' : downtrendT ? '下行黄线附近的反弹' : ''}卖出参考区（≥ ${fp(sellLow)}），但价格行为未触发`);
-    L.push(`   等待：反抽均价线失败、跌破近端低点、5分钟转阴或量能由涨转弱；不因MACD死叉单独卖出`);
-  } else if (inBuyZone) {
-    L.push(`⏳ 当前进入${downtrendT ? '止跌观察' : ''}买回参考区（≤ ${fp(buyHigh)}），但价格行为未触发`);
-    L.push(downtrendT
-      ? `   黄线仍下行：不因价格低就买；等待黄线走平/上拐、站回均价线且5分钟结构转强。`
-      : `   等待：均价线突破/回踩、前高前低、量能与5分钟结构出现共振；MACD不作为等待条件`);
-  } else {
-    L.push(`⏳ 当前 ${fp(lastPrice)} 处于中性区间，价格行为尚未形成共振`);
-    L.push(`   · 均价线上方放量突破前高、5分钟转强 → 观察买回/持有机会`);
-    L.push(`   · 均价线下方跌破前低、5分钟转弱 → 观察T出/减仓机会`);
+  const action = resolvedAction || resolveTAction(timeInfo, tPos);
+  L.push(`${action.kind === 'sell' ? '🎯' : action.kind === 'buy' ? '🟢' : action.kind === 'risk' ? '🚨' : '⏳'} ${action.title}`);
+  L.push(`   ${action.detail}`);
+  if (macdState?.cross === 'gold' || macdState?.cross === 'dead') {
+    L.push(`   ℹ️ MACD${macdState.cross === 'gold' ? '金叉' : '死叉'}仅作动能同步，不改变以上操作建议。`);
   }
   if (amplitude < ampWarnTh) {
     L.push('');
@@ -918,10 +952,11 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
 }
 
 // ── 图表渲染：分时图 + T位水平标注线 + 分时MACD小面板 ──
-function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
+function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos, action = null) {
   const { createCanvas } = require('@napi-rs/canvas');
+  const chartAction = action || { kind: 'wait', color: '#8a919c', title: '操作建议：等待确认', detail: '结合买卖区、黄线方向和价格行为判断', evidence: '证据：等待实时结构确认' };
   // MACD_H 200→260：定标改回真线性后不再有压缩，把面板加高来补可读性
-  const W = 1400, PAD = 74, TITLE_H = 62, VOL_H = 84, MACD_H = 260, LEG_H = 36;
+  const W = 1400, PAD = 74, TITLE_H = 154, VOL_H = 84, MACD_H = 260, LEG_H = 36;
   const plotH = 420;
   const H = TITLE_H + plotH + VOL_H + MACD_H + LEG_H + PAD + 8;
   const isHK = code.startsWith('hk'), isHF = code.startsWith('hf_');
@@ -975,6 +1010,22 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos) {
   ctx.fillText(name, PAD + 16, 34);
   ctx.fillStyle = sub; ctx.font = '13px cjk';
   ctx.fillText('做T参考 · 分时', PAD + 16, 54);
+  // 与文字长图复用同一最终决策：证据图也直接说明“现在做什么 / 等什么”。
+  const actionBg = chartAction.kind === 'sell' ? '#fff1f0'
+    : chartAction.kind === 'buy' ? '#f6ffed'
+    : chartAction.kind === 'risk' ? '#fff2f0' : '#fff7e6';
+  ctx.fillStyle = actionBg;
+  ctx.beginPath(); ctx.roundRect(PAD, 68, W - PAD * 2, 78, 8); ctx.fill();
+  ctx.fillStyle = chartAction.color; ctx.fillRect(PAD + 14, 77, 5, 58);
+  ctx.textAlign = 'left'; ctx.font = 'bold 16px cjk';
+  ctx.fillText(chartAction.title, PAD + 32, 82);
+  ctx.fillStyle = ink; ctx.font = '13px cjk';
+  ctx.fillText(chartAction.detail, PAD + 32, 103);
+  // 单独的证据行：与操作条件留出足够行距，避免手机端看起来像被截断。
+  ctx.fillStyle = 'rgba(138,145,156,0.12)';
+  ctx.beginPath(); ctx.roundRect(PAD + 24, 116, W - PAD * 2 - 48, 22, 5); ctx.fill();
+  ctx.fillStyle = sub; ctx.font = '11px cjk';
+  ctx.fillText(chartAction.evidence || '证据：等待实时结构确认', PAD + 34, 127);
   ctx.textAlign = 'right'; ctx.fillStyle = priceCol; ctx.font = 'bold 28px cjk';
   ctx.fillText(fp(lastPrice), W - PAD, 38);
   ctx.font = '15px cjk';
@@ -1229,7 +1280,8 @@ async function cmdT(args) {
     : dayInfo.form;
   // tPos 可能为 null（纯竞价阶段）
   const tPos = calcTPositions(activeForm, timeInfo, dayInfo);
-  const detailText = resolveNotice + buildTReport(name, code, dayInfo.form, userFormRaw, timeInfo, dayInfo, tPos);
+  const currentAction = { ...resolveTAction(timeInfo, tPos), evidence: buildTActionEvidence(timeInfo, tPos) };
+  const detailText = resolveNotice + buildTReport(name, code, dayInfo.form, userFormRaw, timeInfo, dayInfo, tPos, currentAction);
   // 生成图
   // codeflicker-fix: UX-Issue-001/3eskueweih7vfxxuhb7r
   // 手机端不截断完整分析：所有文字报告排版成第一张长图，分时技术图作为第二张证据图。
@@ -1239,8 +1291,8 @@ async function cmdT(args) {
     if (timeKlines && timeKlines.length >= 5) {
       // 纯竞价阶段（tPos 为 null）：画简化分时图（无T位标注）
       img = tPos
-        ? renderTPngCanvas(code, name, timeKlines, effectiveQuote, dayInfo, tPos)
-        : renderTPngCanvas(code, name, timeKlines, effectiveQuote, dayInfo, { sellLow: 0, sellHigh: 0, buyLow: 0, buyHigh: 0 });
+        ? renderTPngCanvas(code, name, timeKlines, effectiveQuote, dayInfo, tPos, currentAction)
+        : renderTPngCanvas(code, name, timeKlines, effectiveQuote, dayInfo, { sellLow: 0, sellHigh: 0, buyLow: 0, buyHigh: 0 }, currentAction);
     } else {
       img = renderStockPng(code, name, '日线', dayKlines, { maPeriods: [5, 10, 20], boll: true, timeMode: false, prec: 2 }, quote);
     }
@@ -1248,4 +1300,4 @@ async function cmdT(args) {
   return { ok: true, text: '', detailText, reportImg, img };
 }
 
-module.exports = { cmdT, analyzeTDayForm, analyzeTTimeData, calcTPositions, buildTReport, renderTPngCanvas, calcMACD, analyzeMACDState, _openScenario };
+module.exports = { cmdT, analyzeTDayForm, analyzeTTimeData, calcTPositions, buildTActionEvidence, resolveTAction, buildTReport, renderTPngCanvas, calcMACD, analyzeMACDState, _openScenario };

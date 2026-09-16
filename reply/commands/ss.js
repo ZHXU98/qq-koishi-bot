@@ -17,6 +17,19 @@ const SS_QUOTES = 'https://qt.gtimg.cn/q=sh000001,sh000300,sz399106';
 const SS_MIN30 = 'https://d.10jqka.com.cn/v6/line/%s/41/last.js';
 // 腾讯代码 → 同花顺代码（sz399106=深证综指，全市场=上证+深证综指）
 const SS_THS = { sh000001: 'hs_1A0001', sh000300: 'hs_399300', sz399106: 'hs_399106' };
+// 历史 30 分钟K偶尔混入“截至当前的累计成交额快照”。直接累加会把同一成交额重复计入，
+// 使 fullDay/sameTime 比例畸高并让全天预计值暴涨。按日剔除明显累计快照后再统计。
+function sanitizeDayAmounts(entries) {
+  const values = entries.map(item => item.amount).filter(value => value > 0);
+  if (values.length < 3) return entries;
+  const sorted = [...values].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const total = values.reduce((sum, value) => sum + value, 0);
+  // 30分钟正常K的成交额可有开收盘放大；仅当单条同时远大于日内中位数且占原总额很高时，
+  // 才认定为累计快照，保留真实的大成交K。
+  return entries.filter(item => !(item.amount >= median * 6 && item.amount >= total * 0.30));
+}
+
 // 上一交易日成交额（元）与多日稳健预测比例。返回：
 // { sameTime, fullDay, ratio }；sameTime/fullDay 仍专用于昨日放缩量比较，ratio 取最近 5 个完整交易日
 // 在当前时点的「全天 / 同时刻累计」中位数，避免单个异常放量日把全天预估严重拉偏。
@@ -51,26 +64,33 @@ async function prevTradingAmount(code, nowHHMM) {
     } catch (_) { return null; }
   }
   try {
-    // 按日期分组，逐日计算 { sameTime, fullDay }；仅用完整历史交易日构造预测比例。
+    // 先按日期收集原始30分钟成交额；再逐日清理累计快照，避免同一成交额被多次相加。
     const byDate = new Map();
     const hhmmCmp = nowHHMM.replace(':', '');
     for (const line of rows) {
       const date = line.slice(0, 8);
-      if (!/^\d{8}$/.test(date)) continue;
+      const hhmm = line.slice(8, 12);
+      if (!/^\d{8}$/.test(date) || !/^\d{4}$/.test(hhmm)) continue;
       const amount = Number(line.split(',')[6]) || 0;
-      if (!byDate.has(date)) byDate.set(date, { sameTime: 0, fullDay: 0 });
-      const day = byDate.get(date);
-      day.fullDay += amount;
-      if (line.slice(8, 12) <= hhmmCmp) day.sameTime += amount;
+      if (!byDate.has(date)) byDate.set(date, []);
+      byDate.get(date).push({ hhmm, amount });
     }
-    const dates = [...byDate.keys()].sort();
+    const daily = new Map();
+    for (const [date, entries] of byDate) {
+      const cleaned = sanitizeDayAmounts(entries);
+      daily.set(date, {
+        sameTime: cleaned.filter(item => item.hhmm <= hhmmCmp).reduce((sum, item) => sum + item.amount, 0),
+        fullDay: cleaned.reduce((sum, item) => sum + item.amount, 0),
+      });
+    }
+    const dates = [...daily.keys()].sort();
     const historicalDates = dates.filter(date => date < ymd);
     const prevDate = historicalDates.at(-1);
     if (!prevDate) return null;
-    const previous = byDate.get(prevDate);
+    const previous = daily.get(prevDate);
     // 最近 5 个完整交易日的中位完成度：相较只取昨天，对消息日/节后异常放量更稳健。
     const ratios = historicalDates.slice(-5)
-      .map(date => byDate.get(date))
+      .map(date => daily.get(date))
       .filter(day => day && day.sameTime > 0 && day.fullDay > day.sameTime)
       .map(day => day.fullDay / day.sameTime)
       .sort((a, b) => a - b);
@@ -242,7 +262,7 @@ async function prevTradingAmount(code, nowHHMM) {
       // 两列：成交额 / 预计全天
       const amtCols = data.closed
         ? [['全天成交额', `${f1(it.amountWan / 10000)}亿`], ['较上一交易日', (() => { const t2 = compLine(c, false)[0]; return t2.replace('较上一交易日', ''); })()]]
-        : [[`成交额（${data.nowHHMM}）`, `${f1(it.amountWan / 10000)}亿`], ['预计全天成交量', `${f1(it.est / 10000)}亿`]];
+        : [[`成交额（${data.nowHHMM}）`, `${f1(it.amountWan / 10000)}亿`], ['预计全天成交额', it.est > 0 ? `${f1(it.est / 10000)}亿` : '待稳定']];
       const colW2 = (cw - 36) / 2;
       amtCols.forEach((c2, i) => {
         const cx = x0 + 18 + colW2 * i;
@@ -271,7 +291,7 @@ async function prevTradingAmount(code, nowHHMM) {
     ctx.fillText(`${f1(data.mkt.amountWan / 10000)}亿`, x0 + 18, y + 64);
     if (!data.closed) {
       ctx.fillStyle = sub; ctx.textAlign = 'right'; ctx.font = '15px cjk';
-      ctx.fillText(`预计全天成交量 ${f1(data.mkt.est / 10000)}亿`, x0 + cw - 18, y + 62);
+      ctx.fillText(`预计全天成交额 ${data.mkt.est > 0 ? `${f1(data.mkt.est / 10000)}亿` : '待稳定'}`, x0 + cw - 18, y + 62);
     }
     // 涨跌家数：醒目横条（三段等宽色块：上涨红 / 下跌绿 / 平盘灰）
     if (data.ud) {
@@ -415,7 +435,7 @@ async function prevTradingAmount(code, nowHHMM) {
       // 两列：成交额 / 预计全天（收盘态：全天成交额 / 较上一交易日）
       const amtCols = data.closed
         ? [['全天成交额', `${f1(it.amountWan / 10000)}亿`], ['较上一交易日', (() => { const t2 = compLine(c, false)[0]; return t2.replace('较上一交易日', ''); })()]]
-        : [[`成交额（${data.nowHHMM}）`, `${f1(it.amountWan / 10000)}亿`], ['预计全天成交量', `${f1(it.est / 10000)}亿`]];
+        : [[`成交额（${data.nowHHMM}）`, `${f1(it.amountWan / 10000)}亿`], ['预计全天成交额', it.est > 0 ? `${f1(it.est / 10000)}亿` : '待稳定']];
       const colW2 = (cw - 36) / 2;
       amtCols.forEach((c2, i) => {
         const cx = x0 + 18 + colW2 * i;
@@ -435,7 +455,7 @@ async function prevTradingAmount(code, nowHHMM) {
     s += `<text x="${x0 + 18}" y="${y + 28}" font-family="PingFang SC,cjk" font-size="18" font-weight="bold" fill="${ink}">全市场（沪深两市合计）</text>`;
     s += `<text x="${x0 + 18}" y="${y + 64}" font-family="PingFang SC,cjk" font-size="30" font-weight="bold" fill="${ink}">${f1(data.mkt.amountWan / 10000)}亿</text>`;
     if (!data.closed) {
-      s += `<text x="${x0 + cw - 18}" y="${y + 62}" text-anchor="end" font-family="PingFang SC,cjk" font-size="15" fill="${sub}">预计全天成交量 ${f1(data.mkt.est / 10000)}亿</text>`;
+      s += `<text x="${x0 + cw - 18}" y="${y + 62}" text-anchor="end" font-family="PingFang SC,cjk" font-size="15" fill="${sub}">预计全天成交额 ${data.mkt.est > 0 ? `${f1(data.mkt.est / 10000)}亿` : '待稳定'}</text>`;
     }
     // 涨跌家数：醒目横条（三段等宽色块：上涨红 / 下跌绿 / 平盘灰）
     if (data.ud) {
@@ -569,7 +589,7 @@ async function prevTradingAmount(code, nowHHMM) {
       // 盘中：现价 / 今日高低 / 当前成交额 + 预计全天 / 较上一交易日同时刻
       lines.push(`现价 ${price.toFixed(2)}  ${chgTxt}`);
       lines.push(`今开 ${open.toFixed(2)}  最高 ${high.toFixed(2)}  最低 ${low.toFixed(2)}`);
-      lines.push(`成交额 ${fmtAmountWan(amountWan)}（${nowHHMM}）  预计全天成交量 ${fmtAmountWan(est)}`);
+      lines.push(`成交额 ${fmtAmountWan(amountWan)}（${nowHHMM}）  预计全天成交额 ${est > 0 ? fmtAmountWan(est) : '待稳定'}`);
       lines.push(amountCompareTxt(curYuan, prevCmp));
     }
     lines.push('');
@@ -591,7 +611,7 @@ async function prevTradingAmount(code, nowHHMM) {
     lines.push(`全天成交额 ${fmtAmountWan(mktAmountWan)}`);
     lines.push(amountCompareTxt(mkt.curYuan, mktPrev));
   } else {
-    lines.push(`成交额 ${fmtAmountWan(mktAmountWan)}（${nowHHMM}）  预计全天成交量 ${fmtAmountWan(mkt.est)}`);
+    lines.push(`成交额 ${fmtAmountWan(mktAmountWan)}（${nowHHMM}）  预计全天成交额 ${mkt.est > 0 ? fmtAmountWan(mkt.est) : '待稳定'}`);
     lines.push(amountCompareTxt(mkt.curYuan, mktPrev));
   }
   lines.push('');

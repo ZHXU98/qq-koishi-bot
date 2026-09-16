@@ -41,8 +41,10 @@ function reportRows(ctx, report, width, padding) {
       continue;
     }
     const indent = /^\s{2,}/.test(raw) || /^[·]/.test(raw) ? 22 : 0;
+    const isHint = /^(注：|说明：|理由：|等待：|若 |如 |当 |仅 )/.test(clean);
     for (const text of wrapLine(ctx, raw, width - padding * 2 - indent)) {
-      rows.push({ type: 'text', text, indent });
+      // 保留原始逻辑行的样式，避免“理由：...”自动换行后第二行变回正文黑色。
+      rows.push({ type: 'text', text, indent, isHint });
     }
   }
   return rows;
@@ -94,7 +96,7 @@ function renderReportCard({ title, subtitle = '', report, footer = '非投资建
       y += sectionH;
       continue;
     }
-    const isHint = /^(注：|说明：|理由：|等待：|若 |如 |当 |仅 )/.test(row.text);
+    const isHint = row.isHint;
     ctx.fillStyle = isHint ? sub : ink;
     ctx.font = isHint ? '22px cjk' : '25px cjk';
     ctx.fillText(row.text, PAD + row.indent, y);
