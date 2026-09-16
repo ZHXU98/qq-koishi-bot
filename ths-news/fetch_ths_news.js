@@ -379,32 +379,49 @@ function loadRenderModule(name) {
 }
 
 function renderCard(dateStr, items) {
-  // 优先 resvg（容器，字体确认存在时）；fallback @napi-rs/canvas（本地开发）
+  // 2026-09-16：改为优先 @napi-rs/canvas，resvg 仅作回退。原因是「字体」这一层的开销：
+  // resvg 每次 new Resvg() 都会重新解析整个字体文件（cjk.ttc 5MB ≈ 4s，实测
+  //   new Resvg 4053ms / render 仅 47ms；关掉 loadSystemFonts 仍是 4.1s，说明 100% 是 fontFiles 解析），
+  // 而 canvas 走 GlobalFonts.registerFromPath 注册一次、字体常驻进程，同一张卡 ≈ 85ms（快约 50 倍）。
+  // 画质两路一致（同一套配色/字号/标签），故容器内一律走 canvas 以省掉每次 4s。
+  try {
+    return renderCardCanvas(dateStr, items);
+  } catch (e) {
+    console.error('[renderCard] canvas 渲染失败，回退 resvg:', e.message);
+  }
   if (fs.existsSync(FONT_PATH)) {
     try {
       const { Resvg } = loadRenderModule('@resvg/resvg-js');
       const svg = buildCardSvg(dateStr, items);
-      const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: CARD_W }, font: { fontFiles: [FONT_PATH] } });
+      const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: CARD_W }, font: { fontFiles: [FONT_PATH], loadSystemFonts: false } });
       return resvg.render().asPng();
     } catch (e) {
-      console.error('[renderCard] resvg 失败，尝试 canvas:', e.message);
+      console.error('[renderCard] resvg 回退也失败:', e.message);
     }
   }
-  return renderCardCanvas(dateStr, items);
+  throw new Error('无可用图片渲染引擎（canvas / resvg 均不可用）');
 }
+
+// canvas 引擎的中文字体是否已注册（进程级一次性，见 renderCardCanvas）
+let canvasFontReady = false;
 
 function renderCardCanvas(dateStr, items) {
   const { createCanvas, GlobalFonts } = loadRenderModule('@napi-rs/canvas');
-  // 优先注册项目内置 WQY；再补充系统字体作 fallback
-  const fontCandidates = [
-    path.join(__DIR, 'fonts', 'cjk.ttc'),        // 项目内置 WQY（最优先）
-    '/app/fonts/cjk.ttc',                        // 容器旧挂载路径（兼容）
-    '/System/Library/Fonts/PingFang.ttc',
-    '/System/Library/Fonts/Hiragino Sans GB.ttc',
-    '/System/Library/Fonts/STHeiti Light.ttc',
-  ];
-  for (const fp of fontCandidates) {
-    if (fs.existsSync(fp)) { try { GlobalFonts.registerFromPath(fp, 'cjk'); } catch (_) {} }
+  // registerFromPath 会把整个字体文件解析进全局字体库，进程内注册一次即可复用，
+  // 每张卡片重复注册纯属浪费（实测首张 137ms / 后续稳定 85ms，差异即首次解析）。
+  if (!canvasFontReady) {
+    // 优先注册项目内置 WQY；再补充系统字体作 fallback
+    const fontCandidates = [
+      path.join(__DIR, 'fonts', 'cjk.ttc'),        // 项目内置 WQY（最优先）
+      '/app/fonts/cjk.ttc',                        // 容器旧挂载路径（兼容）
+      '/System/Library/Fonts/PingFang.ttc',
+      '/System/Library/Fonts/Hiragino Sans GB.ttc',
+      '/System/Library/Fonts/STHeiti Light.ttc',
+    ];
+    for (const fp of fontCandidates) {
+      if (fs.existsSync(fp)) { try { GlobalFonts.registerFromPath(fp, 'cjk'); } catch (_) {} }
+    }
+    canvasFontReady = true;
   }
 
   const PAD = 36, INNER = CARD_W - PAD * 2;

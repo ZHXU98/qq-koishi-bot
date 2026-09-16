@@ -80,7 +80,14 @@ services:
       # 2026-08-31：共享 ths-news 的 @resvg/resvg-js 渲染库与中文字体（/stock 图表用，只读）
       - ths-news-modules:/app/node_modules:ro
       - ./ths-news/fonts:/app/fonts:ro
+      # 2026-09-16：/快讯 卡片改为复用 ths-news 渲染器。reply/commands/news.js 以
+      #   require('../../ths-news/fetch_ths_news') 引用 → 容器内须解析到 /ths-news/…
+      #   （/app/commands/ 上溯两级即根目录），故 ths-news 挂到根下，而非 /app/ths-news。
+      #   该目录内的 require('@resvg/resvg-js') 靠下面的 NODE_PATH 指回共享依赖卷
+      #   （:ro 的 bind 内无法再嵌套挂载卷，故不用嵌套挂载）。
+      - ./ths-news:/ths-news:ro
     environment:
+      - NODE_PATH=/app/node_modules
       # 2026-08-26：改接官方网关（NapCat 弃用）；BOT_UIN 与网关转发的 at.qq 一致（官方 APP_ID）
       - NAPCAT_WS_URL=ws://official-bot-gateway:3101
       - NAPCAT_URL=http://official-bot-gateway:3100
