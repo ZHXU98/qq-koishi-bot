@@ -827,6 +827,12 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     L.push(`🎯 价格行为触发T出/减仓：均价线、前低、5分钟K与量能形成空头共振`);
     if (macdEndorsesSell) L.push(`   ℹ️ MACD死叉同向，可作为辅助参考；操作仍以价格行为为准`);
     else L.push(`   可结合卖出区 ${fp(sellLow)} ~ ${fp(sellHigh)} 分批执行；MACD不作为等待条件`);
+  } else if (paSignal === 'buy' && inSellZone) {
+    // 价格行为短线转强不等于可以在做T卖出区追买：区间位置优先于入场动量。
+    // 否则会出现“文字说买回、技术图标卖出区”的自相矛盾。
+    L.push(`⚠️ 短线多头信号出现，但现价 ${fp(lastPrice)} 已在卖出参考区（≥ ${fp(sellLow)}）`);
+    L.push(`   不追买、不在此处买回；如已有T仓，等待回落到买回区 ${fp(buyLow)} ~ ${fp(buyHigh)} 再结合量价确认。`);
+    if (macdEndorsesBuy) L.push(`   ℹ️ MACD金叉仅说明短线动能转强，不能覆盖当前卖出区的位置约束。`);
   } else if (paSignal === 'buy') {
     L.push(`🎯 价格行为触发买回：均价线、前高、5分钟K与量能形成多头共振`);
     if (macdEndorsesBuy) L.push(`   ℹ️ MACD金叉同向，可作为辅助参考；操作仍以价格行为为准`);
