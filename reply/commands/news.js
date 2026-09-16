@@ -8,7 +8,7 @@ const { renderCard, loadNewsRules, classifyNews } = require('../../ths-news/fetc
 
 // ---------- 快讯查询（同花顺官方「重要」资讯，2026-08-26 从网关迁入，qq-reply 为统一命令中心） ----------
 const THS_URL = 'https://news.10jqka.com.cn/tapp/news/push/stock/?page=%s&tag=&pageSize=50';
-const NEWS_MAX_PAGES = Number(process.env.NEWS_MAX_PAGES || 3);
+const NEWS_MAX_PAGES = Number(process.env.NEWS_MAX_PAGES || 5); // /快讯 最多扫描 5 页普通流，以保留全部 import>0 层级
 const NEWS_QUERY_LIMIT = Number(process.env.NEWS_QUERY_LIMIT || 10); // 查询返回条数
 const DAILY_PUSH_HOUR = Number(process.env.DAILY_PUSH_HOUR || 21);
 const DAILY_PUSH_MIN = Number(process.env.DAILY_PUSH_MIN || 30);
