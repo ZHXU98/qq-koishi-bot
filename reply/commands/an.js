@@ -294,7 +294,12 @@ function calcPriceSignal({ last, prev, close, chgPct, vRatio, ma20, bollUp, boll
   const nearMa20 = ma20 && Math.abs(close - ma20) / ma20 <= 0.015;
   const nearBoxLow = levels.boxLow && Math.abs(close - levels.boxLow) / levels.boxLow <= 0.018;
   if (levels.prevHigh20 && close > levels.prevHigh20 * 1.005 && vRatio >= 1.2) return { type: 'breakout', text: '放量突破前高', score: 1 };
-  if (levels.prevLow20 && close < levels.prevLow20 * 0.995 && vRatio >= 1.2) return { type: 'breakdown', text: '放量跌破前低', score: -1 };
+  if (levels.prevLow20 && close < levels.prevLow20 * 0.995) {
+    // codeflicker-fix: LOGIC-Issue-001/jvslwtka15th3ern74uz - 价格跌破结构位即视为破位，放量只影响可信度。
+    return vRatio >= 1.2
+      ? { type: 'breakdown', text: '放量跌破前低', score: -1 }
+      : { type: 'breakdown', text: '缩量跌破前低，结构仍然转弱', score: -1 };
+  }
   if (chgPct > 0 && vRatio >= 1.5 && bodyPct < 0.8 && upperShadowPct > bodyPct * 0.8) return { type: 'stall', text: '放量滞涨/上影压力', score: -0.5 };
   if (chgPct < 0 && vRatio >= 1.5 && lowerShadowPct > bodyPct * 0.8) return { type: 'support', text: '放量下探有承接', score: 0.4 };
   if ((nearMa20 || nearBoxLow) && vRatio < 0.85 && Math.abs(chgPct) < 1.2) {
@@ -399,13 +404,16 @@ function overallConclusion(day, week, month) {
   const monthlyWeak = month.trend.includes('下降') || (month.ma20 && month.close < month.ma20);
   const monthlyStrong = month.trend.includes('上升') || (month.ma20 && month.close > month.ma20);
   const weeklyWeak = week.trend.includes('下降') || (week.ma20 && week.close < week.ma20);
-  const weeklyStrong = week.trend.includes('上升') || (week.ma20 && week.close > week.ma20);
-  const dailyBroken = day.priceSignal.type === 'breakdown' || (day.structuralInvalid && day.close < day.structuralInvalid);
+  // codeflicker-fix: LOGIC-Issue-003/jvslwtka15th3ern74uz - 站上 MA20 仅代表修复，明确上升排列才算周线趋势支持。
+  const weeklyStrong = week.trend === '上升趋势' && week.ma20 && week.close > week.ma20;
+  const dailyBroken = day.priceSignal.type === 'breakdown' || day.breakout.state === '破位' || (day.structuralInvalid && day.close < day.structuralInvalid);
+  // codeflicker-fix: LOGIC-Issue-002/jvslwtka15th3ern74uz - 周线价格破位不再依赖未收线量能，量能仅用于确认度。
+  const weeklyBroken = week.priceSignal.type === 'breakdown' || week.breakout.state === '破位';
   const dailyStrong = day.trend.includes('上升') && day.close > (day.ma20 || 0);
   const dailyRepair = day.cross?.type === 'gold' || day.divergence?.type === 'bottom' || day.macdTxt.includes('红柱');
 
   let state, action, stars, reason;
-  if (dailyBroken || week.priceSignal.type === 'breakdown') {
+  if (dailyBroken || weeklyBroken) {
     state = '结构转弱'; action = '先控风险，等待重新站回关键位'; stars = '★☆☆☆☆';
     reason = dailyBroken ? '日线结构破坏' : '周线出现破位信号';
   } else if (weeklyStrong && !monthlyWeak && (dailyStrong || day.priceSignal.type === 'pullback')) {
@@ -419,7 +427,7 @@ function overallConclusion(day, week, month) {
     state = '区间震荡'; action = '按区间处理，等待突破或跌破确认'; stars = '★★★☆☆';
     reason = `${monthlyStrong ? '月线尚可' : '月线中性'}，周线未形成单边阶段，日线不宜单独定方向`;
   }
-  return { state, action, stars, reason, monthlyWeak, weeklyWeak, weeklyStrong, dailyBroken };
+  return { state, action, stars, reason, monthlyWeak, weeklyWeak, weeklyStrong, weeklyBroken, dailyBroken };
 }
 function uniqPrices(arr, prec) {
   const seen = new Set(), out = [];
@@ -537,7 +545,9 @@ function buildOneLine(oc, day, week, month) {
 }
 function periodConclusion(period, a) {
   if (a.priceSignal.type === 'breakout') return `出现放量突破前高，仍需回踩不破再确认有效。`;
-  if (a.priceSignal.type === 'breakdown') return `出现放量跌破前低，优先控风险，等待重新站回关键位。`;
+  if (a.priceSignal.type === 'breakdown') return a.priceSignal.text.includes('缩量')
+    ? `缩量跌破前低，结构仍然转弱，优先控风险。`
+    : `出现放量跌破前低，优先控风险，等待重新站回关键位。`;
   if (a.priceSignal.type === 'stall') return `放量滞涨并有上影，冲高回落风险增加。`;
   if (a.priceSignal.type === 'pullback') return `缩量回踩参考区，需等待次级别转强确认。`;
   if (a.priceSignal.type === 'weak_pullback') return `缩量靠近参考区，但趋势仍弱，尚不能视为有效承接。`;

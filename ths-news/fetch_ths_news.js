@@ -234,6 +234,13 @@ function saveState(st) {
 }
 
 // ---------- 工具 ----------
+// 同花顺 import 重要性：3 最高、2 次之、1 普通重要；0/未知不加标记。
+// codeflicker-fix: NEWS-IMPORT-DOT-001/rhs6oo6sfjijtw6lhu07
+function importDot(item) {
+  const level = Number(item?.import);
+  return level === 3 ? '🔴 ' : level === 2 ? '🟡 ' : level === 1 ? '🔵 ' : '';
+}
+function displayTitle(item) { return importDot(item) + String(item?.title || ''); }
 function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function fmtTime(ts) {
   const d = new Date(ts);
@@ -344,7 +351,7 @@ async function buildMessageSegs(batch, dateStr) {
     return [{ type: 'image', data: { file: 'base64://' + png.toString('base64') } }];
   } catch (e) {
     console.error('渲染图片失败，回退纯文字:', e.message);
-    const lines = batch.map(it => `【${fmtTime(it.time)}】${it.title}${it.desc ? '\n' + it.desc.slice(0, 140) : ''}`);
+    const lines = batch.map(it => `【${fmtTime(it.time)}】${displayTitle(it)}${it.desc ? '\n' + it.desc.slice(0, 140) : ''}`);
     const text = `${NEWS_CAPTION}\n${dateStr} · 同花顺官方「重要」·共 ${batch.length} 条\n\n` + lines.join('\n\n');
     return [{ type: 'text', data: { text } }];
   }
@@ -448,7 +455,7 @@ function renderCardCanvas(dateStr, items) {
   // 先计算总高度（与渲染逻辑同步：badge 26 + 标题行×28 + 摘要行×25 + 上下 padding 各 14）
   let yCalc = PAD + 34 + 12 + 18 + 22 + 2 + 24;
   items.forEach((it) => {
-    const titleLns = wrap(it.title, 22, INNER);
+    const titleLns = wrap(displayTitle(it), 22, INNER);
     const descLns = clipDesc(it.desc || '');
     yCalc += 14 + 26 + titleLns.length * 28 + (descLns.length ? 8 + descLns.length * 25 : 0) + 14;
   });
@@ -482,7 +489,7 @@ function renderCardCanvas(dateStr, items) {
   items.forEach((it, idx) => {
     // 奇偶行交替背景
     const rowBg = idx % 2 === 0 ? '#f8fafc' : '#ffffff';
-    const titleLns = wrap(it.title, 22, INNER);
+    const titleLns = wrap(displayTitle(it), 22, INNER);
     const descLns = clipDesc(it.desc || '');
     const rowH = 14 + 26 + titleLns.length * 28 + (descLns.length ? 8 + descLns.length * 25 : 0) + 14;
     ctx.fillStyle = rowBg; ctx.fillRect(0, y, CARD_W, rowH);
@@ -575,7 +582,7 @@ function buildCardSvg(dateStr, items) {
     // 奇偶行交替背景（从 y 起到本条末尾，先占位后续再精算）
     const rowBg = idx % 2 === 0 ? '#f8fafc' : '#ffffff';
     // 估算本条高度（时间行20 + 标题行×30 + 摘要行×26 + 内边距）
-    const estTitleLines = wrap(it.title, 23, INNER).length;
+    const estTitleLines = wrap(displayTitle(it), 23, INNER).length;
     const estDescLines = Math.min(3, wrap(it.desc || '', 18, INNER).length);
     const estH = 20 + estTitleLines * 30 + (estDescLines > 0 ? 8 + estDescLines * 26 : 0) + 20;
     blocks.push(`<rect x="0" y="${y}" width="${CARD_W}" height="${estH}" fill="${rowBg}"/>`);
@@ -595,7 +602,7 @@ function buildCardSvg(dateStr, items) {
     blocks.push(`<text x="${PAD + timeBadgeW + topicBadgeW + 12 + levelBadgeW / 2}" y="${y + 14}" text-anchor="middle" font-family="CJK" font-size="13" fill="${lev.color}">${x(lev.label)}</text>`);
     y += 26; // 标签高20 + 间距6
     // 标题（无时间戳，字号稍小）
-    const titleLines = wrap(it.title, 23, INNER);
+    const titleLines = wrap(displayTitle(it), 23, INNER);
     for (const ln of titleLines) { blocks.push(`<text x="${PAD}" y="${y + 20}" font-family="CJK" font-size="23" font-weight="700" fill="#1a1a1a">${x(ln)}</text>`); y += 28; }
     // 摘要
     if (it.desc) {
@@ -751,4 +758,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildCardSvg, renderCard, cardMeta, levelStyle, loadNewsRules, classifyNews, CARD_W, FONT_PATH };
+module.exports = { buildCardSvg, renderCard, cardMeta, levelStyle, importDot, displayTitle, loadNewsRules, classifyNews, CARD_W, FONT_PATH };

@@ -4,7 +4,7 @@
 const { sleep } = require('../utils');
 const { napcat, sendReply } = require('../gateway');
 const { CONFIG } = require('../config');
-const { renderCard, loadNewsRules, classifyNews } = require('../../ths-news/fetch_ths_news');
+const { renderCard, loadNewsRules, classifyNews, displayTitle } = require('../../ths-news/fetch_ths_news');
 
 // ---------- 快讯查询（同花顺官方「重要」资讯，2026-08-26 从网关迁入，qq-reply 为统一命令中心） ----------
 const THS_URL = 'https://news.10jqka.com.cn/tapp/news/push/stock/?page=%s&tag=&pageSize=50';
@@ -58,7 +58,7 @@ async function fetchImportantNews(limit = NEWS_QUERY_LIMIT) {
   return selected.map((it, i) => {
     const t = new Date(it.time);
     const p = (n) => String(n).padStart(2, '0');
-    return `${i + 1}. [${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}] ${it.title}`;
+    return `${i + 1}. [${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}] ${displayTitle(it)}`;
   });
 }
 
