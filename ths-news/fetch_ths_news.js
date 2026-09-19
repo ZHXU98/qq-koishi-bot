@@ -2,8 +2,14 @@
 //
 // 数据来源：同花顺官方 7×24 财经直播接口
 //   https://news.10jqka.com.cn/tapp/news/push/stock/
-//   该接口每条资讯自带 `import` 字段：import=3（或 >0）即同花顺标记为「重要」，
+//   2026-09-19 起改用 **重要频道 `tag=-21101`**（原为全量流 `tag=`）：
+//   实测全量流首页 20 条里通常只有 2 条 import>0（偶发 0 条 → 白跑一轮），
+//   而重要频道首页 20/20 全是 import>0，且它就是官方重要流的完整集合。
+//   频道 id 见接口响应 data.filter：21101 全部 / -21101 重要 / 21103 A股 / 21105 港股 /
+//   21107 美股 / 21109 机会 / 21111 异动 / 34843 公告（只有 -21101 这个负数有效）。
+//   每条资讯自带 `import` 字段：import=3（或 >0）即同花顺标记为「重要」，
 //   等价于原 RSSHub 的「重要」订阅标签，且为同花顺自带的重要性判定，比关键词加权更准。
+//   ⚠️ import 值类型不统一（见过字符串 "1" 与数字 3），比较前一律 Number()。
 //
 // 流程（分级聚合模式）：
 //   1. 每 5 分钟（容器内 start_news_cron.sh 循环，NEWS_INTERVAL=300）拉取官方接口，仅保留 import>0（同花顺「重要」标记）的资讯
@@ -198,9 +204,11 @@ function scoreNews(item) {
 }
 
 // ---------- 数据源 ----------
+// 重要频道 tag=-21101（2026-09-19 起）：首页 20/20 均为 import>0，不再依赖全量流里碰运气
+const THS_FEED_URL = 'https://news.10jqka.com.cn/tapp/news/push/stock/?page=1&tag=-21101&pageSize=50';
 async function fetchFromOfficial() {
   try {
-    const resp = await fetch('https://news.10jqka.com.cn/tapp/news/push/stock/?page=1&tag=&pageSize=50', {
+    const resp = await fetch(THS_FEED_URL, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' }
     });
     const j = await resp.json();
@@ -212,7 +220,7 @@ async function fetchFromOfficial() {
       tag: it.tag,
       import: it.import,
     }));
-    console.log('[src] 同花顺官方接口 ->', items.length, '条');
+    console.log('[src] 同花顺重要频道(tag=-21101) ->', items.length, '条');
     return items;
   } catch (e) { console.log('[src] 同花顺官方接口失败', e.message); return []; }
 }

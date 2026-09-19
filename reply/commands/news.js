@@ -7,8 +7,10 @@ const { CONFIG } = require('../config');
 const { renderCard, loadNewsRules, classifyNews, displayTitle } = require('../../ths-news/fetch_ths_news');
 
 // ---------- 快讯查询（同花顺官方「重要」资讯，2026-08-26 从网关迁入，qq-reply 为统一命令中心） ----------
-const THS_URL = 'https://news.10jqka.com.cn/tapp/news/push/stock/?page=%s&tag=&pageSize=50';
-const NEWS_MAX_PAGES = Number(process.env.NEWS_MAX_PAGES || 5); // /快讯 最多扫描 5 页普通流，以保留全部 import>0 层级
+// 2026-09-19 起从「全量流 tag=」换成「重要频道 tag=-21101」：该频道首页 20/20 均为 import>0
+// （全量流首页通常只有 2 条），无需再靠翻页凑数；频道 id 见接口响应 data.filter。
+const THS_URL = 'https://news.10jqka.com.cn/tapp/news/push/stock/?page=%s&tag=-21101&pageSize=50';
+const NEWS_MAX_PAGES = Number(process.env.NEWS_MAX_PAGES || 5); // 首页即有 20 条 import>0，凑够 NEWS_QUERY_LIMIT 即 break，多余页数仅作兜底
 const NEWS_QUERY_LIMIT = Number(process.env.NEWS_QUERY_LIMIT || 10); // 查询返回条数
 const DAILY_PUSH_HOUR = Number(process.env.DAILY_PUSH_HOUR || 21);
 const DAILY_PUSH_MIN = Number(process.env.DAILY_PUSH_MIN || 30);
