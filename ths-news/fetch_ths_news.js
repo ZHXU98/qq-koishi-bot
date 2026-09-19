@@ -234,7 +234,7 @@ function saveState(st) {
 }
 
 // ---------- 工具 ----------
-// 同花顺 import 重要性：3 最高、2 次之、1 普通重要；0/未知不加标记。
+// 同花顺 import 字段：实测只有 0（普通）和 3（官方「重要」）两档，1/2 从未出现。
 // codeflicker-fix: NEWS-IMPORT-DOT-001/rhs6oo6sfjijtw6lhu07
 // importDot 只用于**纯文本**消息（QQ 客户端自带 emoji 字体，可正常显示）。
 function importDot(item) {
@@ -243,15 +243,16 @@ function importDot(item) {
 }
 function displayTitle(item) { return importDot(item) + String(item?.title || ''); }
 // 图片卡片（canvas / SVG）里不能用 emoji：cjk.ttc 无 emoji 字形，会渲染成豆腐块/空点。
-// 改为按 import 等级直接绘制圆点（画布绘制，与字体无关），颜色与 importDot 的 🔴🟡🔵 一一对应。
-const IMPORT_DOT_COLORS = { 3: '#E53935', 2: '#F5A623', 1: '#1E88E5' };
+// 改为画布直接绘制圆点（与字体无关）。颜色跟随**事件等级**（levelStyle），与右侧 badge 同色：
+// 红=重大异动 / 棕橙=关注事件 / 灰=重要资讯；不再按 import 分色（那只会永远红点）。
 const IMPORT_DOT_R = 5.5;   // 圆点半径
 const IMPORT_DOT_GAP = 12;  // 圆点右缘到标题首字左缘的间距
+// import>0 = 官方「重要」标记，仅决定「画不画点」；点的颜色另由事件等级决定
 function importLevel(item) {
   const level = Number(item?.import);
-  return IMPORT_DOT_COLORS[level] ? level : 0;
+  return Number.isFinite(level) && level > 0 ? level : 0;
 }
-function importDotColor(item) { return IMPORT_DOT_COLORS[importLevel(item)] || null; }
+function importDotColor(item) { return importLevel(item) ? levelStyle(item).color : null; }
 // 标题首行需要为圆点预留的宽度（无标记则 0）
 function importDotWidth(item) { return importLevel(item) ? IMPORT_DOT_R * 2 + IMPORT_DOT_GAP : 0; }
 // 图片渲染专用：纯标题（标记由绘制承担，不拼 emoji）
