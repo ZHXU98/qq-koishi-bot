@@ -236,11 +236,26 @@ function saveState(st) {
 // ---------- 工具 ----------
 // 同花顺 import 重要性：3 最高、2 次之、1 普通重要；0/未知不加标记。
 // codeflicker-fix: NEWS-IMPORT-DOT-001/rhs6oo6sfjijtw6lhu07
+// importDot 只用于**纯文本**消息（QQ 客户端自带 emoji 字体，可正常显示）。
 function importDot(item) {
   const level = Number(item?.import);
   return level === 3 ? '🔴 ' : level === 2 ? '🟡 ' : level === 1 ? '🔵 ' : '';
 }
 function displayTitle(item) { return importDot(item) + String(item?.title || ''); }
+// 图片卡片（canvas / SVG）里不能用 emoji：cjk.ttc 无 emoji 字形，会渲染成豆腐块/空点。
+// 改为按 import 等级直接绘制圆点（画布绘制，与字体无关），颜色与 importDot 的 🔴🟡🔵 一一对应。
+const IMPORT_DOT_COLORS = { 3: '#E53935', 2: '#F5A623', 1: '#1E88E5' };
+const IMPORT_DOT_R = 5.5;   // 圆点半径
+const IMPORT_DOT_GAP = 12;  // 圆点右缘到标题首字左缘的间距
+function importLevel(item) {
+  const level = Number(item?.import);
+  return IMPORT_DOT_COLORS[level] ? level : 0;
+}
+function importDotColor(item) { return IMPORT_DOT_COLORS[importLevel(item)] || null; }
+// 标题首行需要为圆点预留的宽度（无标记则 0）
+function importDotWidth(item) { return importLevel(item) ? IMPORT_DOT_R * 2 + IMPORT_DOT_GAP : 0; }
+// 图片渲染专用：纯标题（标记由绘制承担，不拼 emoji）
+function titlePlain(item) { return String(item?.title || ''); }
 function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function fmtTime(ts) {
   const d = new Date(ts);
@@ -434,8 +449,8 @@ function renderCardCanvas(dateStr, items) {
   const PAD = 36, INNER = CARD_W - PAD * 2;
   const isHalf = ch => /[A-Za-z0-9 .,:%''""\-/…]/.test(ch);
   const cwOf = (ch, fs) => isHalf(ch) ? fs * 0.55 : fs;
-  const wrap = (text, fs, maxW) => {
-    const lines = []; let line = '', w = 0;
+  const wrap = (text, fs, maxW, firstIndent = 0) => {
+    const lines = []; let line = '', w = firstIndent; // firstIndent：首行为绘制圆点预留的宽度
     for (const ch of String(text)) {
       const cw = cwOf(ch, fs);
       if (w + cw > maxW && line) { lines.push(line); line = ch; w = cw; }
@@ -455,7 +470,7 @@ function renderCardCanvas(dateStr, items) {
   // 先计算总高度（与渲染逻辑同步：badge 26 + 标题行×28 + 摘要行×25 + 上下 padding 各 14）
   let yCalc = PAD + 34 + 12 + 18 + 22 + 2 + 24;
   items.forEach((it) => {
-    const titleLns = wrap(displayTitle(it), 22, INNER);
+    const titleLns = wrap(titlePlain(it), 22, INNER, importDotWidth(it));
     const descLns = clipDesc(it.desc || '');
     yCalc += 14 + 26 + titleLns.length * 28 + (descLns.length ? 8 + descLns.length * 25 : 0) + 14;
   });
@@ -489,7 +504,7 @@ function renderCardCanvas(dateStr, items) {
   items.forEach((it, idx) => {
     // 奇偶行交替背景
     const rowBg = idx % 2 === 0 ? '#f8fafc' : '#ffffff';
-    const titleLns = wrap(displayTitle(it), 22, INNER);
+    const titleLns = wrap(titlePlain(it), 22, INNER, importDotWidth(it));
     const descLns = clipDesc(it.desc || '');
     const rowH = 14 + 26 + titleLns.length * 28 + (descLns.length ? 8 + descLns.length * 25 : 0) + 14;
     ctx.fillStyle = rowBg; ctx.fillRect(0, y, CARD_W, rowH);
@@ -512,9 +527,19 @@ function renderCardCanvas(dateStr, items) {
     ctx.textAlign = 'left';
     y += 26; // 标签高20 + 间距6
 
-    // 标题（去掉时间戳，字号稍收）
-    ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 22px cjk';
-    for (const ln of titleLns) { ctx.fillText(ln, PAD, y + 20); y += 28; }
+    // 标题（去掉时间戳，字号稍收）；import 等级标记用绘制圆点，首行文字右移让位
+    ctx.font = 'bold 22px cjk';
+    const dotW = importDotWidth(it);
+    const dotCol = importDotColor(it);
+    for (let i = 0; i < titleLns.length; i++) {
+      if (i === 0 && dotCol) {
+        ctx.fillStyle = dotCol;
+        ctx.beginPath(); ctx.arc(PAD + IMPORT_DOT_R, y + 13, IMPORT_DOT_R, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillText(titleLns[i], PAD + (i === 0 ? dotW : 0), y + 20);
+      y += 28;
+    }
 
     // 摘要
     if (descLns.length) {
@@ -542,8 +567,8 @@ function buildCardSvg(dateStr, items) {
   const isTrailPunct = ch => /[。，！？；：、]/.test(ch);
   const cwOf = (ch, fs) => isHalf(ch) ? fs * 0.56 : fs;
   const lineW = (line, fs) => { let w = 0; for (const c of line) w += cwOf(c, fs); return w; };
-  const wrap = (text, fs, maxW) => {
-    const lines = []; let line = '', w = 0;
+  const wrap = (text, fs, maxW, firstIndent = 0) => {
+    const lines = []; let line = '', w = firstIndent; // firstIndent：首行为绘制圆点预留的宽度
     for (const ch of String(text)) {
       const cw = cwOf(ch, fs);
       if (w + cw > maxW && line) {
@@ -582,7 +607,7 @@ function buildCardSvg(dateStr, items) {
     // 奇偶行交替背景（从 y 起到本条末尾，先占位后续再精算）
     const rowBg = idx % 2 === 0 ? '#f8fafc' : '#ffffff';
     // 估算本条高度（时间行20 + 标题行×30 + 摘要行×26 + 内边距）
-    const estTitleLines = wrap(displayTitle(it), 23, INNER).length;
+    const estTitleLines = wrap(titlePlain(it), 23, INNER, importDotWidth(it)).length;
     const estDescLines = Math.min(3, wrap(it.desc || '', 18, INNER).length);
     const estH = 20 + estTitleLines * 30 + (estDescLines > 0 ? 8 + estDescLines * 26 : 0) + 20;
     blocks.push(`<rect x="0" y="${y}" width="${CARD_W}" height="${estH}" fill="${rowBg}"/>`);
@@ -601,9 +626,15 @@ function buildCardSvg(dateStr, items) {
     blocks.push(`<rect x="${PAD + timeBadgeW + topicBadgeW + 12}" y="${y}" width="${levelBadgeW}" height="20" rx="4" fill="${lev.bg}"/>`);
     blocks.push(`<text x="${PAD + timeBadgeW + topicBadgeW + 12 + levelBadgeW / 2}" y="${y + 14}" text-anchor="middle" font-family="CJK" font-size="13" fill="${lev.color}">${x(lev.label)}</text>`);
     y += 26; // 标签高20 + 间距6
-    // 标题（无时间戳，字号稍小）
-    const titleLines = wrap(displayTitle(it), 23, INNER);
-    for (const ln of titleLines) { blocks.push(`<text x="${PAD}" y="${y + 20}" font-family="CJK" font-size="23" font-weight="700" fill="#1a1a1a">${x(ln)}</text>`); y += 28; }
+    // 标题（无时间戳，字号稍小）；import 等级标记用绘制的圆点（字体无 emoji 字形）
+    const titleLines = wrap(titlePlain(it), 23, INNER, importDotWidth(it));
+    const dotW = importDotWidth(it);
+    const dotCol = importDotColor(it);
+    for (let i = 0; i < titleLines.length; i++) {
+      if (i === 0 && dotCol) blocks.push(`<circle cx="${PAD + IMPORT_DOT_R}" cy="${y + 13}" r="${IMPORT_DOT_R}" fill="${dotCol}"/>`);
+      blocks.push(`<text x="${PAD + (i === 0 ? dotW : 0)}" y="${y + 20}" font-family="CJK" font-size="23" font-weight="700" fill="#1a1a1a">${x(titleLines[i])}</text>`);
+      y += 28;
+    }
     // 摘要
     if (it.desc) {
       y += 6;
@@ -758,4 +789,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildCardSvg, renderCard, cardMeta, levelStyle, importDot, displayTitle, loadNewsRules, classifyNews, CARD_W, FONT_PATH };
+module.exports = { buildCardSvg, renderCard, cardMeta, levelStyle, importDot, displayTitle, importLevel, importDotColor, importDotWidth, titlePlain, loadNewsRules, classifyNews, CARD_W, FONT_PATH };
