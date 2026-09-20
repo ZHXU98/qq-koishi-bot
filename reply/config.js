@@ -24,6 +24,13 @@ const DEFAULTS = {
   deniedMsg: '🛡️ 本机器人仅对授权账号开放',
   unknownMsg: '未知指令，发送 /help 查看可用指令',
   welcome: '👋 你好，我是机器人助手。群聊请 @我 + 指令，私聊可直接发送指令；发送 /help 查看全部指令。',
+  tFees: {
+    stockCommissionRate: 0.0008,
+    stockMinCommission: 5,
+    stockStampDutyRate: 0.001,
+    stockTransferRate: 0.0004,
+    fundRoundTripRate: 0.0002,
+  },
 };
 // 保持对象身份稳定：index/gateway 等模块会在启动时持有 CONFIG 引用；
 // 热加载只能原地写入，不能整体替换对象。
@@ -33,7 +40,9 @@ function loadConfig() {
   try {
     if (fs.existsSync(CONFIG_PATH)) {
       const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) next = { ...DEFAULTS, ...parsed };
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        next = { ...DEFAULTS, ...parsed, tFees: { ...DEFAULTS.tFees, ...(parsed.tFees || {}) } };
+      }
     }
   } catch (e) {
     console.error('[config] 读取失败（恢复默认）:', e.message);

@@ -2,7 +2,8 @@
 // /t 做T参谋：形态判断 + 分时黄线分析 + T位建议（原理见 T_GUIDE.md）
 // ============================================================
 const { cacheGet, cacheSet, normStockName, isFundCode } = require('../utils');
-const { resolveStockCode, normalizeCode, fetchStockKline, fetchStockQuote, buildAvgLine, calcSMA, calcBOLL } = require('../market');
+const { resolveStockCode, normalizeCode, fetchStockKline, fetchStockMinuteKline, fetchStockQuote, buildAvgLine, calcSMA, calcBOLL } = require('../market');
+const { CONFIG } = require('../config');
 const { renderReportCard } = require('../report-card');
 const { renderStockPng } = require('./stock');
 
@@ -79,6 +80,35 @@ function calcMACD(closes) {
   };
 }
 
+function minuteKey(value) {
+  const s = String(value || '').replace(/\D/g, '');
+  return s.length >= 12 ? s.slice(-4) : s.slice(0, 4);
+}
+
+function mergeTMinuteKlines(timeKlines, minuteKlines, quote) {
+  const timeline = (timeKlines || []).filter(k => Number(k.close) > 0);
+  if (!timeline.length) return [];
+  const quoteStamp = String(quote?.time || '').replace(/\D/g, '');
+  const targetDate = quoteStamp.length >= 8 ? quoteStamp.slice(0, 8) : String(minuteKlines?.at(-1)?.t || '').replace(/\D/g, '').slice(0, 8);
+  const minuteMap = new Map((minuteKlines || []).filter(k => {
+    const stamp = String(k.t || '').replace(/\D/g, '');
+    return stamp.length < 8 || !targetDate || stamp.slice(0, 8) === targetDate;
+  }).map(k => [minuteKey(k.t), k]));
+  const quoteMinute = quoteStamp.length >= 12 ? quoteStamp.slice(8, 12) : '';
+  return timeline.map(point => {
+    const key = minuteKey(point.t);
+    const bar = minuteMap.get(key);
+    const complete = !quoteMinute || key < quoteMinute || quoteMinute >= '1501';
+    // codeflicker-fix: API-Issue-001/ggcwpau782ju8vj8yxvg - OHLC取真实1分钟K，累计额/量与均价字段继续复用timeline。
+    return {
+      ...point,
+      ...(bar ? { open: bar.open, close: bar.close, high: bar.high, low: bar.low, vol: bar.vol } : {}),
+      avgPrice: point.avgPrice, cumVol: point.cumVol, cumAmt: point.cumAmt,
+      complete,
+    };
+  });
+}
+
 function filterTDisplayKlines(code, timeKlines) {
   const arr = (timeKlines || []).filter(k => Number(k.close) > 0);
   if (code && code.startsWith('hf_')) return arr;
@@ -89,7 +119,7 @@ function filterTDisplayKlines(code, timeKlines) {
 }
 
 // ── MACD状态解读：金叉/死叉 + 顶/底背离 + 柱体趋势 ──
-function analyzeMACDState(macd, closes) {
+function analyzeMACDState(macd, closes, tickSize = 0.01) {
   if (!macd) return null;
   const { series, dif, dea, hist } = macd;
   const d = series.dif, e = series.dea, h = series.hist;
@@ -98,7 +128,11 @@ function analyzeMACDState(macd, closes) {
     if (d[i - 1] < e[i - 1] && d[i] >= e[i]) { cross = 'gold'; crossIndex = i; break; }
     if (d[i - 1] >= e[i - 1] && d[i] < e[i]) { cross = 'dead'; crossIndex = i; break; }
   }
+  const crossAge = crossIndex >= 0 ? d.length - 1 - crossIndex : null;
+  if (crossAge !== null && crossAge > 10) { cross = 'none'; crossIndex = -1; }
+  // codeflicker-fix: LOGIC-Issue-006/ggcwpau782ju8vj8yxvg - 仅最近10个分钟保留“交叉”事件语义。
   // 背离检测：取最后30根的局部顶/底，对比价格与DIF
+  // codeflicker-fix: LOGIC-Issue-007/ggcwpau782ju8vj8yxvg - 背离要求最小价差、DIF差与拐点间隔，过滤最小价位噪声。
   let divergence = null;
   const arr = (closes || []).filter(v => isFinite(v) && v > 0);
   if (arr.length >= 40 && d.length >= 40) {
@@ -110,14 +144,20 @@ function analyzeMACDState(macd, closes) {
     }
     if (tops.length >= 2) {
       const t1 = tops[tops.length - 2], t2 = tops[tops.length - 1];
-      if (arr[t2] >= arr[t1] && d[t2] < d[t1]) divergence = 'top';
+      const minMove = Math.max((arr[t1] || 0) * 0.0015, tickSize * 2);
+      if (t2 - t1 >= 3 && arr[t2] - arr[t1] >= minMove && d[t1] - d[t2] > Math.max(Math.abs(d[t1]) * 0.05, 1e-6)) divergence = 'top';
     }
     if (!divergence && bottoms.length >= 2) {
       const b1 = bottoms[bottoms.length - 2], b2 = bottoms[bottoms.length - 1];
-      if (arr[b2] <= arr[b1] && d[b2] > d[b1]) divergence = 'bottom';
+      const minMove = Math.max((arr[b1] || 0) * 0.0015, tickSize * 2);
+      if (b2 - b1 >= 3 && arr[b1] - arr[b2] >= minMove && d[b2] - d[b1] > Math.max(Math.abs(d[b1]) * 0.05, 1e-6)) divergence = 'bottom';
     }
   }
-  const histTrend = h.length > 1 ? (h[h.length - 1] >= h[h.length - 2] ? 'expand' : 'shrink') : 'flat';
+  const prevH = h[h.length - 2] ?? 0, currH = h[h.length - 1] ?? 0;
+  // codeflicker-fix: LOGIC-Issue-003/ggcwpau782ju8vj8yxvg - 同色柱按绝对值比较，跨零轴单独标记。
+  const histTrend = h.length <= 1 ? 'flat'
+    : prevH * currH < 0 ? (currH >= 0 ? 'turn_red' : 'turn_green')
+      : Math.abs(currH) >= Math.abs(prevH) ? 'expand' : 'shrink';
   const zeroAbove = dif > 0 && dea > 0;
   const crossLevel = crossIndex >= 0 ? (d[crossIndex] + e[crossIndex]) / 2 : (dif + dea) / 2;
   const crossZone = crossLevel >= 0 ? 'water_up' : 'water_down';
@@ -126,7 +166,7 @@ function analyzeMACDState(macd, closes) {
     : cross === 'dead'
       ? (crossZone === 'water_up' ? '水上死叉' : '水下死叉')
       : '无交叉';
-  return { dif, dea, hist, cross, crossIndex, crossZone, crossText, divergence, histTrend, zeroAbove };
+  return { dif, dea, hist, cross, crossIndex, crossAge, crossZone, crossText, divergence, histTrend, zeroAbove };
 }
 
 // ── 开盘走势场景判断 ──
@@ -203,7 +243,8 @@ function analyzeTTimeData(timeKlines, quote, code = '') {
   const hasTime = !!timeKlines && timeKlines.length >= 2;
   const validKlines = hasTime ? filterTDisplayKlines(code, timeKlines) : [];
   const hasValidTime = validKlines.length >= 2;
-  const candleCount = validKlines.length;
+  const completeKlines = validKlines.filter(k => k.complete !== false);
+  const candleCount = completeKlines.length;
   const preMacd = candleCount <= 3;
   const macdForming = candleCount >= 4 && candleCount <= 5;
   const macdConfirm = candleCount >= 6 && candleCount <= 10;
@@ -252,12 +293,12 @@ function analyzeTTimeData(timeKlines, quote, code = '') {
   // ── 振幅自适应确认阈值：波动越大，"冲高回落/低开企稳"的确认门槛越高 ──
   const confirmTh = Math.max(0.8, amplitude * 0.25);
   // ── 分时 MACD：仅当天 1 分钟数据，参数 12/26/9，首根收盘价为 EMA 初始值 ──
-  const macdKlines = validKlines;
+  const macdKlines = completeKlines;
   const closesArr = macdKlines.map(k => Number(k.close) || 0);
   const macd = closesArr.length ? calcMACD(closesArr) : null;
   const macdState = macd ? analyzeMACDState(macd, closesArr) : null;
   const priceAction = analyzePriceAction(validKlines, avgLine, lastPrice);
-  const openFlash = preMacd ? analyzeOpenFlash(validKlines, avgLine, open, gapPct, volRatio) : null;
+  const openFlash = preMacd ? analyzeOpenFlash(completeKlines, avgLine?.slice(0, completeKlines.length), open, gapPct, volRatio) : null;
   // 开盘场景由价格、量能与轨迹决定；MACD不参与场景识别或触发。
   const openScenario = (!pureAuction && openPhase) ? _openScenario({ gapPct, openDirPct, pullbackPct, recoverPct, confirmTh, hiFromOpen, loFromOpen }) : null;
   // 黄线斜率（近15分钟；开盘阶段无意义）
@@ -292,14 +333,16 @@ function classifyAvgTrend(avgSlope, openPhase) {
 const T_REF_AMP = 2.5;    // 参考振幅：固定阈值（约 1.5/2.8%）所对应的典型日振幅
 const T_VOL_FLOOR = 0.35; // 缩放下限，避免低波动标的区间塌成一条线
 function calcVolRef(dayKlines) {
-  const n = (dayKlines || []).length;
+  const rows = dayKlines || [];
+  const n = rows.length;
   if (n < 2) return 0;
-  const N = Math.min(10, n - 1);
+  const start = Math.max(1, n - 10);
   let sum = 0, cnt = 0;
-  for (let i = n - N; i < n; i++) {
-    const k = dayKlines[i], p = dayKlines[i - 1];
+  for (let i = start; i < n; i++) {
+    const k = rows[i], p = rows[i - 1];
     if (!k || !p || !(p.close > 0) || !(k.high > 0) || !(k.low > 0)) continue;
-    sum += (k.high - k.low) / p.close * 100; cnt++;
+    sum += (k.high - k.low) / p.close * 100;
+    cnt++;
   }
   return cnt ? sum / cnt : 0;
 }
@@ -307,25 +350,29 @@ function calcVolRef(dayKlines) {
 // ── 日内价格行为主信号：均价线、量能、前高前低、5分钟K结构 ──
 // MACD 为滞后指标，仅作为旁路展示；不单独产生买卖触发。
 function analyzePriceAction(klines, avgLine, lastPrice) {
-  const rows = (klines || []).filter(k => Number(k.close) > 0);
+  const allRows = (klines || []).filter(k => Number(k.close) > 0);
+  // codeflicker-fix: EDGE-Issue-001/ggcwpau782ju8vj8yxvg - 实时价可用当前分钟，量能和K线结构仅使用已完成分钟。
+  const completeCount = allRows.filter(k => k.complete !== false).length;
+  const rows = allRows.slice(0, completeCount);
+  const avgs = (avgLine || []).slice(0, completeCount);
   const n = rows.length;
   const none = { buyScore: 0, sellScore: 0, signal: 'wait', aboveAvg: false, avgBreakUp: false, avgBreakDown: false, retestHold: false, retestFail: false, breakHigh: false, breakLow: false, volBurst: false, volDry: false, fiveMin: 'neutral', priorHigh: 0, priorLow: 0 };
-  if (n < 3 || !avgLine || avgLine.length !== n) return none;
+  if (n < 3 || avgs.length !== n) return none;
   const last = rows[n - 1], prev = rows[n - 2];
-  const avg = avgLine[n - 1], prevAvg = avgLine[n - 2];
+  const avg = avgs[n - 1], prevAvg = avgs[n - 2];
   const lookback = rows.slice(Math.max(0, n - 21), n - 1);
   const priorHigh = Math.max(...lookback.map(k => Number(k.high) || 0));
   const priorLow = Math.min(...lookback.map(k => Number(k.low) || Infinity));
-  const recent = rows.slice(Math.max(0, n - 4));
-  const recentLow = Math.min(...recent.map(k => Number(k.low) || Infinity));
-  const recentHigh = Math.max(...recent.map(k => Number(k.high) || 0));
-  const avgBreakUp = prev.close < prevAvg && lastPrice >= avg;
-  const avgBreakDown = prev.close >= prevAvg && lastPrice < avg;
-  const aboveAvg = lastPrice >= avg;
-  const retestHold = aboveAvg && recentLow <= avg * 1.0015;
-  const retestFail = !aboveAvg && recentHigh >= avg * 0.9985;
-  const breakHigh = priorHigh > 0 && lastPrice > priorHigh;
-  const breakLow = isFinite(priorLow) && lastPrice < priorLow;
+  const avgBreakUp = prev.close < prevAvg && last.close >= avg;
+  const avgBreakDown = prev.close >= prevAvg && last.close < avg;
+  const aboveAvg = lastPrice >= (avgLine?.at(-1) || avg);
+  // codeflicker-fix: LOGIC-Issue-001/ggcwpau782ju8vj8yxvg - 回踩要求此前连续站在均价线同侧，且与本分钟突破互斥。
+  const stoodAbove = n >= 4 && rows.slice(n - 3, n - 1).every((k, i) => k.close >= avgs[n - 3 + i]);
+  const stoodBelow = n >= 4 && rows.slice(n - 3, n - 1).every((k, i) => k.close < avgs[n - 3 + i]);
+  const retestHold = !avgBreakUp && stoodAbove && last.low <= avg * 1.0015 && last.close >= avg;
+  const retestFail = !avgBreakDown && stoodBelow && last.high >= avg * 0.9985 && last.close < avg;
+  const breakHigh = priorHigh > 0 && last.close > priorHigh;
+  const breakLow = isFinite(priorLow) && last.close < priorLow;
   const vols = rows.map(k => Number(k.vol) || 0);
   const currentVol = vols[n - 1];
   const baseVols = vols.slice(Math.max(0, n - 6), n - 1);
@@ -342,19 +389,17 @@ function analyzePriceAction(klines, avgLine, lastPrice) {
   const fiveMin = fiveBody >= 0.35 ? 'bull' : fiveBody <= -0.35 ? 'bear' : 'neutral';
   let buyScore = 0, sellScore = 0;
   if (avgBreakUp) buyScore += 2;
-  if (retestHold) buyScore += 1;
+  else if (retestHold) buyScore += 1;
   if (breakHigh) buyScore += 2;
   if (fiveMin === 'bull') buyScore += 1;
-  if (volBurst && aboveAvg) buyScore += 1;
+  if (volBurst && last.close >= avg) buyScore += 1;
   if (avgBreakDown) sellScore += 2;
-  if (retestFail) sellScore += 1;
+  else if (retestFail) sellScore += 1;
   if (breakLow) sellScore += 2;
   if (fiveMin === 'bear') sellScore += 1;
-  if (volBurst && !aboveAvg) sellScore += 1;
-  // 单层价格行为信号：均价线、量能、前高前低与5分钟结构形成共振即触发。
-  // 不再拆试探/确认档；MACD只作为旁路参考。
+  if (volBurst && last.close < avg) sellScore += 1;
   const signal = buyScore >= 3 && buyScore > sellScore ? 'buy' : sellScore >= 3 && sellScore > buyScore ? 'sell' : 'wait';
-  return { buyScore, sellScore, signal, aboveAvg, avgBreakUp, avgBreakDown, retestHold, retestFail, breakHigh, breakLow, volBurst, volDry, fiveMin, priorHigh, priorLow };
+  return { buyScore, sellScore, signal, aboveAvg, avgBreakUp, avgBreakDown, retestHold, retestFail, breakHigh, breakLow, volBurst, volDry, fiveMin, priorHigh, priorLow, completeCount };
 }
 
 // ── 计算T位 ──
@@ -423,14 +468,18 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
     sellThLow *= volScale; sellThHigh *= volScale;
     buyThHigh *= volScale; buyThLow *= volScale;
     const sellLow = r2(base * (1 + sellThLow / 100));
-    const sellHigh = r2(Math.min(bollUp || base * 1.05, base * (1 + sellThHigh / 100)));
+    const thresholdSellHigh = r2(base * (1 + sellThHigh / 100));
+    // codeflicker-fix: LOGIC-Issue-002/ggcwpau782ju8vj8yxvg - BOLL低于卖区起点时不反向压低上界。
+    const sellHigh = r2(bollUp > sellLow ? Math.min(bollUp, thresholdSellHigh) : thresholdSellHigh);
     const buyHigh = r2(base * (1 - buyThHigh / 100));
     const buyLowByDev = r2(base * (1 - buyThLow / 100));
     const buyLow = r2(dayLow > 0 && dayLow < buyHigh ? Math.max(dayLow, buyLowByDev) : buyLowByDev);
     const inSellZone = lastPrice >= sellLow;
     const inBuyZone = lastPrice <= buyHigh;
     const expectedTDiff = ((sellHigh - buyLow) / base * 100).toFixed(1);
-    return { sellLow, sellHigh, buyLow, buyHigh, inSellZone, inBuyZone, inNeutral: !inSellZone && !inBuyZone, expectedTDiff, base, prec, openPhase, openScenario, confirmTh: timeInfo.confirmTh, pullbackPct: timeInfo.pullbackPct, recoverPct: timeInfo.recoverPct, macdState: timeInfo.macdState, macd: timeInfo.macd };
+    // codeflicker-fix: MAINT-Issue-001/ggcwpau782ju8vj8yxvg - 保留基础阈值、形态、缩放和BOLL约束轨迹便于排查。
+    const thresholdTrace = { base, volRef, volScale, activeForm, openScenario, sellPct: [sellThLow, sellThHigh], buyPct: [buyThLow, buyThHigh], bollCapApplied: bollUp > sellLow && bollUp < thresholdSellHigh };
+    return { sellLow, sellHigh, buyLow, buyHigh, inSellZone, inBuyZone, inNeutral: !inSellZone && !inBuyZone, expectedTDiff, base, prec, openPhase, openScenario, confirmTh: timeInfo.confirmTh, pullbackPct: timeInfo.pullbackPct, recoverPct: timeInfo.recoverPct, macdState: timeInfo.macdState, macd: timeInfo.macd, thresholdTrace };
   }
 
   // ── 盘中模式：基准=黄线 ──
@@ -453,7 +502,8 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
     buyThLow = 0.65 * volScale;
   }
   const sellLow = r2(base * (1 + sellThLow / 100));
-  const sellHigh = r2(Math.min(bollUp || base * 1.035, base * (1 + sellThHigh / 100)));
+  const thresholdSellHigh = r2(base * (1 + sellThHigh / 100));
+  const sellHigh = r2(bollUp > sellLow ? Math.min(bollUp, thresholdSellHigh) : thresholdSellHigh);
   // buyLow < buyHigh 始终成立；下行趋势中该区域只代表止跌观察，非自动买点。
   const buyHigh = r2(base * (1 - buyThHigh / 100));
   const buyLowByDev = r2(base * (1 - buyThLow / 100));
@@ -463,7 +513,8 @@ function calcTPositions(activeForm, timeInfo, dayInfo) {
   const inSellZone = lastPrice >= sellLow;
   const inBuyZone = lastPrice <= buyHigh;
   const expectedTDiff = ((sellHigh - buyLow) / base * 100).toFixed(1);
-  return { sellLow, sellHigh, buyLow, buyHigh, inSellZone, inBuyZone, inNeutral: !inSellZone && !inBuyZone, expectedTDiff, base, prec, avgTrend, macd: timeInfo.macd, macdState: timeInfo.macdState, confirmTh: timeInfo.confirmTh };
+  const thresholdTrace = { base, volRef, volScale, activeForm, avgTrend, sellPct: [sellThLow, sellThHigh], buyPct: [buyThLow, buyThHigh], bollCapApplied: bollUp > sellLow && bollUp < thresholdSellHigh };
+  return { sellLow, sellHigh, buyLow, buyHigh, inSellZone, inBuyZone, inNeutral: !inSellZone && !inBuyZone, expectedTDiff, base, prec, avgTrend, macd: timeInfo.macd, macdState: timeInfo.macdState, confirmTh: timeInfo.confirmTh, thresholdTrace };
 }
 
 // ── 操作建议证据：只展示本次结论用到的事实；MACD始终标注为旁路，不承担触发。 ──
@@ -545,8 +596,10 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
           pullbackPct, recoverPct, hiFromOpen, loFromOpen, confirmTh, macd, macdState, priceAction, openFlash } = timeInfo;
   const { ma5, ma10, ma20, bollUp, bollLow, bollMid, bollWidth } = dayInfo;
   const now = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, hour: '2-digit', minute: '2-digit' });
-  const isETF = /^(sh51|sz159)/.test(code);
-  const feeRate = isETF ? 0.02 : 0.30;
+  const isETF = isFundCode(code);
+  const feeCfg = { ...CONFIG.tFees };
+  const feeRate = isETF ? feeCfg.fundRoundTripRate * 100
+    : (feeCfg.stockCommissionRate * 2 + feeCfg.stockStampDutyRate + feeCfg.stockTransferRate) * 100;
   const ampWarnTh = isETF ? 0.08 : 0.45;
   const ampCautionTh = isETF ? 0.20 : 0.80;
   const prec = dayInfo.prec || 2;
@@ -566,7 +619,7 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
   };
   const userFormLabel = userFormRaw === 'swing' ? '震荡' : userFormRaw === 'trend' ? '单边趋势' : null;
   const activeForm = userFormRaw === 'swing' ? 'swing' : userFormRaw === 'trend' ?
-    (autoForm === 'downtrend' ? 'downtrend' : 'uptrend') : autoForm;
+    (autoForm === 'uptrend' || autoForm === 'downtrend' ? autoForm : 'unclear') : autoForm;
   const hasTData = !!timeInfo.timeKlines && timeInfo.timeKlines.length >= 2;
 
   // 仅在有T位时解构
@@ -778,7 +831,9 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     const crossTxt = macdState.crossText || (macdState.cross === 'gold' ? '金叉↑' : macdState.cross === 'dead' ? '死叉↓' : '无交叉');
     const zoneTxt = macdState.zeroAbove ? '零轴上方' : '零轴下方';
     const histTxt = macdState.hist >= 0 ? '红柱' : '绿柱';
-    const histDir = macdState.histTrend === 'expand' ? '放大' : '收敛';
+  const histDir = macdState.histTrend === 'expand' ? '放大'
+      : macdState.histTrend === 'shrink' ? '收敛'
+        : macdState.histTrend === 'turn_red' ? '由绿转红' : macdState.histTrend === 'turn_green' ? '由红转绿' : '持平';
     L.push(`→ 📉 分时MACD：DIFF ${fp(macd.dif)} / DEA ${fp(macd.dea)} / ${histTxt}${histDir}，${zoneTxt}，${crossTxt}`);
     if (macdState.cross === 'gold') {
       L.push(macdState.crossZone === 'water_up'
@@ -914,15 +969,18 @@ function buildTReport(name, code, autoForm, userFormRaw, timeInfo, dayInfo, tPos
     const refAmtStr = refAmt >= 10000 ? `约${(refAmt / 10000).toFixed(1)}万元` : `约${refAmt}元`;
     if (fixedShares > 0 && tDiffPerShare > 0) {
       const val = fixedShares * refPrice;
+      // codeflicker-fix: LOGIC-Issue-008/ggcwpau782ju8vj8yxvg - 统一基金识别，费率来自可覆盖配置。
       const fee = isETF
-        ? val * 0.0002
-        : Math.max(val * 0.0008, 5) + Math.max(val * 0.0008, 5) + val * 0.001 + val * 0.0004;
+        ? val * feeCfg.fundRoundTripRate
+        : Math.max(val * feeCfg.stockCommissionRate, feeCfg.stockMinCommission)
+          + Math.max(val * feeCfg.stockCommissionRate, feeCfg.stockMinCommission)
+          + val * feeCfg.stockStampDutyRate + val * feeCfg.stockTransferRate;
       const gross = fixedShares * tDiffPerShare;
       const net = Math.round(gross - fee);
       if (net > 0) {
-        L.push(`   ${refAmtStr}/${fixedShares}股，本次T净赚约 +${net}元（扣手续费${Math.round(fee)}元）`);
+        L.push(`   ${refAmtStr}/${fixedShares}股，本次T按默认费率估算净收益约 +${net}元（费用${Math.round(fee)}元）`);
       } else {
-        L.push(`   ${refAmtStr}/${fixedShares}股，T差仅${Math.round(gross)}元，手续费${Math.round(fee)}元，亏！`);
+        L.push(`   ${refAmtStr}/${fixedShares}股，T差仅${Math.round(gross)}元，按默认费率估算费用${Math.round(fee)}元，可能亏损`);
       }
     } else if (tDiffPerShare <= 0) {
       L.push(`   ⚠️ 卖出区与买回区重叠，当前无T差，等振幅扩大再操作`);
@@ -987,7 +1045,9 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos, action =
   const plotW = W - PAD * 2;
   const mapX = isHF ? (i => PAD + (i / (dn - 1)) * plotW) : (i => PAD + (tmin(display[i].t) / TOT) * plotW);
   // ── 分时 MACD：当天 1 分钟数据，参数 12/26/9；与文字分析使用完全相同的序列
-  const closes = display.map(k => Number(k.close) || 0);
+  const macdDisplay = display.filter(k => k.complete !== false);
+  const mdn = macdDisplay.length;
+  const closes = macdDisplay.map(k => Number(k.close) || 0);
   const macdData = calcMACD(closes);
   // 配色
   const upC = '#f5222d', downC = '#0aa869';
@@ -1105,7 +1165,7 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos, action =
   ctx.beginPath(); ctx.moveTo(PAD, macdZeroY); ctx.lineTo(W - PAD, macdZeroY); ctx.stroke();
   if (macdData) {
     const { diff, hist } = macdData.series ? { diff: macdData.series.dif, hist: macdData.series.hist } : { diff: [], hist: [] };
-    const hasSeries = diff.length === dn;
+    const hasSeries = diff.length === mdn;
     if (hasSeries) {
       // 柱状图（HIST=DIF-DEA再×2）
       const deaSeries = macdData.series ? macdData.series.dea : [];
@@ -1121,7 +1181,7 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos, action =
       );
       const mScale = (macdH * 0.45) / mRef;
       const sY = v => v * mScale;
-      for (let i = 0; i < dn; i++) {
+      for (let i = 0; i < mdn; i++) {
         const v = hist[i];
         const bh = Math.max(1, Math.abs(sY(v)));
         const x = mapX(i);
@@ -1130,12 +1190,12 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos, action =
         ctx.fillStyle = col + 'cc';
         ctx.fillRect(x - Math.max(1.2, cw2 * 0.42), v >= 0 ? macdZeroY - bh : macdZeroY, Math.max(2, cw2 * 0.84), bh);
       }
-      if (diff.length === dn) {
+      if (diff.length === mdn) {
         // 两遍描边：先白色宽描边再从上面画细彩线（浅底/红绿柱上都清晰，接近同花顺观感）
         const strokeSeries = (arr, color) => {
           for (const [lw, col] of [[3.2, 'rgba(255,255,255,0.92)'], [1.3, color]]) {
             ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath();
-            for (let i = 0; i < dn; i++) { const x = mapX(i), y = macdZeroY - sY(arr[i]); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+            for (let i = 0; i < mdn; i++) { const x = mapX(i), y = macdZeroY - sY(arr[i]); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
             ctx.stroke();
           }
         };
@@ -1212,31 +1272,38 @@ async function cmdT(args) {
     name = resolved.name || codeArg;
     if (!resolved.exact) resolveNotice = `🔎 已按「${name}」查询\n`;
   }
-  // 并行拉取：当天分时 + 日线 + 快照
-  const [timeResult, dayResult, quote] = await Promise.all([
+  // 并行拉取：分时累计数据 + 真实1分钟OHLC + 日线 + 快照
+  const [timeResult, minuteResult, dayResult, quote] = await Promise.all([
     fetchStockKline(code, 'time').catch(() => null),
+    fetchStockMinuteKline(code, 'm1', 400).catch(() => null),
     fetchStockKline(code, 'day').catch(() => null),
     fetchStockQuote(code).catch(() => null),
   ]);
-  const timeKlines = Array.isArray(timeResult) ? timeResult : [];
+  const rawTimeKlines = Array.isArray(timeResult) ? timeResult : [];
+  const minuteKlines = Array.isArray(minuteResult) ? minuteResult : [];
   const dayKlines = Array.isArray(dayResult) ? dayResult : [];
   const fallbackLastClose = dayKlines.length ? Number(dayKlines[dayKlines.length - 1].close) || 0 : 0;
   const fallbackPrevClose = dayKlines.length >= 2 ? Number(dayKlines[dayKlines.length - 2].close) || 0 : 0;
   // 快照盘后/网络失败时没有昨收：日线倒数第二根是稳定回退，图表、涨跌色和开盘缺口必须共用同一基准。
   const effectiveQuote = {
     ...(quote || {}),
-    price: (quote && Number(quote.price) > 0) ? Number(quote.price) : (timeKlines?.[timeKlines.length - 1]?.close || fallbackLastClose),
+    price: (quote && Number(quote.price) > 0) ? Number(quote.price) : (rawTimeKlines?.[rawTimeKlines.length - 1]?.close || fallbackLastClose),
     prevClose: (quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : fallbackPrevClose,
-    open: (quote && Number(quote.open) > 0) ? Number(quote.open) : (timeKlines?.[0]?.open || fallbackPrevClose),
+    open: (quote && Number(quote.open) > 0) ? Number(quote.open) : (rawTimeKlines?.[0]?.open || fallbackPrevClose),
   };
+  const timeKlines = mergeTMinuteKlines(rawTimeKlines, minuteKlines, effectiveQuote);
   if (quote && quote.name) name = quote.name;
   if (!dayKlines || dayKlines.length < 20) {
     return { ok: false, text: `⚠️ 获取 ${name} 日线数据失败（至少需要20根K线才能分析）` };
   }
-  // 日线分析
-  const dayInfo = analyzeTDayForm(dayKlines);
-  // 波动率基准（自适应做T阈值）：近10日平均振幅
-  dayInfo.volRef = calcVolRef(dayKlines);
+  // codeflicker-fix: LOGIC-Issue-005/ggcwpau782ju8vj8yxvg - 基础模式和波动基准仅使用昨日及更早的完整日K。
+  const quoteDate = String(effectiveQuote.time || '').replace(/\D/g, '').slice(0, 8);
+  const lastDayDate = String(dayKlines.at(-1)?.t || '').replace(/\D/g, '').slice(0, 8);
+  const quoteHm = String(effectiveQuote.time || '').replace(/\D/g, '').slice(8, 12);
+  const completedDayKlines = quoteDate && lastDayDate === quoteDate && quoteHm && quoteHm < '1501'
+    ? dayKlines.slice(0, -1) : dayKlines;
+  const dayInfo = analyzeTDayForm(completedDayKlines);
+  dayInfo.volRef = calcVolRef(completedDayKlines);
   // 价格精度：场内基金（ETF/LOF）固定 3 位（最小变动价位 0.001）；其余按现价有效小数 >2 位判定
   dayInfo.prec = (() => {
     if (isFundCode(code)) return 3;
@@ -1275,8 +1342,9 @@ async function cmdT(args) {
     };
   }
   // 实际生效的形态
+  // codeflicker-fix: LOGIC-Issue-004/ggcwpau782ju8vj8yxvg - 无方向的-tr不再默认解释为上涨。
   const activeForm = userFormRaw === 'swing' ? 'swing'
-    : userFormRaw === 'trend' ? (dayInfo.form === 'downtrend' ? 'downtrend' : 'uptrend')
+    : userFormRaw === 'trend' ? (dayInfo.form === 'uptrend' || dayInfo.form === 'downtrend' ? dayInfo.form : 'unclear')
     : dayInfo.form;
   // tPos 可能为 null（纯竞价阶段）
   const tPos = calcTPositions(activeForm, timeInfo, dayInfo);

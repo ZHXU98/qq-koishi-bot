@@ -2,11 +2,12 @@
 // /an 多周期股票分析：日线/周线/月线 + MA/BOLL/MACD + 量价 + 关键价位
 // ============================================================
 const { normStockName, isFundCode } = require('../utils');
-const { resolveStockCode, normalizeCode, fetchStockKline, fetchStockQuote, fetchEmStockIndustry, fetchEmIndustryBoards, fetchEmIndustryKline } = require('../market');
+const { resolveStockCode, normalizeCode, fetchStockKline, fetchStockQuote } = require('../market');
 const { renderReportCard } = require('../report-card');
 
 const MA_PERIODS = [5, 10, 20, 60];
 const PERIOD_LABEL = { day: '日线', week: '周线', month: '月线' };
+const CROSS_MAX_AGE = { day: 8, week: 4, month: 3 };
 
 const fpBy = (v, prec = 2) => isFinite(v) && v !== null ? Number(v).toFixed(prec) : '-';
 const pct = v => (isFinite(v) ? (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%' : '-');
@@ -135,7 +136,18 @@ function detectBreakoutState(a) {
     if (vRatio >= 1.2) return { state: '有效突破待回踩', text: `站上前高，量能配合；回踩 ${fpBy(recentHigh, a.prec)} 不破再确认` };
     return { state: '初步突破未确认', text: `站上前高但量能不足，需放量确认 ${fpBy(recentHigh, a.prec)}` };
   }
-  if (recentHigh && ks.length >= 3 && ks.at(-2).close > recentHigh && close < recentHigh) return { state: '假突破风险', text: `突破后跌回前高 ${fpBy(recentHigh, a.prec)} 下方` };
+  // codeflicker-fix: LOGIC-Issue-004/qg6iar3gcajrzkxv7klg - 假突破基准排除突破K与当前K，避免用包含自身最高价的窗口做不可达比较。
+  const breakoutBase = ks.slice(-22, -2);
+  const breakoutBaseHigh = breakoutBase.length
+    ? Math.max(...breakoutBase.map(k => Number(k.high) || Number(k.close) || 0))
+    : null;
+  const previousClose = Number(ks.at(-2)?.close) || 0;
+  if (breakoutBaseHigh && previousClose > breakoutBaseHigh * 1.005 && close < breakoutBaseHigh) {
+    return { state: '假突破风险', text: `前期突破后跌回历史前高 ${fpBy(breakoutBaseHigh, a.prec)} 下方` };
+  }
+  if (breakoutBaseHigh && previousClose > breakoutBaseHigh * 1.005 && close >= breakoutBaseHigh) {
+    return { state: '突破后维持', text: `突破后仍守在历史前高 ${fpBy(breakoutBaseHigh, a.prec)} 上方` };
+  }
   if (recentLow && close < recentLow * 0.995) return { state: '破位', text: `跌破前低 ${fpBy(recentLow, a.prec)}，结构转弱` };
   if (ma20 && Math.abs(close - ma20) / ma20 < 0.015) return { state: '关键位博弈', text: '价格靠近 MA20，等待收盘方向确认' };
   return { state: '区间内', text: '尚未触发有效突破或破位' };
@@ -149,25 +161,28 @@ function alignExcess(stockKs, benchKs, days) {
   const sr = stock.get(end) / stock.get(start) - 1, br = bench.get(end) / bench.get(start) - 1;
   return Number.isFinite(sr) && Number.isFinite(br) ? (sr - br) * 100 : null;
 }
-function buildRelativeStrength(dayK, hs300K, industry, industryK, boards) {
+function buildRelativeStrength(dayK, hs300K) {
   const horizons = [5, 20, 60];
   const vs300 = Object.fromEntries(horizons.map(d => [d, alignExcess(dayK, hs300K, d)]));
-  const vsIndustry = industryK ? Object.fromEntries(horizons.map(d => [d, alignExcess(dayK, industryK, d)])) : null;
-  const rank = industry && boards ? boards.findIndex(b => b.code === industry.code) + 1 : 0;
-  const total = boards?.length || 0;
-  const current = industry && boards ? boards.find(b => b.code === industry.code) : null;
   const recent20 = vs300[20];
   const state = recent20 === null ? '基准数据不足' : recent20 >= 5 ? '显著跑赢沪深300' : recent20 >= 0 ? '相对沪深300偏强' : recent20 <= -5 ? '显著跑输沪深300' : '相对沪深300偏弱';
-  return { vs300, vsIndustry, industry: current ? { ...industry, rank, total, chgPct: current.chgPct } : null, state };
+  // codeflicker-fix: API-Issue-001/qg6iar3gcajrzkxv7klg - 移除高请求量且层级不稳定的行业对比，仅保留沪深300基准。
+  return { vs300, state };
 }
 function lastVal(arr) { return arr && arr.length ? arr[arr.length - 1] : null; }
 function prevVal(arr) { return arr && arr.length > 1 ? arr[arr.length - 2] : null; }
 
-function findLastCross(macd) {
+function findLastCross(macd, maxAge = Infinity) {
   const d = macd.dif, e = macd.dea;
   for (let i = d.length - 1; i >= 1; i--) {
-    if (d[i - 1] < e[i - 1] && d[i] >= e[i]) return { type: 'gold', index: i };
-    if (d[i - 1] >= e[i - 1] && d[i] < e[i]) return { type: 'dead', index: i };
+    let type = null;
+    if (d[i - 1] < e[i - 1] && d[i] >= e[i]) type = 'gold';
+    else if (d[i - 1] >= e[i - 1] && d[i] < e[i]) type = 'dead';
+    if (type) {
+      const age = d.length - 1 - i;
+      // codeflicker-fix: LOGIC-Issue-003/qg6iar3gcajrzkxv7klg - 超龄交叉不再冒充近期信号或参与日线修复判断。
+      return age <= maxAge ? { type, index: i, age } : null;
+    }
   }
   return null;
 }
@@ -313,6 +328,89 @@ function calcPriceSignal({ last, prev, close, chgPct, vRatio, ma20, bollUp, boll
   return { type: 'neutral', text: '暂无明确量价结构信号', score: 0 };
 }
 
+function isBarComplete(period, barTime, now = new Date()) {
+  const m = String(barTime || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return false;
+  const barKey = `${m[1]}-${m[2]}-${m[3]}`;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23', weekday: 'short',
+  }).formatToParts(now);
+  const get = type => parts.find(p => p.type === type)?.value || '';
+  const todayKey = `${get('year')}-${get('month')}-${get('day')}`;
+  if (period === 'day') {
+    if (barKey < todayKey) return true;
+    return barKey === todayKey && Number(get('hour')) * 60 + Number(get('minute')) >= 15 * 60;
+  }
+  const year = Number(get('year')), month = Number(get('month')), day = Number(get('day'));
+  const barDate = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12));
+  const today = new Date(Date.UTC(year, month - 1, day, 12));
+  if (period === 'week') {
+    const monday = new Date(today);
+    const weekday = today.getUTCDay() || 7;
+    monday.setUTCDate(today.getUTCDate() - weekday + 1);
+    if (barDate < monday) return true;
+    const todayWeekday = today.getUTCDay();
+    return todayWeekday === 0 || todayWeekday === 6
+      || (todayWeekday === 5 && Number(get('hour')) * 60 + Number(get('minute')) >= 15 * 60);
+  }
+  if (period === 'month') {
+    const barMonth = barKey.slice(0, 7), currentMonth = todayKey.slice(0, 7);
+    if (barMonth < currentMonth) return true;
+    // 找自然日之后的下一个工作日；若已跨月，则当前工作日是本月最后可交易日。
+    const nextWeekday = new Date(today);
+    do { nextWeekday.setUTCDate(nextWeekday.getUTCDate() + 1); }
+    while (nextWeekday.getUTCDay() === 0 || nextWeekday.getUTCDay() === 6);
+    const afterClose = Number(get('hour')) * 60 + Number(get('minute')) >= 15 * 60;
+    const todayWeekday = today.getUTCDay();
+    if (barMonth !== currentMonth) return false;
+    if (todayWeekday === 0 || todayWeekday === 6) {
+      const previousWeekday = new Date(today);
+      do { previousWeekday.setUTCDate(previousWeekday.getUTCDate() - 1); }
+      while (previousWeekday.getUTCDay() === 0 || previousWeekday.getUTCDay() === 6);
+      return previousWeekday.getUTCMonth() !== nextWeekday.getUTCMonth();
+    }
+    return afterClose && nextWeekday.getUTCMonth() !== today.getUTCMonth();
+  }
+  return false;
+}
+
+function clusterPriceLevels(values, close, atr, side, prec) {
+  const sorted = values.filter(v => isFinite(v) && v > 0).sort((a, b) => side === 'support' ? b - a : a - b);
+  const minTick = 10 ** -prec;
+  const tolerance = Math.max((atr || 0) * 0.3, close * 0.005, minTick);
+  const groups = [];
+  for (const value of sorted) {
+    const group = groups.find(g => Math.abs(g.anchor - value) <= tolerance);
+    if (group) {
+      group.values.push(value);
+      group.low = Math.min(group.low, value);
+      group.high = Math.max(group.high, value);
+      group.anchor = group.values.reduce((sum, v) => sum + v, 0) / group.values.length;
+    } else {
+      groups.push({ anchor: value, low: value, high: value, values: [value] });
+    }
+  }
+  return groups.slice(0, 4).map(g => ({
+    price: side === 'support' ? g.high : g.low,
+    low: g.low,
+    high: g.high,
+    count: g.values.length,
+  }));
+}
+
+function levelPrice(level) {
+  return typeof level === 'number' ? level : Number(level?.price);
+}
+
+function formatPriceZone(level, prec) {
+  if (typeof level === 'number') return fpBy(level, prec);
+  if (!level || !(level.price > 0)) return '-';
+  return fpBy(level.low, prec) === fpBy(level.high, prec)
+    ? fpBy(level.price, prec)
+    : `${fpBy(level.low, prec)}~${fpBy(level.high, prec)}`;
+}
+
 function analyzePeriod(period, klines, prec) {
   const ks = (klines || []).filter(k => isFinite(k.close) && k.close > 0);
   const closes = ks.map(k => Number(k.close));
@@ -334,16 +432,20 @@ function analyzePeriod(period, klines, prec) {
   const ma20Prev = prevVal(ma[20]);
   const bollUp = lastVal(boll.up), bollMid = lastVal(boll.mid), bollLow = lastVal(boll.low);
   const bollWidth = bollMid ? (bollUp - bollLow) / bollMid * 100 : 0;
-  const vma5 = lastVal(smaValues(vols, 5)) || 0;
-  const rawVRatio = vma5 > 0 ? (Number(last.vol) || 0) / vma5 : 1;
-  // codeflicker-fix: TA-Issue-002/s8jm34fg6nv8n9a7y13u - 当前周/月未收线，累计量不能和完整周期均量直接比较。
-  const volumeUsable = period === 'day';
+  const prior5Vols = vols.slice(Math.max(0, n - 6), n - 1);
+  const prior5Avg = prior5Vols.length
+    ? prior5Vols.reduce((sum, value) => sum + value, 0) / prior5Vols.length
+    : 0;
+  const rawVRatio = prior5Avg > 0 ? (Number(last.vol) || 0) / prior5Avg : 1;
+  // codeflicker-fix: LOGIC-Issue-001/qg6iar3gcajrzkxv7klg - 按最后K线日期与上海时区识别是否收线，不再按周期名称写死。
+  // codeflicker-fix: LOGIC-Issue-006/qg6iar3gcajrzkxv7klg - 当前量改与此前5个完整周期均量比较，避免分母包含自身压缩异常程度。
+  const volumeUsable = isBarComplete(period, last.t);
   const vRatio = volumeUsable ? rawVRatio : null;
   const volState = volumeUsable
     ? (vRatio >= 1.5 ? '放量' : vRatio >= 1.2 ? '温和放量' : vRatio < 0.5 ? '极缩量' : vRatio < 0.8 ? '缩量' : '正常量')
     : '量能待收线';
   const volumeNote = volumeUsable ? '' : `${PERIOD_LABEL[period]}未收线，量能不参与方向判断`;
-  const cross = findLastCross(macd);
+  const cross = findLastCross(macd, CROSS_MAX_AGE[period] || 3);
   const divergence = detectDivergence(closes, macd);
   const levels = calcRecentLevels(period, ks, close);
   const hist = lastVal(macd.hist) || 0;
@@ -365,14 +467,29 @@ function analyzePeriod(period, klines, prec) {
   const recent = ks.slice(-31, -1); // 排除当前 K，避免把现价自己当作支撑/压力
   const recentHigh = Math.max(...recent.map(k => Number(k.high) || Number(k.close) || 0));
   const recentLow = Math.min(...recent.map(k => Number(k.low) || Number(k.close) || Infinity));
-  // codeflicker-fix: TA-Issue-003/s8jm34fg6nv8n9a7y13u - 关键位必须位于现价外侧，避免把当前价混入支撑/压力。
-  const supports = [recentLow, levels.prevLow20, levels.prevLow60, ma20, ma60, bollLow, levels.boxLow].filter(v => isFinite(v) && v > 0 && v < close * 0.998).sort((a, b) => b - a).slice(0, 4);
-  const pressures = [recentHigh, levels.prevHigh20, levels.prevHigh60, ma20, ma60, bollUp, levels.boxHigh].filter(v => isFinite(v) && v > close * 1.002).sort((a, b) => a - b).slice(0, 4);
-  // codeflicker-fix: TA-Issue-007/s8jm34fg6nv8n9a7y13u - 失效位绑定当前结构窗口，不让更早的极端低点拉远风险线。
+  const atr = lastVal(dmi.atr);
+  // codeflicker-fix: MAINT-Issue-001/qg6iar3gcajrzkxv7klg - 相邻价位按 ATR/价格容差聚合为区域，避免重复单点伪装成多重支撑压力。
+  const supportCandidates = [recentLow, levels.prevLow20, levels.prevLow60, ma20, ma60, bollLow, levels.boxLow]
+    .filter(v => isFinite(v) && v > 0 && v < close * 0.998);
+  const pressureCandidates = [recentHigh, levels.prevHigh20, levels.prevHigh60, ma20, ma60, bollUp, levels.boxHigh]
+    .filter(v => isFinite(v) && v > close * 1.002);
+  const supportZones = clusterPriceLevels(supportCandidates, close, atr, 'support', prec);
+  const pressureZones = clusterPriceLevels(pressureCandidates, close, atr, 'pressure', prec);
+  const supports = supportZones.map(z => z.price);
+  const pressures = pressureZones.map(z => z.price);
+  // 当前失效位用于未来风控；是否已经破位则必须用排除当前K后的上一期结构判断。
   const structureFloor = period === 'week' ? levels.minorLow : levels.boxLow;
   const structuralLows = [levels.prevLow20, structureFloor].filter(v => isFinite(v) && v > 0 && v < close * 0.998);
   const structuralInvalid = structuralLows.length ? Math.min(...structuralLows) : null;
-  const atr = lastVal(dmi.atr);
+  // codeflicker-fix: LOGIC-Issue-005/qg6iar3gcajrzkxv7klg - 拆分未来失效位与当前破位判断，消除 close < 一个已限定低于 close 的死条件。
+  const priorKs = ks.slice(0, -1);
+  const priorLevels = priorKs.length >= 8 ? calcRecentLevels(period, priorKs, prevClose) : null;
+  const priorFloor = priorLevels ? (period === 'week' ? priorLevels.minorLow : priorLevels.boxLow) : null;
+  const priorStructuralLows = priorLevels
+    ? [priorLevels.prevLow20, priorFloor].filter(v => isFinite(v) && v > 0)
+    : [];
+  const priorStructuralInvalid = priorStructuralLows.length ? Math.min(...priorStructuralLows) : null;
+  const structuralBroken = priorStructuralInvalid > 0 && close < priorStructuralInvalid * 0.995;
   const atrPct = atr && close > 0 ? atr / close * 100 : null;
   const adx = lastVal(dmi.adx), plusDi = lastVal(dmi.plusDi), minusDi = lastVal(dmi.minusDi);
   const trendQuality = !isFinite(adx) ? '趋势强度待计算'
@@ -387,7 +504,7 @@ function analyzePeriod(period, klines, prec) {
   const evidence = { atr, atrPct, adx, plusDi, minusDi, trendQuality, dmiDirection, rsi: rsiValue, rsiState, volumeTrend, priceAction: detectPriceAction(ks, atr) };
   const breakout = detectBreakoutState({ close, levels, vRatio: volumeUsable ? vRatio : 1, ma20, ks, prec });
   const line = buildPeriodLine(period, { close, chgPct, trend, volState, vRatio: vRatio || 0, volumeNote, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, cross, divergence, macdTxt, levels, priceSignal }, prec);
-  return { period, label: PERIOD_LABEL[period], ks, closes, vols, ma, boll, macd, rsi, dmi, close, prevClose, chgPct, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, bollWidth, vRatio, rawVRatio, volState, volumeUsable, volumeNote, cross, divergence, levels, priceSignal, macdTxt, trend, rawTrend, score, supports, pressures, structuralInvalid, evidence, breakout, line, prec };
+  return { period, label: PERIOD_LABEL[period], ks, closes, vols, ma, boll, macd, rsi, dmi, close, prevClose, chgPct, ma5, ma10, ma20, ma60, bollUp, bollMid, bollLow, bollWidth, vRatio, rawVRatio, volState, volumeUsable, volumeNote, cross, divergence, levels, priceSignal, macdTxt, trend, rawTrend, score, supports, pressures, supportZones, pressureZones, structuralInvalid, priorStructuralInvalid, structuralBroken, evidence, breakout, line, prec };
 }
 
 function buildPeriodLine(period, a, prec) {
@@ -406,7 +523,7 @@ function overallConclusion(day, week, month) {
   const weeklyWeak = week.trend.includes('下降') || (week.ma20 && week.close < week.ma20);
   // codeflicker-fix: LOGIC-Issue-003/jvslwtka15th3ern74uz - 站上 MA20 仅代表修复，明确上升排列才算周线趋势支持。
   const weeklyStrong = week.trend === '上升趋势' && week.ma20 && week.close > week.ma20;
-  const dailyBroken = day.priceSignal.type === 'breakdown' || day.breakout.state === '破位' || (day.structuralInvalid && day.close < day.structuralInvalid);
+  const dailyBroken = day.priceSignal.type === 'breakdown' || day.breakout.state === '破位' || day.structuralBroken;
   // codeflicker-fix: LOGIC-Issue-002/jvslwtka15th3ern74uz - 周线价格破位不再依赖未收线量能，量能仅用于确认度。
   const weeklyBroken = week.priceSignal.type === 'breakdown' || week.breakout.state === '破位';
   const dailyStrong = day.trend.includes('上升') && day.close > (day.ma20 || 0);
@@ -420,6 +537,10 @@ function overallConclusion(day, week, month) {
     state = dailyStrong ? '趋势可持有' : '上升趋势中的回踩';
     action = dailyStrong ? '持有为主，回踩确认再看加仓' : '不追高，等止跌转强确认';
     stars = '★★★★☆'; reason = '月线许可、周线阶段支持，日线未破结构';
+  } else if (weeklyStrong && !monthlyWeak) {
+    // codeflicker-fix: LOGIC-Issue-002/qg6iar3gcajrzkxv7klg - 日线整理不再抹掉已成立的周线趋势。
+    state = '趋势中的日线整理'; action = '中期结构仍在，等待日线止跌转强'; stars = '★★★☆☆';
+    reason = '月线许可、周线趋势仍在，但日线尚未恢复强势';
   } else if (weeklyWeak) {
     state = '弱势反弹'; action = '不追反弹，压力位观察，确认后再升级判断'; stars = '★★☆☆☆';
     reason = `${monthlyWeak ? '月线与' : ''}周线仍受压，${dailyRepair ? '日线仅有修复信号' : '日线尚未完成修复'}`;
@@ -429,24 +550,20 @@ function overallConclusion(day, week, month) {
   }
   return { state, action, stars, reason, monthlyWeak, weeklyWeak, weeklyStrong, weeklyBroken, dailyBroken };
 }
-function uniqPrices(arr, prec) {
-  const seen = new Set(), out = [];
-  for (const v of arr) {
-    const s = fpBy(v, prec);
-    if (!seen.has(s)) { seen.add(s); out.push(s); }
-    if (out.length >= 4) break;
-  }
-  return out;
-}
-
 function buildReport(name, code, quote, all, prec, relative = null) {
   const { day, week, month } = all;
   const oc = overallConclusion(day, week, month);
   const price = quote && quote.price ? Number(quote.price) : day.close;
   const chgPct = quote && isFinite(Number(quote.chgPct)) ? Number(quote.chgPct) : day.chgPct;
-  const pressures = uniqPrices([...day.pressures, ...week.pressures].filter(v => v >= price && v <= price * 1.35).sort((a, b) => a - b), prec);
-  const supports = uniqPrices([...day.supports, ...week.supports].filter(v => v <= price && v >= price * 0.75).sort((a, b) => b - a), prec);
-  const confirm = pressures[0] || null;
+  const pressureValues = [...(day.pressureZones || []), ...(week.pressureZones || [])]
+    .flatMap(z => [z.low, z.high])
+    .filter(v => v >= price && v <= price * 1.35);
+  const supportValues = [...(day.supportZones || []), ...(week.supportZones || [])]
+    .flatMap(z => [z.low, z.high])
+    .filter(v => v <= price && v >= price * 0.75);
+  const pressureZones = clusterPriceLevels(pressureValues, price, day.evidence?.atr, 'pressure', prec);
+  const supportZones = clusterPriceLevels(supportValues, price, day.evidence?.atr, 'support', prec);
+  const confirm = levelPrice(pressureZones[0]) || null;
   const shortInvalid = day.structuralInvalid || day.supports[day.supports.length - 1] || null;
   const swingInvalid = week.structuralInvalid || week.supports[week.supports.length - 1] || null;
   const L = [];
@@ -454,7 +571,8 @@ function buildReport(name, code, quote, all, prec, relative = null) {
   L.push(`现价 ${fpBy(price, prec)}（${pct(chgPct)}）`);
   L.push('');
   L.push('━━━ 结论 ━━━');
-  L.push(`市场状态：${oc.state}  ${oc.stars}`);
+  L.push(`市场状态：${oc.state}`);
+  L.push(`结构完整度：${oc.stars}（仅表示多周期条件完整度）`);
   L.push(`当前动作：${oc.action}`);
   L.push(`主要限制：${oc.reason}`);
   L.push(`一句话：${buildOneLine(oc, day, week, month)}`);
@@ -474,8 +592,8 @@ function buildReport(name, code, quote, all, prec, relative = null) {
   L.push(`向上确认：${confirm ? `放量站回 ${fpBy(confirm, prec)}，且后续不跌回` : '等待放量突破近期压力'}`);
   L.push(`短线失效：${shortInvalid ? `跌破 ${fpBy(shortInvalid, prec)}，日线结构转弱` : '跌破最近确认低点'}`);
   L.push(`波段失效：${swingInvalid ? `跌破 ${fpBy(swingInvalid, prec)}，周线阶段转弱` : '跌破周线关键低点'}`);
-  L.push(`参考压力：${pressures.length ? pressures.join(' / ') : '暂无明显压力'}`);
-  L.push(`参考支撑：${supports.length ? supports.join(' / ') : '暂无明显支撑'}`);
+  L.push(`参考压力：${pressureZones.length ? pressureZones.map(z => formatPriceZone(z, prec)).join(' / ') : '暂无明显压力'}`);
+  L.push(`参考支撑：${supportZones.length ? supportZones.map(z => formatPriceZone(z, prec)).join(' / ') : '暂无明显支撑'}`);
   L.push('');
   L.push('━━━ 信号说明 ━━━');
   L.push(`· 日线结构区：${structureExplain(day, prec)}`);
@@ -523,22 +641,14 @@ function volumeTrendExplain(day) {
 }
 function relativeStrengthLines(relative) {
   const fmt = v => v === null || v === undefined || !isFinite(v) ? '-' : pct(v);
-  if (!relative) return ['· 相对沪深300：基准数据暂不可用。', '· 所属行业：非 A 股个股、ETF/指数或行业映射失败时不做行业结论。'];
+  if (!relative) return ['· 相对沪深300：基准数据暂不可用。'];
   const rs = relative.vs300 || {};
-  const lines = [`· 相对沪深300：${relative.state}；5/20/60日超额 ${fmt(rs[5])} / ${fmt(rs[20])} / ${fmt(rs[60])}`];
-  const ind = relative.industry;
-  if (!ind) {
-    lines.push('· 所属行业：未识别或不适用（ETF/指数/跨市场标的不做行业排名）。');
-    return lines;
-  }
-  const ir = relative.vsIndustry || {};
-  lines.push(`· 所属行业：${ind.name}，当日 ${pct(ind.chgPct)}，行业涨幅排名 ${ind.rank}/${ind.total}`);
-  lines.push(`· 相对行业：5/20/60日超额 ${fmt(ir[5])} / ${fmt(ir[20])} / ${fmt(ir[60])}`);
-  return lines;
+  return [`· 相对沪深300：${relative.state}；5/20/60日超额 ${fmt(rs[5])} / ${fmt(rs[20])} / ${fmt(rs[60])}`];
 }
 function buildOneLine(oc, day, week, month) {
   if (oc.state === '结构转弱') return `日线/周线存在结构破坏风险，先按控风险处理，重新站回关键位后再评估。`;
   if (oc.state === '弱势反弹') return `月线${month.trend}、周线${week.trend}，日线${day.trend}；短线信号只能按修复看，不视为趋势反转。`;
+  if (oc.state === '趋势中的日线整理') return `月线许可、周线趋势仍在，日线处于整理阶段；等待止跌转强，不因短线走弱否定中期结构。`;
   if (oc.state === '趋势可持有') return `月线许可、周线阶段与日线结构大体一致，回踩不破关键位可继续观察。`;
   if (oc.state === '上升趋势中的回踩') return `大结构未坏，日线正在回踩；等缩量止跌或重新转强，不在回踩中提前加仓。`;
   return `月线${month.trend}、周线${week.trend}、日线${day.trend}；多周期未共振，先按区间等待方向确认。`;
@@ -608,7 +718,7 @@ function renderAnPng(code, name, quote, all, prec) {
   ctx.fillStyle = panel; ctx.fillRect(0, 0, W, TITLE_H);
   ctx.fillStyle = chgPct >= 0 ? upC : downC; ctx.fillRect(PAD, 18, 5, 46);
   ctx.fillStyle = ink; ctx.font = 'bold 26px cjk'; ctx.textAlign = 'left'; ctx.fillText(`${name} 多周期技术分析`, PAD + 16, 34);
-  const chartState = { '趋势可持有': 'TREND', '上升趋势中的回踩': 'PULLBACK', '区间震荡': 'RANGE', '弱势反弹': 'REBOUND', '结构转弱': 'RISK' }[oc.state] || 'WATCH';
+  const chartState = { '趋势可持有': 'TREND', '上升趋势中的回踩': 'PULLBACK', '趋势中的日线整理': 'TREND PAUSE', '区间震荡': 'RANGE', '弱势反弹': 'REBOUND', '结构转弱': 'RISK' }[oc.state] || 'WATCH';
   ctx.fillStyle = sub; ctx.font = '14px cjk'; ctx.fillText(`${code.toUpperCase()} · ${chartState}`, PAD + 16, 60);
   ctx.textAlign = 'right'; ctx.fillStyle = chgPct >= 0 ? upC : downC; ctx.font = 'bold 30px cjk'; ctx.fillText(fpBy(price, prec), W - PAD, 34);
   ctx.font = '15px cjk'; ctx.fillText(pct(chgPct), W - PAD, 60);
@@ -972,24 +1082,9 @@ async function cmdAn(args) {
     week: analyzePeriod('week', weekK, prec),
     month: analyzePeriod('month', monthK, prec),
   };
-  // codeflicker-fix: TA-Issue-001/z2s785wd1g4rkmchostf - 行业归属、行业排行与行业K线统一使用东财口径，避免跨分类体系硬匹配。
   let relative = null;
-  const isCnStock = /^(sh|sz|bj)\d{6}$/i.test(code) && !quote?.isIndex && !isFundCode(code);
   if (hs300K && hs300K.length >= 70) {
-    let industry = null, boards = null, industryK = null;
-    if (isCnStock) {
-      const [identity, boardList] = await Promise.all([
-        fetchEmStockIndustry(code).catch(() => null),
-        fetchEmIndustryBoards().catch(() => null),
-      ]);
-      const board = identity && boardList ? boardList.find(row => row.name === identity.name) : null;
-      if (board) {
-        industry = { name: board.name, code: board.code };
-        boards = boardList;
-        industryK = await fetchEmIndustryKline(board.code).catch(() => null);
-      }
-    }
-    relative = buildRelativeStrength(dayK, hs300K, industry, industryK, boards);
+    relative = buildRelativeStrength(dayK, hs300K);
   }
   const detailText = resolveNotice + buildReport(name, code, quote, all, prec, relative);
   // codeflicker-fix: UX-Issue-001/3eskueweih7vfxxuhb7r
