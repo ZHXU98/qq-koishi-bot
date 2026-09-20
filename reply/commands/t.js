@@ -267,12 +267,13 @@ function analyzeTTimeData(timeKlines, quote, code = '') {
   const range = dayHigh - dayLow;
   const dayPosition = range > 0 ? (lastPrice - dayLow) / range * 100 : 50;
   const amplitude = prevClose > 0 ? range / prevClose * 100 : 0;
-  // 量能：开盘用快照量比（竞价量/5日均量）；盘中用近5min vs 前5min
+  // 量能：开盘用快照量比（竞价量/5日均量）；盘中用已完成的近5min vs 前5min
   let volRatio;
   if (hasValidTime && !openPhase) {
-    const dn = validKlines.length;
-    const rv = validKlines.slice(-5).map(k => k.vol || 0);
-    const pv = dn >= 10 ? validKlines.slice(-10, -5).map(k => k.vol || 0) : rv;
+    // codeflicker-fix: EDGE-Issue-002/pul6rafwcpgs05omrehu - 当前未完成分钟的部分成交量不进入近5分钟量比，避免盘中量能随分钟进度失真。
+    const dn = completeKlines.length;
+    const rv = completeKlines.slice(-5).map(k => k.vol || 0);
+    const pv = dn >= 10 ? completeKlines.slice(-10, -5).map(k => k.vol || 0) : rv;
     const recentAvgVol = rv.reduce((a, b) => a + b, 0) / rv.length;
     const prevAvgVol = pv.reduce((a, b) => a + b, 0) / pv.length;
     volRatio = prevAvgVol > 0 ? recentAvgVol / prevAvgVol : 1;
@@ -1200,7 +1201,8 @@ function renderTPngCanvas(code, name, timeKlines, quote, dayInfo, tPos, action =
           }
         };
         strokeSeries(diff, '#1677ff');                                   // DIF 蓝线
-        if (deaSeries && deaSeries.length === dn) strokeSeries(deaSeries, '#f0a90b'); // DEA 黄线
+        // codeflicker-fix: LOGIC-Issue-009/pul6rafwcpgs05omrehu - DEA 与已完成分钟序列 mdn 对齐，避免当前未完成分钟导致黄线漏画。
+        if (deaSeries && deaSeries.length === mdn) strokeSeries(deaSeries, '#f0a90b'); // DEA 黄线
       }
       // 刻度标注：面板上下缘对应的数值（真线性，直接可读）。
       // 当天首根收盘价为 EMA 初始值；开盘端的自然建仓过程会如实保留。

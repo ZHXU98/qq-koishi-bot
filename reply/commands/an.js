@@ -422,9 +422,12 @@ function analyzePeriod(period, klines, prec) {
   const macd = macdValues(closes);
   const rsi = calcRsi(closes);
   const dmi = calcAtrDmi(ks);
-  const volumeTrend = calcVolumeTrend(vols);
   const last = ks[n - 1] || {};
   const prev = ks[n - 2] || {};
+  // codeflicker-fix: LOGIC-Issue-001/qg6iar3gcajrzkxv7klg - 按最后K线日期与上海时区识别是否收线，不再按周期名称写死。
+  const volumeUsable = isBarComplete(period, last.t);
+  // codeflicker-fix: LOGIC-Issue-010/pul6rafwcpgs05omrehu - 未收线时排除当前周期的部分量，保持5/20期参与度只比较完整周期。
+  const volumeTrend = calcVolumeTrend(volumeUsable ? vols : vols.slice(0, -1));
   const close = Number(last.close) || 0;
   const prevClose = Number(prev.close) || close;
   const chgPct = prevClose > 0 ? (close - prevClose) / prevClose * 100 : 0;
@@ -437,9 +440,7 @@ function analyzePeriod(period, klines, prec) {
     ? prior5Vols.reduce((sum, value) => sum + value, 0) / prior5Vols.length
     : 0;
   const rawVRatio = prior5Avg > 0 ? (Number(last.vol) || 0) / prior5Avg : 1;
-  // codeflicker-fix: LOGIC-Issue-001/qg6iar3gcajrzkxv7klg - 按最后K线日期与上海时区识别是否收线，不再按周期名称写死。
   // codeflicker-fix: LOGIC-Issue-006/qg6iar3gcajrzkxv7klg - 当前量改与此前5个完整周期均量比较，避免分母包含自身压缩异常程度。
-  const volumeUsable = isBarComplete(period, last.t);
   const vRatio = volumeUsable ? rawVRatio : null;
   const volState = volumeUsable
     ? (vRatio >= 1.5 ? '放量' : vRatio >= 1.2 ? '温和放量' : vRatio < 0.5 ? '极缩量' : vRatio < 0.8 ? '缩量' : '正常量')
