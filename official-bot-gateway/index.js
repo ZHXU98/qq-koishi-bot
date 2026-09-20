@@ -286,8 +286,31 @@ function broadcast(event) {
 process.on('SIGINT', () => { console.log('\n退出'); bot.stop(); process.exit(0); });
 process.on('SIGTERM', () => { console.log('\n退出'); bot.stop(); process.exit(0); });
 
-bot.start().catch((e) => {
-  console.error('❌ 机器人启动失败:', e?.message || e);
-  process.exit(1);
-});
 console.log('🚀 official-bot-gateway 启动中…');
+
+// 启动重试：`bot.start()` 失败最常见的成因是「取 access_token 时 DNS/网络不通」
+// （容器内实测 getaddrinfo ENOTFOUND bots.qq.com / api.sgroup.qq.com）。
+// 旧行为是直接 process.exit(1)，只能等容器 restart 拉起；而网络长时间不可用时容器重启
+// 又卡在启动阶段的 npm install，于是「掉线后长时间不恢复」。改为进程内带指数退避重试：
+// DNS 一恢复即自愈，不必等容器重启。
+let startAttempt = 0;
+async function startWithRetry() {
+  for (;;) {
+    try {
+      await bot.start();
+      startAttempt = 0;
+      return;
+    } catch (e) {
+      startAttempt += 1;
+      const delayMs = Math.min(60000, 2000 * 2 ** Math.min(startAttempt - 1, 5)); // 2/4/8/16/32/60s 封顶
+      console.error(`❌ 机器人启动失败（第 ${startAttempt} 次）: ${e?.message || e} → ${delayMs / 1000}s 后重试`);
+      // 兜底升级：连续失败 100 次（约 1.5 小时）仍无望时交回容器重启（拿干净进程）
+      if (startAttempt >= 100) {
+        console.error('❌ 连续 100 次启动失败，交回容器重启（exit 1）');
+        process.exit(1);
+      }
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+}
+startWithRetry();

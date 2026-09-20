@@ -26,6 +26,45 @@
 4. **让机器人进群**：把机器人拉进目标群（609994072、528165429），群里随便 @ 一次，
    `GET /bindings` 会看到群 openid 被自动学习（`groups` 字段）。
 
+## 依赖安装（首次部署必看）
+
+`docker-compose.yml` 里本服务的启动命令是 **`node /app/index.js`**，**不再每次启动都跑 `npm install`**
+（旧写法每次拉起都联网装依赖，DNS/网络抖动时会卡在装依赖这一步，把"掉线恢复"拖成几小时）。
+依赖已持久化在 `./official-bot-gateway/node_modules`（bind mount 会保留），日常重启无需联网。
+
+**首次部署、或改过 `package.json` 之后，必须手动装一次依赖**，否则容器会因 `Cannot find module` 起不来：
+
+```bash
+docker run --rm -v "$PWD/official-bot-gateway:/app" -w /app node:22-alpine \
+  npm install --no-audit --no-fund --registry=https://registry.npmmirror.com
+```
+
+（也可以临时把 compose 的 `command` 换回 `sh -c "npm install … && exec node /app/index.js"` 先起一次。）
+
+## DNS 与掉线恢复（2026-09-20 加固）
+
+三个容器都配了固定 DNS（compose 的 `dns:` 段）：
+
+| 顺序 | 地址 | 作用 |
+|---|---|---|
+| 1 | `223.5.5.5` | 固定首选（阿里公共 DNS） |
+| 2 | `119.29.29.29` | 固定备选（腾讯 DNSPod） |
+| 3 | `192.168.65.7` | **兜底**：Docker Desktop 内置解析器 —— 前两个都不可达时自动回落宿主解析（实测约 4s 后回落成功） |
+
+- 容器名（`official-bot-gateway` / `ths-news`）由 Docker **内嵌 DNS** 解析，**不受**该列表影响。
+- ⚠️ 固定 DNS 不可达时**不会**原生回落到宿主解析器（实测：5s 超时 → `EAI_AGAIN`），
+  所以兜底项必须**显式**写进列表。
+- `192.168.65.7` 是 Docker Desktop(macOS) 的内网解析器地址；Linux 宿主上该地址不同，
+  若宿主本就能稳定解析，删掉这一项即可。
+
+**启动失败自动重试**：`index.js` 中 `bot.start()` 失败不再 `process.exit(1)`，改为指数退避重试
+（2→4→8→16→32→60s 封顶；连续 100 次仍失败才 `exit(1)` 交回容器重启）。
+「取 access_token 时 DNS 不通」是最常见成因（实测 `getaddrinfo ENOTFOUND bots.qq.com`），
+现在 DNS 一恢复即可自愈，无需人工干预或等容器重启。
+
+> 背景：2026-09-14 曾因容器 DNS 失效（当天 `ENOTFOUND` 1018 次）+ 启动失败即 `exit(1)` + 每次启动都跑 npm install，
+> 导致网关照 **8 小时**不恢复（17:07 断，次日 01:08 才恢复）。
+
 ## 接口（与 NapCat OneBot 兼容）
 
 | 端点 | 说明 |

@@ -61,6 +61,11 @@ services:
       - TZ=Asia/Shanghai
       - NEWS_INTERVAL=300
       - THS_STATE=/app/state/ths_news_state.json
+    # DNS：固定公共解析优先，Docker Desktop 内置解析器兜底（说明见 official-bot-gateway 段）
+    dns:
+      - 223.5.5.5
+      - 119.29.29.29
+      - 192.168.65.7
     networks:
       - botnet
     command: ["sh", "-c", "sh /app/start_news_cron.sh"]
@@ -93,6 +98,11 @@ services:
       - NAPCAT_URL=http://official-bot-gateway:3100
       - BOT_UIN=${QQBOT_APP_ID}
       - TZ=Asia/Shanghai
+    # DNS：固定公共解析优先，Docker Desktop 内置解析器兜底（说明见 official-bot-gateway 段）
+    dns:
+      - 223.5.5.5
+      - 119.29.29.29
+      - 192.168.65.7
     networks:
       - botnet
     command: ["node", "/app/index.js"]
@@ -142,7 +152,21 @@ services:
     ports:
       - "3100:3100"
       - "3101:3101"
-    command: ["sh", "-c", "npm install --no-audit --no-fund --registry=https://registry.npmmirror.com && exec node /app/index.js"]
+    # DNS：前两个是固定公共解析（阿里 / 腾讯），最后一个是 Docker Desktop 内置解析器 ——
+    #   固定 DNS 都不可达时自动回落宿主解析（实测：不可达时会等约 4s 后回落成功）。
+    #   容器名（official-bot-gateway 等）由 Docker 内嵌 DNS 解析，不受此列表影响。
+    #   ⚠️ 192.168.65.7 是 Docker Desktop(macOS) 的内网解析器地址；换 Linux 宿主时该地址不同，
+    #      若宿主本就能稳定解析，删掉这一项即可。
+    dns:
+      - 223.5.5.5
+      - 119.29.29.29
+      - 192.168.65.7
+    # 启动命令不再每次跑 npm install（依赖已持久化在 ./official-bot-gateway/node_modules，
+    #   bind mount 会保留）—— 旧写法在 DNS/网络抖动时会卡在装依赖，拖慢恢复。
+    #   ⚠️ 首次部署、或改过 package.json 后，需先手动装一次依赖：
+    #     docker run --rm -v "$PWD/official-bot-gateway:/app" -w /app node:22-alpine \
+    #       npm install --no-audit --no-fund --registry=https://registry.npmmirror.com
+    command: ["node", "/app/index.js"]
 
   # koishi:
   #   image: koishijs/koishi:latest
