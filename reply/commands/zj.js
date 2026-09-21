@@ -14,7 +14,7 @@ const ZJ_LEVEL_LABEL = { hy: '申万一级', hy2: '申万二级', hy3: '申万�
 // 只使用日级历史接口，避免分时接口触发风控；一次拉 120 个交易日，本地汇总 3/5/10/15/20/30 日。
 const EM_BOARD_LIST = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14,f62';
 const EM_BOARD_FF_DAY = 'https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?lmt=120&klt=101&secid=90.%s&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56';
-const ZJ_FLOW_PERIODS = [3, 5, 10, 15, 20, 30];
+const ZJ_FLOW_PERIODS = [3, 5, 10, 15, 20, 30, 60, 120];
 const ZJ_PALETTE = ['#f5222d', '#0aa869', '#409eff', '#f56c6c', '#9b59b6', '#e67e22', '#2ecc71', '#3498db', '#e74c3c', '#1abc9c', '#f39c12', '#8e44ad', '#2980b9', '#c0392b', '#27ae60', '#d35400', '#16a085', '#7f8c8d', '#d68910', '#34495e'];
 
 async function fetchEmBoards() {
@@ -326,16 +326,16 @@ async function cmdZj(args) {
   const parts = (args || []).map(a => String(a).trim()).filter(Boolean);
   const p = String(parts[0] || '').toLowerCase();
   const bt = ZJ_LEVEL_BT[p];
-  if (!bt) return { ok: false, text: '⚠️ 请指定级别：/zj 1（一级） /zj 2（二级）\n第二参数可选：3/5/10/15/20/30=近N日主力净流入汇总\n例：/zj 2（当前排行）　/zj 2 5（近5日）' };
+  if (!bt) return { ok: false, text: '⚠️ 请指定级别：/zj 1（一级） /zj 2（二级）\n第二参数可选：3/5/10/15/20/30/60/120=近N日主力净流入汇总\n例：/zj 2（当前排行）　/zj 2 5（近5日）' };
   const m = String(parts[1] || '').toLowerCase();
   if (m === 't' || m === '分时' || m === 'time') return { ok: false, text: '⚠️ 分时资金流接口容易触发风控，已停用。请使用 /zj ' + (bt === 'hy' ? '1' : '2') + ' 3|5|10|15|20|30 查询日级汇总' };
   if (m === 'd' || m === '日' || m === '日线' || m === 'day') return renderMultiPeriodZj(bt, 5);
   if (/^\d+$/.test(m)) {
     const days = Number(m);
     if (ZJ_FLOW_PERIODS.includes(days)) return renderMultiPeriodZj(bt, days);
-    return { ok: false, text: '⚠️ 周期仅支持：3、5、10、15、20、30（日）' };
+    return { ok: false, text: '⚠️ 周期仅支持：3、5、10、15、20、30、60、120（日）' };
   }
-  if (m) return { ok: false, text: '⚠️ 第二参数：3/5/10/15/20/30=近N日汇总；d=近5日（兼容）；t=已停用' };
+  if (m) return { ok: false, text: '⚠️ 第二参数：3/5/10/15/20/30/60/120=近N日汇总；d=近5日（兼容）；t=已停用' };
   if (bt === 'hy3') return { ok: false, text: '⚠️ 申万三级资金流暂无公开免费数据源（腾讯仅提供一级/二级）。\n当前可用：/zj 1 申万一级、/zj 2 申万二级；如需三级可试试问财/付费终端。' };
   const data = await fetchSwZj(bt);
   if (!data) return { ok: false, text: `⚠️ ${ZJ_LEVEL_LABEL[bt]}行业资金流获取失败，请稍后重试` };
