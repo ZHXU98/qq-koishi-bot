@@ -10,13 +10,11 @@ const ZJ_RANK = 'https://proxy.finance.qq.com/cgi/cgi-bin/rank/pt/getRank?board_
 const ZJ_LEVEL_BT = { '1': 'hy', '一级': 'hy', 'sw1': 'hy', '一': 'hy', '2': 'hy2', '二级': 'hy2', 'sw2': 'hy2', '二': 'hy2', '3': 'hy3', '三级': 'hy3', 'sw3': 'hy3', '三': 'hy3' };
 const ZJ_LEVEL_LABEL = { hy: '申万一级', hy2: '申万二级', hy3: '申万三级' };
 
-// ---------- 东财行业资金流曲线（分时波动 / 日级流入，2026-09-01 新增） ----------
-// 说明：申万分类无免费时序资金流源（腾讯仅快照、同花顺反爬），曲线图用东财行业分类（86 个，粒度≈申万二级）。
-// 分时：push2 fflow/kline klt=1（主力净流入累计，元）→ 差分得每分钟净流入（波动直观）；
-// 日K：push2his fflow/daykline klt=101（120 日每日主力净流入，元）。
+// ---------- 东财行业资金流日线（多周期汇总） ----------
+// 只使用日级历史接口，避免分时接口触发风控；一次拉 120 个交易日，本地汇总 3/5/10/15/20/30 日。
 const EM_BOARD_LIST = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14,f62';
-const EM_BOARD_FF_MIN = 'https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?lmt=0&klt=1&secid=90.%s&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56';
 const EM_BOARD_FF_DAY = 'https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?lmt=120&klt=101&secid=90.%s&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56';
+const ZJ_FLOW_PERIODS = [3, 5, 10, 15, 20, 30];
 const ZJ_PALETTE = ['#f5222d', '#0aa869', '#409eff', '#f56c6c', '#9b59b6', '#e67e22', '#2ecc71', '#3498db', '#e74c3c', '#1abc9c', '#f39c12', '#8e44ad', '#2980b9', '#c0392b', '#27ae60', '#d35400', '#16a085', '#7f8c8d', '#d68910', '#34495e'];
 
 async function fetchEmBoards() {
@@ -33,26 +31,27 @@ async function fetchEmBoards() {
   } catch (_) { return null; }
 }
 
-async function fetchBoardFflow(code, mode) {
-  const ckey = 'bff:' + code + ':' + mode;
+async function fetchBoardFflow(code) {
+  const ckey = 'bff:' + code + ':day';
   const cached = cacheGet(ckey);
   if (cached) return cached;
   try {
-    const j = await emFetchJson((mode === 't' ? EM_BOARD_FF_MIN : EM_BOARD_FF_DAY).replace('%s', code));
+    const j = await emFetchJson(EM_BOARD_FF_DAY.replace('%s', code));
     if (!j) return null;
     const kl = j.data?.klines;
     if (!Array.isArray(kl) || kl.length < 2) return null;
-    let prev = 0;
     const out = kl.map(k => {
       const p = String(k).split(',');
-      const main = Number(p[1]) || 0;
-      const v = mode === 't' ? main - prev : main; // 分时：差分得每分钟净流入；日K：当日净流入
-      prev = main;
-      return { t: p[0], v };
+      return { t: p[0], v: Number(p[1]) || 0 };
     });
-    cacheSet(ckey, out, mode === 't' ? 15000 : 600000); // 分时 15s、日K 10min
+    cacheSet(ckey, out, 600000);
     return out;
   } catch (_) { return null; }
+}
+
+function aggregateFlow(points, days) {
+  const rows = points.slice(-days);
+  return rows.reduce((sum, p) => sum + p.v, 0);
 }
 
 function renderZjCurveCanvas(series, mode, levelLabel) {
@@ -146,22 +145,37 @@ function renderZjCurveCanvas(series, mode, levelLabel) {
   return 'base64://' + canvas.toBuffer('image/png').toString('base64');
 }
 
-// 生成行业资金流曲线（bt='hy'|'hy2'；mode='t'|'d'）
-async function renderZjCurve(bt, mode) {
+async function fetchMultiPeriodZj(bt, days) {
   const isL1 = bt === 'hy';
-  const n = isL1 ? 10 : 5; // 一级：流入10+流出10；二级：流入5+流出5
+  // 带天数参数时固定取当前净流入排行前10 + 后10，降低批量请求触发风控的概率。
+  // 注意：这是「前10/后10」候选，不是全行业全量；日线接口本身返回候选行业近120个交易日。
+  const n = 10;
   const boards = await fetchEmBoards();
-  if (!boards || boards.length < 2) return { ok: false, text: '⚠️ 获取行业列表失败，请稍后重试' };
+  if (!boards || boards.length < 2) return null;
   const picks = [...boards.slice(0, n), ...boards.slice(-n).reverse()];
-  const series = (await Promise.all(picks.map(async b => {
-    const points = await fetchBoardFflow(b.code, mode);
-    return points ? { name: b.name, zljlr: b.zljlr, points } : null;
+  const rows = (await Promise.all(picks.map(async b => {
+    const points = await fetchBoardFflow(b.code);
+    if (!points || points.length < days) return null;
+    return { name: b.name, value: aggregateFlow(points, days) };
   }))).filter(Boolean);
-  if (series.length < 2) return { ok: false, text: '⚠️ 资金流数据获取失败，请稍后重试' };
-  const img = renderZjCurveCanvas(series, mode, isL1 ? '一级' : '二级');
-  if (!img) return { ok: false, text: '⚠️ 图表渲染失败' };
-  const label = mode === 't' ? '资金分时波动' : '资金日级流入';
-  return { ok: true, text: `📊 东财行业${label}（${isL1 ? '一级：流入10+流出10' : '二级：流入5+流出5'}）`, img };
+  return { levelLabel: isL1 ? '申万一级' : '申万二级', days, rows };
+}
+
+function formatFlowText(data) {
+  const unit = v => `${v >= 0 ? '+' : ''}${(v / 1e8).toFixed(2)}亿`;
+  const inflow = data.rows.filter(r => r.value > 0).sort((a, b) => b.value - a.value).slice(0, 10);
+  const outflow = data.rows.filter(r => r.value < 0).sort((a, b) => a.value - b.value).slice(0, 10);
+  return [
+    `🏦 ${data.levelLabel}行业资金流（近${data.days}日主力净流入）`,
+    `🔴 流入：${inflow.length ? inflow.map(r => `${r.name} ${unit(r.value)}`).join('、') : '暂无'}`,
+    `🟢 流出：${outflow.length ? outflow.map(r => `${r.name} ${unit(r.value)}`).join('、') : '暂无'}`,
+  ].join('\n');
+}
+
+async function renderMultiPeriodZj(bt, days) {
+  const data = await fetchMultiPeriodZj(bt, days);
+  if (!data || data.rows.length < 2) return { ok: false, text: '⚠️ 资金流日线数据获取失败，请稍后重试' };
+  return { ok: true, text: formatFlowText(data) };
 }
 
 // 拉取指定级别行业资金流，返回 { inflow:[{name,zljlr亿}...], outflow:[...] }，失败返回 null
@@ -312,11 +326,16 @@ async function cmdZj(args) {
   const parts = (args || []).map(a => String(a).trim()).filter(Boolean);
   const p = String(parts[0] || '').toLowerCase();
   const bt = ZJ_LEVEL_BT[p];
-  if (!bt) return { ok: false, text: '⚠️ 请指定级别：/zj 1（一级） /zj 2（二级）\n第二参数可选：t/分时=分时波动曲线　d/日=日级流入曲线\n例：/zj 2（当前排行）　/zj 1 t（一级分时）　/zj 2 d（二级日线）' };
+  if (!bt) return { ok: false, text: '⚠️ 请指定级别：/zj 1（一级） /zj 2（二级）\n第二参数可选：3/5/10/15/20/30=近N日主力净流入汇总\n例：/zj 2（当前排行）　/zj 2 5（近5日）' };
   const m = String(parts[1] || '').toLowerCase();
-  if (m === 't' || m === '分时' || m === 'time') return renderZjCurve(bt, 't');
-  if (m === 'd' || m === '日' || m === '日线' || m === 'day') return renderZjCurve(bt, 'd');
-  if (m) return { ok: false, text: '⚠️ 第二参数：t/分时=分时曲线　d/日=日线曲线（留空=当前排行）\n例：/zj 2　/zj 1 t　/zj 2 d' };
+  if (m === 't' || m === '分时' || m === 'time') return { ok: false, text: '⚠️ 分时资金流接口容易触发风控，已停用。请使用 /zj ' + (bt === 'hy' ? '1' : '2') + ' 3|5|10|15|20|30 查询日级汇总' };
+  if (m === 'd' || m === '日' || m === '日线' || m === 'day') return renderMultiPeriodZj(bt, 5);
+  if (/^\d+$/.test(m)) {
+    const days = Number(m);
+    if (ZJ_FLOW_PERIODS.includes(days)) return renderMultiPeriodZj(bt, days);
+    return { ok: false, text: '⚠️ 周期仅支持：3、5、10、15、20、30（日）' };
+  }
+  if (m) return { ok: false, text: '⚠️ 第二参数：3/5/10/15/20/30=近N日汇总；d=近5日（兼容）；t=已停用' };
   if (bt === 'hy3') return { ok: false, text: '⚠️ 申万三级资金流暂无公开免费数据源（腾讯仅提供一级/二级）。\n当前可用：/zj 1 申万一级、/zj 2 申万二级；如需三级可试试问财/付费终端。' };
   const data = await fetchSwZj(bt);
   if (!data) return { ok: false, text: `⚠️ ${ZJ_LEVEL_LABEL[bt]}行业资金流获取失败，请稍后重试` };
