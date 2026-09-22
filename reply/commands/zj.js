@@ -49,9 +49,10 @@ async function fetchBoardFflow(code) {
   } catch (_) { return null; }
 }
 
-function aggregateFlow(points, days) {
+function cumulativeFlow(points, days) {
   const rows = points.slice(-days);
-  return rows.reduce((sum, p) => sum + p.v, 0);
+  let total = 0;
+  return rows.map(p => ({ t: p.t, v: total += p.v }));
 }
 
 function renderZjCurveCanvas(series, mode, levelLabel) {
@@ -153,12 +154,13 @@ async function fetchMultiPeriodZj(bt, days) {
   const boards = await fetchEmBoards();
   if (!boards || boards.length < 2) return null;
   const picks = [...boards.slice(0, n), ...boards.slice(-n).reverse()];
-  const rows = (await Promise.all(picks.map(async b => {
+  const series = (await Promise.all(picks.map(async b => {
     const points = await fetchBoardFflow(b.code);
     if (!points || points.length < days) return null;
-    return { name: b.name, value: aggregateFlow(points, days) };
+    const cumulative = cumulativeFlow(points, days);
+    return { name: b.name, zljlr: b.zljlr, points: cumulative, value: cumulative[cumulative.length - 1].v };
   }))).filter(Boolean);
-  return { levelLabel: isL1 ? '申万一级' : '申万二级', days, rows };
+  return { levelLabel: isL1 ? '申万一级' : '申万二级', days, series, rows: series.map(s => ({ name: s.name, value: s.value })) };
 }
 
 function formatFlowText(data) {
@@ -175,7 +177,8 @@ function formatFlowText(data) {
 async function renderMultiPeriodZj(bt, days) {
   const data = await fetchMultiPeriodZj(bt, days);
   if (!data || data.rows.length < 2) return { ok: false, text: '⚠️ 资金流日线数据获取失败，请稍后重试' };
-  return { ok: true, text: formatFlowText(data) };
+  const img = renderZjCurveCanvas(data.series, 'd', `${data.levelLabel}近${days}日累计`);
+  return { ok: true, text: formatFlowText(data), img };
 }
 
 // 拉取指定级别行业资金流，返回 { inflow:[{name,zljlr亿}...], outflow:[...] }，失败返回 null
