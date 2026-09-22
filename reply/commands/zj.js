@@ -31,12 +31,16 @@ async function fetchEmBoards() {
   } catch (_) { return null; }
 }
 
-async function fetchBoardFflow(code) {
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchBoardFflowOnce(code) {
   const ckey = 'bff:' + code + ':day';
   const cached = cacheGet(ckey);
   if (cached) return cached;
   try {
-    const j = await emFetchJson(EM_BOARD_FF_DAY.replace('%s', code));
+    const j = await emFetchJson(EM_BOARD_FF_DAY.replace('%s', code), 10000);
     if (!j) return null;
     const kl = j.data?.klines;
     if (!Array.isArray(kl) || kl.length < 2) return null;
@@ -47,6 +51,14 @@ async function fetchBoardFflow(code) {
     cacheSet(ckey, out, 600000);
     return out;
   } catch (_) { return null; }
+}
+
+async function fetchBoardFflow(code) {
+  const first = await fetchBoardFflowOnce(code);
+  if (first) return first;
+  // 单个失败项间隔 2 秒后重试一次，避免同时重试再次触发上游风控。
+  await sleep(2000);
+  return fetchBoardFflowOnce(code);
 }
 
 function cumulativeFlow(points, days) {
@@ -146,6 +158,161 @@ function renderZjCurveCanvas(series, mode, levelLabel) {
   return 'base64://' + canvas.toBuffer('image/png').toString('base64');
 }
 
+function renderMultiPeriodZjCanvas(data) {
+  const { createCanvas } = require('@napi-rs/canvas');
+  const W = 1000, PAD = 28, plotLeft = 84, plotRight = 20;
+  const topH = 360, rankTop = 410, rowH = 26, rankRows = 10;
+  const H = rankTop + 70 + rankRows * rowH + 28;
+  const canvas = createCanvas(Math.round(W * 1.2), Math.round(H * 1.2));
+  const ctx = canvas.getContext('2d');
+  ctx.scale(1.2, 1.2);
+  const bg = '#fff', ink = '#2b2f36', sub = '#8a919e', grid = '#e8eaed';
+  const upC = '#f5222d', downC = '#0aa869';
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 24px cjk';
+  ctx.fillText(`${data.levelLabel}行业资金流（近${data.days}日）`, PAD, 28);
+  ctx.fillStyle = sub; ctx.font = '14px cjk';
+  ctx.fillText('当前流入/流出 TOP10 的近 N 日累计资金曲线（各侧仅展示 TOP3）', PAD, 52);
+
+  const inflow = data.series.filter(s => s.side === 'inflow').sort((a, b) => b.currentValue - a.currentValue).slice(0, 3);
+  const outflow = data.series.filter(s => s.side === 'outflow').sort((a, b) => a.currentValue - b.currentValue).slice(0, 3);
+  const trendSeries = [...inflow, ...outflow];
+  const plotW = W - plotLeft - plotRight, plotTop = 72, plotBottom = topH;
+  let min = 0, max = 0;
+  for (const s of trendSeries) for (const p of s.points) { min = Math.min(min, p.v); max = Math.max(max, p.v); }
+  if (min === max) { min -= 1; max += 1; }
+  const padY = (max - min) * 0.08; min -= padY; max += padY;
+  const count = Math.max(...trendSeries.map(s => s.points.length), 1);
+  const xAt = i => plotLeft + (i / Math.max(count - 1, 1)) * plotW;
+  const yAt = v => plotBottom - ((v - min) / (max - min)) * (plotBottom - plotTop);
+  for (let i = 0; i <= 4; i++) {
+    const v = min + (max - min) * i / 4, y = yAt(v);
+    ctx.strokeStyle = grid; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(plotLeft, y); ctx.lineTo(W - plotRight, y); ctx.stroke();
+    ctx.fillStyle = sub; ctx.textAlign = 'right'; ctx.font = '12px cjk';
+    ctx.fillText(`${(v / 1e8).toFixed(1)}亿`, plotLeft - 8, y);
+  }
+  if (min < 0 && max > 0) {
+    ctx.strokeStyle = '#cfd5dc'; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(plotLeft, yAt(0)); ctx.lineTo(W - plotRight, yAt(0)); ctx.stroke(); ctx.setLineDash([]);
+  }
+  const colors = ['#f5222d', '#ff7875', '#cf1322', '#0aa869', '#36cfc9', '#087f5b'];
+  trendSeries.forEach((s, si) => {
+    ctx.strokeStyle = colors[si]; ctx.lineWidth = 2; ctx.beginPath();
+    s.points.forEach((p, i) => i ? ctx.lineTo(xAt(i), yAt(p.v)) : ctx.moveTo(xAt(i), yAt(p.v)));
+    ctx.stroke();
+  });
+  ctx.fillStyle = sub; ctx.font = '12px cjk'; ctx.textAlign = 'center';
+  const ticks = [0, Math.floor((count - 1) / 2), count - 1];
+  ticks.forEach(i => { const p = trendSeries[0]?.points[Math.min(i, (trendSeries[0]?.points.length || 1) - 1)]; if (p) ctx.fillText(String(p.t).slice(5), xAt(i), plotBottom + 16); });
+  trendSeries.forEach((s, i) => {
+    const x = PAD + (i % 3) * 320, y = plotBottom + 42 + Math.floor(i / 3) * 22;
+    ctx.fillStyle = colors[i]; ctx.fillRect(x, y - 6, 12, 12);
+    ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = '12px cjk'; ctx.fillText(s.name, x + 18, y);
+    ctx.fillStyle = s.value >= 0 ? upC : downC; ctx.textAlign = 'right'; ctx.font = 'bold 12px cjk'; ctx.fillText(`${s.value >= 0 ? '+' : ''}${(s.value / 1e8).toFixed(1)}亿`, x + 290, y);
+  });
+
+  const inflowRank = data.rows.filter(r => r.side === 'inflow').sort((a, b) => b.currentValue - a.currentValue).slice(0, rankRows);
+  const outflowRank = data.rows.filter(r => r.side === 'outflow').sort((a, b) => a.currentValue - b.currentValue).slice(0, rankRows);
+  const panelY = rankTop, panelH = 66 + rankRows * rowH;
+  ctx.fillStyle = '#f7f8fa'; ctx.beginPath(); ctx.roundRect(PAD, panelY, W - PAD * 2, panelH, 14); ctx.fill();
+  ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 16px cjk'; ctx.fillText(`${data.levelLabel}近${data.days}日主力净流入排行`, PAD + 18, panelY + 26);
+  const half = (W - PAD * 2 - 36 - 12) / 2, divider = PAD + 18 + half + 6, maxIn = Math.max(...inflowRank.map(r => Math.abs(r.value)), 1), maxOut = Math.max(...outflowRank.map(r => Math.abs(r.value)), 1);
+  ctx.strokeStyle = '#e8eaed'; ctx.beginPath(); ctx.moveTo(divider, panelY + 38); ctx.lineTo(divider, panelY + panelH - 10); ctx.stroke();
+  ctx.fillStyle = upC; ctx.textAlign = 'left'; ctx.font = 'bold 14px cjk'; ctx.fillText(`流入 TOP${inflowRank.length}`, PAD + 18, panelY + 48);
+  inflowRank.forEach((r, i) => {
+    const y = panelY + 68 + i * rowH, bw = Math.max(2, Math.abs(r.value) / maxIn * (half - 16));
+    ctx.fillStyle = 'rgba(245,34,45,0.18)'; ctx.beginPath(); ctx.roundRect(PAD + 18 + half - 6 - bw, y - 8, bw, 16, 3); ctx.fill();
+    ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = '12px cjk'; ctx.fillText(name, PAD + 20, y);
+    ctx.fillStyle = upC; ctx.textAlign = 'right'; ctx.font = 'bold 12px cjk'; ctx.fillText(`${r.value >= 0 ? '+' : ''}${(r.value / 1e8).toFixed(1)}亿`, PAD + 18 + half - 8, y);
+  });
+  const labelW = 164;
+  const valueW = 82;
+  ctx.fillStyle = downC; ctx.textAlign = 'left'; ctx.font = 'bold 14px cjk'; ctx.fillText(`流出 TOP${outflowRank.length}`, rx, panelY + 48);
+  outflowRank.forEach((r, i) => {
+    const y = panelY + 68 + i * rowH, bw = Math.max(2, Math.abs(r.value) / maxOut * (half - 16));
+    ctx.fillStyle = 'rgba(10,168,105,0.18)'; ctx.beginPath(); ctx.roundRect(rx, y - 8, bw, 16, 3); ctx.fill();
+    ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = '12px cjk'; ctx.fillText(name, rx + 2, y);
+    ctx.fillStyle = downC; ctx.textAlign = 'right'; ctx.font = 'bold 12px cjk'; ctx.fillText(`${(r.value / 1e8).toFixed(1)}亿`, rx + half - 8, y);
+  });
+  return 'base64://' + canvas.toBuffer('image/png').toString('base64');
+}
+
+function renderMultiPeriodZjRankingCanvas(data) {
+  const { createCanvas } = require('@napi-rs/canvas');
+  const W = 1000, PAD = 28, rowH = 32, maxRows = 10;
+  const panelY = 24, panelTop = panelY + 54;
+  const panelHeight = 104 + maxRows * rowH;
+  const H = panelTop + panelHeight + 64;
+  const canvas = createCanvas(Math.round(W * 1.2), Math.round(H * 1.2));
+  const ctx = canvas.getContext('2d');
+  ctx.scale(1.2, 1.2);
+  const bg = '#fff', ink = '#2b2f36', sub = '#8a919e';
+  const upC = '#f5222d', downC = '#0aa869';
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  ctx.textBaseline = 'middle';
+
+  const left = data.rows.slice(0, maxRows);
+  const right = data.rows.slice(maxRows, maxRows * 2);
+  const all = [...left, ...right];
+  const leftValues = left.map(r => Number(r.value)).filter(Number.isFinite).map(Math.abs);
+  const rightValues = right.map(r => Number(r.value)).filter(Number.isFinite).map(Math.abs);
+  const maxLeft = Math.max(...leftValues, 1);
+  const maxRight = Math.max(...rightValues, 1);
+
+  ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 24px cjk';
+  ctx.fillText(`${data.levelLabel}行业资金流（近${data.days}日）`, PAD, 28);
+  ctx.fillStyle = sub; ctx.font = '14px cjk';
+  ctx.fillText('按 /zj 2 当前排序的前 10 / 后 10 分组；数值为近 N 日累计净额，不做正负过滤', PAD, 52);
+
+  ctx.fillStyle = '#f7f8fa'; ctx.beginPath(); ctx.roundRect(PAD, panelTop, W - PAD * 2, panelHeight, 14); ctx.fill();
+  ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 16px cjk';
+  ctx.fillText(`近${data.days}日资金量排行（沿用 /zj 2 当前前10/后10顺序）`, PAD + 18, panelTop + 26);
+  const half = (W - PAD * 2 - 36 - 12) / 2;
+  const divider = PAD + 18 + half + 6;
+  const rx = divider + 6;
+  const labelW = 164;
+  const valueW = 86;
+  ctx.strokeStyle = '#e8eaed'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(divider, panelTop + 38); ctx.lineTo(divider, panelTop + panelHeight - 18); ctx.stroke();
+
+  ctx.fillStyle = '#409eff'; ctx.textAlign = 'left'; ctx.font = 'bold 14px cjk';
+  ctx.fillText('当日排序前 10', PAD + 18, panelTop + 48);
+  left.forEach((r, i) => {
+    const y = panelTop + 78 + i * rowH;
+    const value = Number(r.value);
+    const known = Number.isFinite(value);
+    const name = String(r.name || '').length > 8 ? String(r.name).slice(0, 8) + '…' : String(r.name);
+    const leftBarStart = PAD + 18 + labelW;
+    const leftBarEnd = PAD + 18 + half - valueW;
+    const bw = known ? Math.max(2, Math.abs(value) / maxLeft * Math.max(leftBarEnd - leftBarStart, 1)) : 0;
+    if (bw) {
+      ctx.fillStyle = 'rgba(64,158,255,0.18)';
+      ctx.beginPath(); ctx.roundRect(leftBarStart, y - 9, bw, 18, 3); ctx.fill();
+    }
+    ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = '12px cjk'; ctx.fillText(name, PAD + 20, y);
+    ctx.fillStyle = '#409eff'; ctx.textAlign = 'right'; ctx.font = 'bold 12px cjk';
+    ctx.fillText(known ? `${value >= 0 ? '+' : ''}${(value / 1e8).toFixed(2)}亿` : '数据暂缺', PAD + 18 + half - 18, y);
+  });
+
+  ctx.fillStyle = '#409eff'; ctx.textAlign = 'left'; ctx.font = 'bold 14px cjk';
+  ctx.fillText('当日排序后 10', rx, panelTop + 48);
+  right.forEach((r, i) => {
+    const y = panelTop + 78 + i * rowH;
+    const value = Number(r.value);
+    const known = Number.isFinite(value);
+    const name = String(r.name || '').length > 8 ? String(r.name).slice(0, 8) + '…' : String(r.name);
+    const rightBarStart = rx + labelW;
+    const rightBarEnd = rx + half - valueW;
+    const bw = known ? Math.max(2, Math.abs(value) / maxRight * Math.max(rightBarEnd - rightBarStart, 1)) : 0;
+    if (bw) { ctx.fillStyle = 'rgba(64,158,255,0.18)'; ctx.beginPath(); ctx.roundRect(rightBarStart, y - 9, bw, 18, 3); ctx.fill(); }
+    ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = '12px cjk'; ctx.fillText(name, rx + 2, y);
+    ctx.fillStyle = '#409eff'; ctx.textAlign = 'right'; ctx.font = 'bold 12px cjk'; ctx.fillText(known ? `${value >= 0 ? '+' : ''}${(value / 1e8).toFixed(2)}亿` : '数据暂缺', rx + half - 18, y);
+  });
+  ctx.fillStyle = sub; ctx.textAlign = 'right'; ctx.font = '11px cjk';
+  ctx.fillText(`数据：东财行业资金流日线 · 候选${all.length}个`, W - PAD - 18, H - 18);
+  return 'base64://' + canvas.toBuffer('image/png').toString('base64');
+}
+
 async function fetchMultiPeriodZj(bt, days) {
   const isL1 = bt === 'hy';
   // 带天数参数时固定取当前净流入排行前10 + 后10，降低批量请求触发风控的概率。
@@ -154,30 +321,46 @@ async function fetchMultiPeriodZj(bt, days) {
   const boards = await fetchEmBoards();
   if (!boards || boards.length < 2) return null;
   const picks = [...boards.slice(0, n), ...boards.slice(-n).reverse()];
-  const series = (await Promise.all(picks.map(async b => {
-    const points = await fetchBoardFflow(b.code);
-    if (!points || points.length < days) return null;
-    const cumulative = cumulativeFlow(points, days);
-    return { name: b.name, zljlr: b.zljlr, points: cumulative, value: cumulative[cumulative.length - 1].v };
-  }))).filter(Boolean);
-  return { levelLabel: isL1 ? '申万一级' : '申万二级', days, series, rows: series.map(s => ({ name: s.name, value: s.value })) };
+  const series = [];
+  // 20 个历史接口拆成两批，每批最多 10 个，避免一次性并发过多触发风控。
+  for (let start = 0; start < picks.length; start += 10) {
+    const batch = picks.slice(start, start + 10);
+    const results = await Promise.all(batch.map(async (b, batchIndex) => {
+      const points = await fetchBoardFflow(b.code);
+      const index = start + batchIndex;
+      if (!points || points.length < days) {
+        return { name: b.name, zljlr: b.zljlr, currentValue: b.zljlr, side: index < n ? 'inflow' : 'outflow', points: [], value: null };
+      }
+      const cumulative = cumulativeFlow(points, days);
+      return {
+        name: b.name,
+        zljlr: b.zljlr,
+        currentValue: b.zljlr,
+        side: index < n ? 'inflow' : 'outflow',
+        points: cumulative,
+        value: cumulative[cumulative.length - 1].v,
+      };
+    }));
+    series.push(...results.filter(Boolean));
+  }
+  return { levelLabel: isL1 ? '申万一级' : '申万二级', days, series, rows: series.map(s => ({ name: s.name, value: s.value, currentValue: s.currentValue, side: s.side })) };
 }
 
 function formatFlowText(data) {
-  const unit = v => `${v >= 0 ? '+' : ''}${(v / 1e8).toFixed(2)}亿`;
-  const inflow = data.rows.filter(r => r.value > 0).sort((a, b) => b.value - a.value).slice(0, 10);
-  const outflow = data.rows.filter(r => r.value < 0).sort((a, b) => a.value - b.value).slice(0, 10);
+  const left = data.rows.slice(0, 10);
+  const right = data.rows.slice(10, 20);
+  const fmt = r => Number.isFinite(Number(r.value)) ? `${Number(r.value) >= 0 ? '+' : ''}${(Number(r.value) / 1e8).toFixed(2)}亿` : '数据暂缺';
   return [
-    `🏦 ${data.levelLabel}行业资金流（近${data.days}日主力净流入）`,
-    `🔴 流入：${inflow.length ? inflow.map(r => `${r.name} ${unit(r.value)}`).join('、') : '暂无'}`,
-    `🟢 流出：${outflow.length ? outflow.map(r => `${r.name} ${unit(r.value)}`).join('、') : '暂无'}`,
+    `🏦 ${data.levelLabel}行业近${data.days}日资金量（沿用 /zj 2 当前前10/后10顺序，不过滤）`,
+    `📊 当日排序前 10：${left.map(r => `${r.name} ${fmt(r)}`).join('、') || '暂无'}`,
+    `📊 当日排序后 10：${right.map(r => `${r.name} ${fmt(r)}`).join('、') || '暂无'}`,
   ].join('\n');
 }
 
 async function renderMultiPeriodZj(bt, days) {
   const data = await fetchMultiPeriodZj(bt, days);
   if (!data || data.rows.length < 2) return { ok: false, text: '⚠️ 资金流日线数据获取失败，请稍后重试' };
-  const img = renderZjCurveCanvas(data.series, 'd', `${data.levelLabel}近${days}日累计`);
+  const img = renderMultiPeriodZjRankingCanvas(data);
   return { ok: true, text: formatFlowText(data), img };
 }
 
