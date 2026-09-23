@@ -56,6 +56,7 @@ const { cmdZj } = require('./commands/zj');
 const { cmdPreview } = require('./commands/preview');
 const { cmdT } = require('./commands/t');
 const { cmdAn } = require('./commands/an');
+const { cmdZjl } = require('./commands/zjl');
 
 let wsState = 'idle';
 let reconnectTimer = null; // WS 重连定时器（连接失败时 ws 库可能不触发 onclose，必须独立调度）
@@ -81,6 +82,7 @@ function routeCommand(text) {
     case 'etfinfo': case 'etf': case '基金持仓': return { name: 'etfinfo', type: 'etfinfo', args: parts };
     case 't': case '做t': case '做T': case 'doT': return { name: 't', type: 't', args: parts };
     case 'an': case '分析': case '技术分析': return { name: 'an', type: 'an', args: parts };
+    case 'zjl': case 'flow': case '资金流': case '资金流向': return { name: 'zjl', type: 'zjl', args: parts };
     default: return null;
   }
 }
@@ -222,6 +224,14 @@ async function handleEvent(ev) {
       else await sendReply(ev, r.detailText || r.text);
       if (r.img) await sendReply(ev, '', [r.img]);
     }
+  } else if (cmd.type === 'zjl') {
+    const r = await cmdZjl(cmd.args);
+    if (!r.ok) {
+      await sendReply(ev, r.text || '⚠️ 个股资金流获取失败');
+    } else {
+      if (r.img) await sendReply(ev, '', [r.img]);
+      else await sendReply(ev, r.text || '⚠️ 资金流图片生成失败');
+    }
   } else {
     await sendReply(ev, cmd.text);
   }
@@ -296,7 +306,7 @@ if (require.main === module) {
 
 module.exports = {
   handleEvent, routeCommand, parseMessage, loadConfig, sendReply,
-  cmdStatus, cmdPreview, cmdStock, cmdStocks, cmdSS, cmdZj, cmdInfo, cmdEtfInfo, cmdHelp, cmdT, cmdAn,
+  cmdStatus, cmdPreview, cmdStock, cmdStocks, cmdSS, cmdZj, cmdInfo, cmdEtfInfo, cmdHelp, cmdT, cmdAn, cmdZjl,
   extractMagnet, genHardwareStats: require('./commands/basic').genHardwareStats,
   fetchStockKline: require('./market').fetchStockKline,
   fetchStockQuote: require('./market').fetchStockQuote,
