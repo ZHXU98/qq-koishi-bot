@@ -1,19 +1,19 @@
 // ============================================================
-// /zjl 个股资金流向：数据源=新浪财经（股票/ETF）
+// /zjl 个股资金流向：数据源=新浪财经（股票/ETF，免 token）
+//   接口 MoneyFlow.ssl_qsfx_lscjfb 直接返回同花顺同款四档：
+//   r0_net=超大单  r1_net=大单  r2_net=中单  r3_net=小单
+//   主力 = 超大单 + 大单；散户 = 中单 + 小单；四档之和 = 总净额
 //   · 今日：盘中显示当日实时累计，收盘后显示当日完整值
 //   · 多周期：仅统计「已完成交易日」；盘中自动退回上一交易日，收盘后含当天
-//   · 分析：用「日均净额」消除周期长度差异，做短/中/长三档共振与强弱判断
 // ============================================================
 const https = require('https');
 const { cacheGet, cacheSet } = require('../utils');
 const { normalizeCode, resolveStockCode, fetchStockQuote } = require('../market');
 
-const SINA_STOCK_FLOW = 'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs?page=1&num=140&sort=opendate&asc=0&daima=%s';
+const SINA_STOCK_FLOW = 'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_lscjfb?page=1&num=140&sort=opendate&asc=0&daima=%s';
 
 // 展示与分析周期（覆盖短中长）
 const PERIODS = [3, 5, 10, 15, 20, 30, 60, 120];
-// 三档基准周期：短 / 中 / 长
-const TIER = { short: 5, mid: 20, long: 60 };
 
 function fetchJsonHttps(url, referer = 'https://finance.sina.com.cn/') {
   return new Promise((resolve, reject) => {
@@ -60,15 +60,30 @@ function completedRows(rows, now = new Date()) {
   return rows.filter(row => row.date < today);
 }
 
+// 新浪 lscjfb 口径：四档净额（超大单/大单/中单/小单），主力=超大+大，散户=中+小
 function parseSinaRows(list) {
   if (!Array.isArray(list)) return [];
   return list.map(item => {
     const date = String(item?.opendate || '').slice(0, 10);
-    const main = Number(item?.r0_net);      // 主力（大单）净额
-    const total = Number(item?.netamount);  // 全单净额
-    const turnover = Number(item?.turnover);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(main) || !Number.isFinite(total)) return null;
-    return { date, main, total, retail: total - main, turnover: Number.isFinite(turnover) ? turnover : null };
+    const superNet = Number(item?.r0_net);
+    const large = Number(item?.r1_net);
+    const medium = Number(item?.r2_net);
+    const small = Number(item?.r3_net);
+    const total = Number(item?.netamount);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    if (![superNet, large, medium, small].every(Number.isFinite)) return null;
+    const main = superNet + large;              // 主力 = 超大单 + 大单
+    const retail = medium + small;              // 散户 = 中单 + 小单
+    return {
+      date,
+      main,
+      super: superNet,
+      large,
+      medium,
+      small,
+      retail,
+      total: Number.isFinite(total) ? total : main + retail,
+    };
   }).filter(Boolean).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
@@ -103,11 +118,8 @@ function direction(value) {
   return value > 0 ? '净流入' : value < 0 ? '净流出' : '基本持平';
 }
 
-// 资金结构分析：
-// 1) 3日=超短情绪，5日=短线确认，比较日均强度判断加速/减速/反抽/回吐。
-// 2) 10/15/20日=波段资金，判断波段方向是否一致，或是否出现短中期背离。
-// 3) 30/60/120日=中长期背景，避免只看20日误判长期趋势。
-// 4) 所有跨周期比较统一使用「日均净额」，避免长周期天然数值更大。
+// 资金结构分析：所有跨周期比较统一用「日均净额」，避免长周期天然数值更大。
+// 3日=超短情绪，5日=短线确认，10/15/20=波段，30/60/120=中长期背景。
 function buildAnalysis(rows) {
   const n = rows.length;
   const has = d => n >= d;
@@ -152,56 +164,34 @@ function buildAnalysis(rows) {
   const swingState = majority([v10, v15, v20]);
   if (v10 !== null && v15 !== null && v20 !== null) {
     const sameSwing = sign(v10) === sign(v15) && sign(v15) === sign(v20) && sign(v20) !== 0;
-    if (sameSwing) {
-      lines.push(`波段结构：10/15/20日全部${signText(v20)}，波段资金方向明确。`);
-    } else if (sign(v10) > 0 && sign(v15) > 0 && sign(v20) < 0) {
-      lines.push('波段结构：10日、15日已转流入，但20日仍流出，说明资金正在修复，但波段反转还没完全确认。');
-    } else if (sign(v10) < 0 && sign(v15) < 0 && sign(v20) > 0) {
-      lines.push('波段结构：20日仍流入，但10日、15日已转流出，说明波段资金开始松动，需防止由强转弱。');
-    } else if (swingState > 0) {
-      lines.push('波段结构：10/15/20日多数为流入，波段资金整体偏积极，但内部节奏不完全一致。');
-    } else if (swingState < 0) {
-      lines.push('波段结构：10/15/20日多数为流出，波段资金整体偏弱，反弹更适合先看修复。');
-    } else {
-      lines.push('波段结构：10/15/20日方向分歧，资金处于拉锯状态，趋势信号不明确。');
-    }
+    if (sameSwing) lines.push(`波段结构：10/15/20日全部${signText(v20)}，波段资金方向明确。`);
+    else if (sign(v10) > 0 && sign(v15) > 0 && sign(v20) < 0) lines.push('波段结构：10日、15日已转流入，但20日仍流出，说明资金正在修复，但波段反转还没完全确认。');
+    else if (sign(v10) < 0 && sign(v15) < 0 && sign(v20) > 0) lines.push('波段结构：20日仍流入，但10日、15日已转流出，说明波段资金开始松动，需防止由强转弱。');
+    else if (swingState > 0) lines.push('波段结构：10/15/20日多数为流入，波段资金整体偏积极，但内部节奏不完全一致。');
+    else if (swingState < 0) lines.push('波段结构：10/15/20日多数为流出，波段资金整体偏弱，反弹更适合先看修复。');
+    else lines.push('波段结构：10/15/20日方向分歧，资金处于拉锯状态，趋势信号不明确。');
   }
 
   // 3. 中长期背景：30/60/120决定环境，不把短线回流误判成长期转强。
   const longState = majority([v30, v60, v120]);
   if (v30 !== null && v60 !== null && v120 !== null) {
-    if (sign(v30) === sign(v60) && sign(v60) === sign(v120) && sign(v120) !== 0) {
-      lines.push(`中长期背景：30/60/120日全部${signText(v120)}，中长期资金方向明确。`);
-    } else if (longState > 0) {
-      lines.push('中长期背景：30/60/120日多数流入，中长期资金环境偏多，但仍需留意分歧周期。');
-    } else if (longState < 0) {
-      lines.push('中长期背景：30/60/120日多数流出，中长期资金环境偏弱，短线回流更可能先按反弹看。');
-    } else {
-      lines.push('中长期背景：30/60/120日方向分歧，说明资金仍在换手和重新定价阶段。');
-    }
+    if (sign(v30) === sign(v60) && sign(v60) === sign(v120) && sign(v120) !== 0) lines.push(`中长期背景：30/60/120日全部${signText(v120)}，中长期资金方向明确。`);
+    else if (longState > 0) lines.push('中长期背景：30/60/120日多数流入，中长期资金环境偏多，但仍需留意分歧周期。');
+    else if (longState < 0) lines.push('中长期背景：30/60/120日多数流出，中长期资金环境偏弱，短线回流更可能先按反弹看。');
+    else lines.push('中长期背景：30/60/120日方向分歧，说明资金仍在换手和重新定价阶段。');
   }
 
   // 4. 综合判断：把短线、波段、中长期合在一起。
   const shortState = majority([v3, v5]);
-  if (shortState > 0 && swingState > 0 && longState > 0) {
-    lines.push('综合判断：短线、波段、中长期形成资金流入共振，是最强资金结构。');
-  } else if (shortState < 0 && swingState < 0 && longState < 0) {
-    lines.push('综合判断：短线、波段、中长期形成资金流出共振，资金结构偏弱，优先控制风险。');
-  } else if (shortState > 0 && swingState < 0 && longState < 0) {
-    lines.push('综合判断：3/5日短线回流，但10/15/20日波段和30/60/120日背景仍弱，更像弱势反弹初段，不能直接当作趋势反转。');
-  } else if (shortState > 0 && swingState < 0) {
-    lines.push('综合判断：短线回流但波段仍弱，更像超跌修复或反弹初期，需要10/15/20日继续改善。');
-  } else if (shortState < 0 && swingState > 0 && longState < 0) {
-    lines.push('综合判断：10/15/20日有修复，但3/5日重新转弱，且中长期背景偏弱，属于弱势背景下的波段修复遇阻。');
-  } else if (shortState < 0 && swingState > 0 && longState > 0) {
-    lines.push('综合判断：中长期和波段仍有资金基础，但3/5日短线转弱，偏向强势中的短线回吐，观察3日能否重新翻正。');
-  } else if (shortState < 0 && swingState > 0) {
-    lines.push('综合判断：波段仍有资金基础，但短线转弱，资金结构进入分歧，需要看3日与5日能否修复。');
-  } else if (swingState > 0 && longState < 0) {
-    lines.push('综合判断：波段资金转强但长周期仍弱，属于中期修复，确认度低于长期共振流入。');
-  } else if (swingState < 0 && longState > 0) {
-    lines.push('综合判断：长周期尚可但波段走弱，偏向趋势内调整，观察20日能否守住流入。');
-  }
+  if (shortState > 0 && swingState > 0 && longState > 0) lines.push('综合判断：短线、波段、中长期形成资金流入共振，是最强资金结构。');
+  else if (shortState < 0 && swingState < 0 && longState < 0) lines.push('综合判断：短线、波段、中长期形成资金流出共振，资金结构偏弱，优先控制风险。');
+  else if (shortState > 0 && swingState < 0 && longState < 0) lines.push('综合判断：3/5日短线回流，但10/15/20日波段和30/60/120日背景仍弱，更像弱势反弹初段，不能直接当作趋势反转。');
+  else if (shortState > 0 && swingState < 0) lines.push('综合判断：短线回流但波段仍弱，更像超跌修复或反弹初期，需要10/15/20日继续改善。');
+  else if (shortState < 0 && swingState > 0 && longState < 0) lines.push('综合判断：10/15/20日有修复，但3/5日重新转弱，且中长期背景偏弱，属于弱势背景下的波段修复遇阻。');
+  else if (shortState < 0 && swingState > 0 && longState > 0) lines.push('综合判断：中长期和波段仍有资金基础，但3/5日短线转弱，偏向强势中的短线回吐，观察3日能否重新翻正。');
+  else if (shortState < 0 && swingState > 0) lines.push('综合判断：波段仍有资金基础，但短线转弱，资金结构进入分歧，需要看3日与5日能否修复。');
+  else if (swingState > 0 && longState < 0) lines.push('综合判断：波段资金转强但长周期仍弱，属于中期修复，确认度低于长期共振流入。');
+  else if (swingState < 0 && longState > 0) lines.push('综合判断：长周期尚可但波段走弱，偏向趋势内调整，观察20日能否守住流入。');
 
   // 5. 关键统计补充
   if (has(20)) {
@@ -209,9 +199,7 @@ function buildAnalysis(rows) {
     const inflowDays = win.filter(r => r.main > 0).length;
     lines.push(`近20日主力合计 ${fmtMoney(net(20))}，其中 ${inflowDays} 天流入 / ${20 - inflowDays} 天流出。`);
   }
-  if (has(120)) {
-    lines.push(`近120日主力合计 ${fmtMoney(net(120))}，${direction(net(120))}。`);
-  }
+  if (has(120)) lines.push(`近120日主力合计 ${fmtMoney(net(120))}，${direction(net(120))}。`);
   return lines;
 }
 
@@ -231,8 +219,10 @@ function buildFlowText(name, code, data, isEtf, phase) {
     '',
     '━━━ 今日 ━━━',
     `日期：${today.date}　${phaseText}`,
-    `主力：${fmtMoney(today.main)}　${direction(today.main)}`,
-    `总净额：${fmtMoney(today.total)}　散户（总净额-主力）：${fmtMoney(today.retail)}`,
+    `主力（超大单+大单）：${fmtMoney(today.main)}　${direction(today.main)}`,
+    `超大单：${fmtMoney(today.super)}　大单：${fmtMoney(today.large)}`,
+    `中单：${fmtMoney(today.medium)}　小单：${fmtMoney(today.small)}`,
+    `散户（中单+小单）：${fmtMoney(today.retail)}　总净额：${fmtMoney(today.total)}`,
     '',
     '━━━ 多周期主力净额 ━━━',
     `统计基准：${base.at(-1)?.date || '-'}（已完成交易日）`,
@@ -240,7 +230,7 @@ function buildFlowText(name, code, data, isEtf, phase) {
     '',
     '━━━ 资金结构分析 ━━━',
     ...buildAnalysis(base),
-    isEtf ? '说明：ETF资金口径不代表真实申购赎回或机构实际持仓变化。' : '说明：主力=大单净额，散户=总净额-主力；为成交单大小口径，不等同于真实机构账户。',
+    isEtf ? '说明：ETF资金口径不代表真实申购赎回或机构实际持仓变化。' : '说明：主力=超大单+大单，散户=中单+小单；为成交单大小口径，不等同于真实机构账户。',
     '数据源：新浪财经',
   ].join('\n');
 }
@@ -268,18 +258,15 @@ function renderFlowPng(name, code, data, isEtf, phase) {
   const base = completed.length >= 20 ? completed : rows.slice(0, -1);
   const phaseText = phase === 'open' ? '交易中 · 当日实时累计' : phase === 'preopen' ? '未开盘' : '已收盘';
 
-  // 多周期数字（2 列 × 4 行）
   const periodCells = PERIODS.map(days => {
     const ok = base.length >= days;
     const v = ok ? sumPeriod(base, days, 'main') : null;
     return { label: `近${days}日`, value: ok ? fmtMoney(v) : '数据不足', dir: ok ? direction(v) : '', pos: ok ? v >= 0 : null };
   });
 
-  // 分析文本换行
-  const analysisLines = buildAnalysis(base);
-  const wrappedAnalysis = analysisLines.flatMap(t => wrapText(probe, t, W - PAD * 2 - 16));
+  const wrappedAnalysis = buildAnalysis(base).flatMap(t => wrapText(probe, t, W - PAD * 2 - 16));
 
-  const todayH = 132, gridTop = 118 + todayH + 56, rowH = 66;
+  const todayH = 196, gridTop = 118 + todayH + 56, rowH = 66;
   const gridH = Math.ceil(periodCells.length / 2) * rowH;
   const analysisTop = gridTop + gridH + 60;
   const analysisH = wrappedAnalysis.length * 32;
@@ -295,14 +282,19 @@ function renderFlowPng(name, code, data, isEtf, phase) {
   ctx.fillStyle = sub; ctx.font = '17px cjk';
   ctx.fillText(`${code.toUpperCase()} · 多周期基准 ${base.at(-1)?.date || '-'} · ${phaseText}`, PAD + 20, 80);
 
-  // 今日卡片
+  // 今日卡片：主力 / 超大单 / 大单 / 中单 / 小单 / 散户
   ctx.fillStyle = panel; ctx.beginPath(); ctx.roundRect(PAD, 118, W - PAD * 2, todayH, 14); ctx.fill();
   ctx.fillStyle = ink; ctx.font = 'bold 20px cjk'; ctx.fillText(`今日 ${today.date}（${phaseText}）`, PAD + 20, 150);
+  const cells = [
+    ['主力', today.main], ['超大单', today.super], ['大单', today.large],
+    ['中单', today.medium], ['小单', today.small], ['散户', today.retail],
+  ];
   const cellW = (W - PAD * 2 - 40) / 3;
-  [['主力', today.main], ['总净额', today.total], ['散户', today.retail]].forEach(([label, value], i) => {
-    const x = PAD + 24 + i * cellW;
-    ctx.fillStyle = sub; ctx.font = '18px cjk'; ctx.fillText(label, x, 186);
-    ctx.fillStyle = value >= 0 ? red : green; ctx.font = 'bold 25px cjk'; ctx.fillText(fmtMoney(value), x, 216);
+  cells.forEach(([label, value], i) => {
+    const x = PAD + 24 + (i % 3) * cellW;
+    const y = 182 + Math.floor(i / 3) * 62;
+    ctx.fillStyle = sub; ctx.font = '17px cjk'; ctx.fillText(label, x, y);
+    ctx.fillStyle = value >= 0 ? red : green; ctx.font = 'bold 23px cjk'; ctx.fillText(fmtMoney(value), x, y + 28);
   });
 
   // 多周期数字网格（无柱状图）
@@ -328,7 +320,7 @@ function renderFlowPng(name, code, data, isEtf, phase) {
     ctx.fillText(line, PAD + 4, analysisTop + i * 32 + 10);
   });
 
-  const note = isEtf ? '数据源：新浪财经；ETF口径不代表申赎资金。' : '数据源：新浪财经；主力=大单净额，散户=总净额-主力。';
+  const note = isEtf ? '数据源：新浪财经；ETF口径不代表申赎资金。' : '数据源：新浪财经；主力=超大单+大单，散户=中单+小单。';
   ctx.fillStyle = sub; ctx.font = '15px cjk'; ctx.fillText(note, PAD, H - 30);
   return 'base64://' + canvas.toBuffer('image/png').toString('base64');
 }
