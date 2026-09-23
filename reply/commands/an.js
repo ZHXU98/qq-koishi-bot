@@ -530,26 +530,26 @@ function overallConclusion(day, week, month) {
   const dailyStrong = day.trend.includes('上升') && day.close > (day.ma20 || 0);
   const dailyRepair = day.cross?.type === 'gold' || day.divergence?.type === 'bottom' || day.macdTxt.includes('红柱');
 
-  let state, action, stars, reason;
+  let state, action, score, reason;
   if (dailyBroken || weeklyBroken) {
-    state = '结构转弱'; action = '先控风险，等待重新站回关键位'; stars = '★☆☆☆☆';
+    state = '结构转弱'; action = '先控风险，等待重新站回关键位'; score = 1;
     reason = dailyBroken ? '日线结构破坏' : '周线出现破位信号';
   } else if (weeklyStrong && !monthlyWeak && (dailyStrong || day.priceSignal.type === 'pullback')) {
     state = dailyStrong ? '趋势可持有' : '上升趋势中的回踩';
     action = dailyStrong ? '持有为主，回踩确认再看加仓' : '不追高，等止跌转强确认';
-    stars = '★★★★☆'; reason = '月线许可、周线阶段支持，日线未破结构';
+    score = dailyStrong ? 5 : 4; reason = '月线许可、周线阶段支持，日线未破结构';
   } else if (weeklyStrong && !monthlyWeak) {
     // codeflicker-fix: LOGIC-Issue-002/qg6iar3gcajrzkxv7klg - 日线整理不再抹掉已成立的周线趋势。
-    state = '趋势中的日线整理'; action = '中期结构仍在，等待日线止跌转强'; stars = '★★★☆☆';
+    state = '趋势中的日线整理'; action = '中期结构仍在，等待日线止跌转强'; score = 3;
     reason = '月线许可、周线趋势仍在，但日线尚未恢复强势';
   } else if (weeklyWeak) {
-    state = '弱势反弹'; action = '不追反弹，压力位观察，确认后再升级判断'; stars = '★★☆☆☆';
+    state = '弱势反弹'; action = '不追反弹，压力位观察，确认后再升级判断'; score = 2;
     reason = `${monthlyWeak ? '月线与' : ''}周线仍受压，${dailyRepair ? '日线仅有修复信号' : '日线尚未完成修复'}`;
   } else {
-    state = '区间震荡'; action = '按区间处理，等待突破或跌破确认'; stars = '★★★☆☆';
+    state = '区间震荡'; action = '按区间处理，等待突破或跌破确认'; score = 3;
     reason = `${monthlyStrong ? '月线尚可' : '月线中性'}，周线未形成单边阶段，日线不宜单独定方向`;
   }
-  return { state, action, stars, reason, monthlyWeak, weeklyWeak, weeklyStrong, weeklyBroken, dailyBroken };
+  return { state, action, score, reason, monthlyWeak, weeklyWeak, weeklyStrong, weeklyBroken, dailyBroken };
 }
 function buildReport(name, code, quote, all, prec, relative = null) {
   const { day, week, month } = all;
@@ -573,7 +573,7 @@ function buildReport(name, code, quote, all, prec, relative = null) {
   L.push('');
   L.push('━━━ 结论 ━━━');
   L.push(`市场状态：${oc.state}`);
-  L.push(`结构完整度：${oc.stars}（仅表示多周期条件完整度）`);
+  L.push(`结构评分：${oc.score}/5（${oc.state}，${oc.reason}）`);
   L.push(`当前动作：${oc.action}`);
   L.push(`主要限制：${oc.reason}`);
   L.push(`一句话：${buildOneLine(oc, day, week, month)}`);
@@ -719,8 +719,7 @@ function renderAnPng(code, name, quote, all, prec) {
   ctx.fillStyle = panel; ctx.fillRect(0, 0, W, TITLE_H);
   ctx.fillStyle = chgPct >= 0 ? upC : downC; ctx.fillRect(PAD, 18, 5, 46);
   ctx.fillStyle = ink; ctx.font = 'bold 26px cjk'; ctx.textAlign = 'left'; ctx.fillText(`${name} 多周期技术分析`, PAD + 16, 34);
-  const chartState = { '趋势可持有': 'TREND', '上升趋势中的回踩': 'PULLBACK', '趋势中的日线整理': 'TREND PAUSE', '区间震荡': 'RANGE', '弱势反弹': 'REBOUND', '结构转弱': 'RISK' }[oc.state] || 'WATCH';
-  ctx.fillStyle = sub; ctx.font = '14px cjk'; ctx.fillText(`${code.toUpperCase()} · ${chartState}`, PAD + 16, 60);
+  ctx.fillStyle = sub; ctx.font = '14px cjk'; ctx.fillText(`${code.toUpperCase()} · 结构评分 ${oc.score}/5 · ${oc.state}（${oc.reason}）`, PAD + 16, 60);
   ctx.textAlign = 'right'; ctx.fillStyle = chgPct >= 0 ? upC : downC; ctx.font = 'bold 30px cjk'; ctx.fillText(fpBy(price, prec), W - PAD, 34);
   ctx.font = '15px cjk'; ctx.fillText(pct(chgPct), W - PAD, 60);
   let y = TITLE_H;
