@@ -34,7 +34,8 @@
 //   utils.js     通用工具（时间/缓存/格式化）
 //   gateway.js   NapCat 网关（HTTP/WS/主人权限）
 //   market.js    行情数据层（代码解析/K线/指标/全球商品）
-//   commands/*   各指令域（ss/stock/stocks/zj/info/preview/news/t/basic）
+//   futures.js   国内期货数据层（品种表/合约解析/快照/K线）
+//   commands/*   各指令域（ss/stock/stocks/fc/zj/info/preview/news/t/basic）
 // ============================================================
 const fs = require('fs');
 const path = require('path');
@@ -51,6 +52,7 @@ const { cmdHelp, cmdPing, cmdStatus, cmdEcho } = require('./commands/basic');
 const { cmdSS } = require('./commands/ss');
 const { cmdStock } = require('./commands/stock');
 const { cmdStocks } = require('./commands/stocks');
+const { cmdFc } = require('./commands/fc');
 const { cmdInfo, cmdEtfInfo } = require('./commands/info');
 const { cmdZj } = require('./commands/zj');
 const { cmdPreview } = require('./commands/preview');
@@ -76,6 +78,7 @@ function routeCommand(text) {
     case '快讯': case 'news': case '资讯': return { name: 'news', type: 'news' };
     case 'ss': case '指数': return { name: 'ss', type: 'ss' };
     case 'stock': case '股票': case 'K线': return { name: 'stock', type: 'stock', args: parts };
+    case 'fc': case '期货': return { name: 'fc', type: 'fc', args: parts };
     case 'stocks': case '组合': case '自选': return { name: 'stocks', type: 'stocks', args: parts };
     case 'zj': case '资金': return { name: 'zj', type: 'zj', args: parts };
     case 'info': case '个股': case '资料': return { name: 'info', type: 'info', args: parts };
@@ -183,6 +186,11 @@ async function handleEvent(ev) {
     } else {
       await sendReply(ev, r.text || '⚠️ 图表生成失败');
     }
+  } else if (cmd.type === 'fc') {
+    // /fc 国内期货：文字（含主力连续提示/持仓成交）+ K线图一条消息下发
+    const r = await cmdFc(cmd.args);
+    if (r.ok && r.img) await sendReply(ev, r.text || '', [r.img]);
+    else await sendReply(ev, r.text || '⚠️ 期货行情获取失败');
   } else if (cmd.type === 'stocks') {
     const r = await cmdStocks(cmd.args, { isAdmin, uid });
     if (r.ok && r.img) {
@@ -306,7 +314,7 @@ if (require.main === module) {
 
 module.exports = {
   handleEvent, routeCommand, parseMessage, loadConfig, sendReply,
-  cmdStatus, cmdPreview, cmdStock, cmdStocks, cmdSS, cmdZj, cmdInfo, cmdEtfInfo, cmdHelp, cmdT, cmdAn, cmdZjl,
+  cmdStatus, cmdPreview, cmdStock, cmdStocks, cmdSS, cmdZj, cmdInfo, cmdEtfInfo, cmdHelp, cmdT, cmdAn, cmdZjl, cmdFc,
   extractMagnet, genHardwareStats: require('./commands/basic').genHardwareStats,
   fetchStockKline: require('./market').fetchStockKline,
   fetchStockQuote: require('./market').fetchStockQuote,

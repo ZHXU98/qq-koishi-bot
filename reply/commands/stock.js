@@ -22,20 +22,23 @@ function renderStockPng(code, name, periodLabel, klines, opts, quote) {
   }
 }
 
-function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll, timeMode, prec = 2 }, quote) {
+function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll, timeMode, prec = 2, futures = false }, quote) {
   const fp = v => isFinite(v) ? Number(v).toFixed(prec) : '-'; // 价格显示精度（ETF 三位小数时 prec=3，普通股票 2）
   const { createCanvas } = require('@napi-rs/canvas');
   const W = 1000, PAD = 74, TITLE_H = 62, VOL_H = 120;
   const isHK = code.startsWith('hk'); // 港股：字段口径不同，不显示基本面面板
   const isUS = code.startsWith('us');
   const isHF = code.startsWith('hf_'); // 国际商品：接近24h连续交易，分时用索引等距映射
+  // 连续交易时段（外盘商品 / 国内期货含夜盘）：分时按索引等距映射，不套用 A股/港股 的时段过滤与分钟对齐
+  const contSess = isHF || futures;
+  const prevLabel = futures ? '昨结' : '昨收'; // 期货涨跌基准是昨结算价，不是昨收
   const showInfo = !isHK && !isUS && !!quote && quote.mktCap > 0; // 有市值即显示（ETF 无 PE/PB 也显示，缺的字段留空）
   const LEG_H = timeMode ? 30 : ((maPeriods && maPeriods.length > 0) ? 66 : 40);
   const INFO_H = 98; // 四行：估值 / 股本·市值·股息 / 量能·交易 / 价位
   const H = TITLE_H + VOL_H + LEG_H + (showInfo ? INFO_H : 0) + PAD + 8 + 340;
   const n = klines.length;
   const display = timeMode
-    ? (isHF ? klines : klines.filter(k => { const t = String(k.t); return t >= '0930' && t <= ((isHK || isUS) ? '1600' : '1500'); })) // 分时：当天全部数据（港股/美股到16:00），商品全量
+    ? (contSess ? klines : klines.filter(k => { const t = String(k.t); return t >= '0930' && t <= ((isHK || isUS) ? '1600' : '1500'); })) // 分时：当天全部数据（港股/美股到16:00），商品与期货全量
     : (periodLabel === '日线' ? klines.slice(-60) : klines.slice(-120));
   const dn = display.length;
   const plotW = W - PAD * 2, plotH = H - TITLE_H - VOL_H - LEG_H - (showInfo ? INFO_H : 0) - PAD - 8;
@@ -97,8 +100,8 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
     if (isHK) return Math.min(TOT - 1, Math.max(0, m <= 720 ? m - 570 : 150 + (m - 780))); // 上午0-150 下午150-330
     return Math.min(TOT - 1, Math.max(0, m <= 690 ? m - 571 : m - 660));
   };
-  const mapX = timeMode ? (isHF ? X : (i => PAD + (tmin(display[i].t) / TOT) * plotW)) : X;
-  const cw = timeMode ? (isHF ? Math.max(1.5, plotW / dn * 0.7) : Math.max(1.5, plotW / TOT * 0.7)) : Math.max(2, Math.min(8, step * 0.6));
+  const mapX = timeMode ? (contSess ? X : (i => PAD + (tmin(display[i].t) / TOT) * plotW)) : X;
+  const cw = timeMode ? (contSess ? Math.max(1.5, plotW / dn * 0.7) : Math.max(1.5, plotW / TOT * 0.7)) : Math.max(2, Math.min(8, step * 0.6));
 
   // 配色
   const upC = '#f5222d', downC = '#0aa869';
@@ -115,9 +118,10 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   //   如 hf_GC 现价 4402.84/涨跌 -1.30/f[2] 4406.00 → 三者不自洽）。
   //   故一律由快照涨跌额反推基准，使图内数字与消息标题完全一致。
   const lastPrice = (quote && Number(quote.price) > 0) ? Number(quote.price) : last.close;
-  // 国际商品非分时：涨跌额/涨跌幅一律取快照原值（源数据自身不自洽，自行按基准反算会与标题打架）
-  const hfSnapChg = (isHF && !timeMode && quote && isFinite(Number(quote.chg))) ? Number(quote.chg) : NaN;
-  const hfBase = (isHF && !timeMode && quote && Number(quote.price) > 0 && isFinite(hfSnapChg))
+  // 国际商品/国内期货非分时：涨跌额与基准一律取快照自带值（商品源自身不自洽，自行按基准反算会与标题打架；
+  // 期货的基准是昨结算价，日K 相邻两根反算出来的是「昨收」，口径会与快照打架）
+  const hfSnapChg = (contSess && !timeMode && quote && isFinite(Number(quote.chg))) ? Number(quote.chg) : NaN;
+  const hfBase = (contSess && !timeMode && quote && Number(quote.price) > 0 && isFinite(hfSnapChg))
     ? Number(quote.price) - hfSnapChg : null;
   const prevClose = hfBase != null ? hfBase
     : ((timeMode && quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : (klines[n - 2]?.close ?? last.open));
@@ -180,12 +184,12 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   // 11:30 与 13:00 在连续映射下相邻仅 1 格≈3.6px，13:00 不重复标注避免重叠与错位）
   ctx.textAlign = 'center';
   if (timeMode) {
-    // 商品(hf)：连续交易时段，取首/中/末时间标签；A股：09:30/10:30/11:30/14:00/15:00；
+    // 连续时段（外盘商品/国内期货）：取首/中/末时间标签；A股：09:30/10:30/11:30/14:00/15:00；
     // 港股：09:30/10:30/11:30/14:00/15:00/16:00（12:00/13:00 相邻不重复标）；美股 09:30-16:00 连续均匀标
-    // 注意 hf_ 新浪分时的 t 本身就带冒号（"06:00"），A股/港美股是紧凑的 "0930"——
+    // 注意 外盘商品与国内期货分时的 t 可能是带冒号的 "06:00"，A股/港美股是紧凑的 "0930"——
     // 先去掉冒号再插，否则会拼成 "06::0"（外盘分时横轴标签一直是这样，2026-09-11 修）
     const fmtT = t => { const s = String(t).replace(':', ''); return s.slice(0, 2) + ':' + s.slice(2, 4); };
-    const lbs = isHF
+    const lbs = contSess
       ? [[0, fmtT(display[0].t)], [Math.floor(dn / 2), fmtT(display[Math.floor(dn / 2)].t)], [dn - 1, fmtT(display[dn - 1].t)]]
       : (isUS
         ? [[0, '09:30'], [90, '11:00'], [180, '12:30'], [270, '14:00'], [TOT - 1, '16:00']]
@@ -194,7 +198,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
       ctx.fillStyle = sub; ctx.font = '12px cjk';
       // hf_ 的 lbs[0] 是「数据索引」而非分钟数（TOT=240 只对 A股/港美股成立），
       // 必须走等距映射 X()，否则 x = tm/TOT*plotW 会把中末标签甩到画布外（SVG 路径本就如此，canvas 漏了）
-      ctx.fillText(lb, isHF ? X(tm) : (PAD + (tm / TOT) * plotW), TITLE_H + plotH + 16);
+      ctx.fillText(lb, contSess ? X(tm) : (PAD + (tm / TOT) * plotW), TITLE_H + plotH + 16);
     });
   } else {
     [0, Math.floor((dn - 1) / 2), dn - 1].forEach(i => {
@@ -214,7 +218,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
       const yRef = Y(prevCloseRef);
       ctx.strokeStyle = 'rgba(138,145,156,0.5)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(PAD, yRef); ctx.lineTo(W - PAD, yRef); ctx.stroke(); ctx.setLineDash([]);
       // 昨收标签：改为右侧轴外小标注
-      const refLabel = '昨 ' + fp(prevCloseRef);
+      const refLabel = (prevLabel === '昨结' ? '昨结 ' : '昨 ') + fp(prevCloseRef);
       ctx.font = '11px cjk';
       const refLW = ctx.measureText(refLabel).width + 8;
       ctx.fillStyle = 'rgba(138,145,156,0.85)'; ctx.beginPath(); ctx.roundRect(W - PAD + 2, yRef - 10, refLW, 20, 3); ctx.fill();
@@ -285,7 +289,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
     ctx.fillStyle = panel; ctx.fillRect(PAD - 8, yLegend, W - PAD * 2 + 16, 30);
     const lg = [[`价格 ${fp(lastPrice)}`, priceCol]];
     if (avgSeries) lg.push([`均价 ${fp(avgSeries[dn - 1])}`, '#f0b90b']);
-    if (prevCloseRef) lg.push([`昨收 ${fp(prevCloseRef)}`, sub]);
+    if (prevCloseRef) lg.push([`${prevLabel} ${fp(prevCloseRef)}`, sub]);
     ctx.textAlign = 'left';
     lg.forEach((it, i) => {
       const cx = PAD + 60 + i * 220;
@@ -456,12 +460,15 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
 }
 
 // 渲染 K 线 SVG → PNG base64（resvg fallback，@napi-rs/canvas 失败时使用）
-function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, timeMode, prec = 2 }, quote) {
+function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, timeMode, prec = 2, futures = false }, quote) {
   const fp = v => isFinite(v) ? Number(v).toFixed(prec) : '-'; // 价格显示精度（ETF 三位小数时 prec=3，普通股票 2）
   const W = 1000, PAD = 74, TITLE_H = 62, VOL_H = 120;
   const isHK = code.startsWith('hk'); // 港股：字段口径不同，不显示基本面面板
   const isUS = code.startsWith('us');
   const isHF = code.startsWith('hf_'); // 国际商品：接近24h连续交易，分时用索引等距映射
+  // 连续交易时段（外盘商品 / 国内期货含夜盘）：分时按索引等距映射，不套用 A股/港股 的时段过滤与分钟对齐
+  const contSess = isHF || futures;
+  const prevLabel = futures ? '昨结' : '昨收'; // 期货涨跌基准是昨结算价，不是昨收
   const showInfo = !isHK && !isUS && !!quote && quote.mktCap > 0; // 有市值即显示（ETF 无 PE/PB 也显示，缺的字段留空）
   // 分时：图例条占 30px（价格/均价/昨收），需计入否则成交量柱会捅进图例区；日线 66（两行）、分钟线 40（单行）
   const LEG_H = timeMode ? 30 : ((maPeriods && maPeriods.length > 0) ? 66 : 40);
@@ -470,7 +477,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   const n = klines.length;
   // 显示根数：分时=当天全部分钟（≤240）；日线=60 根（3 个月，指数日波动 20 点左右，根数过多会把近期波动压扁）；其余分钟线=120 根
   const display = timeMode
-    ? (isHF ? klines : klines.filter(k => { const t = String(k.t); return t >= '0930' && t <= ((isHK || isUS) ? '1600' : '1500'); })) // 分时：当天全部数据（港股/美股到16:00），商品全量
+    ? (contSess ? klines : klines.filter(k => { const t = String(k.t); return t >= '0930' && t <= ((isHK || isUS) ? '1600' : '1500'); })) // 分时：当天全部数据（港股/美股到16:00），商品与期货全量
     : (periodLabel === '日线' ? klines.slice(-60) : klines.slice(-120));
   const dn = display.length;
   const plotW = W - PAD * 2, plotH = H - TITLE_H - VOL_H - LEG_H - (showInfo ? INFO_H : 0) - PAD - 8;
@@ -520,8 +527,8 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
     if (isHK) return Math.min(TOT - 1, Math.max(0, m <= 720 ? m - 570 : 150 + (m - 780))); // 上午0-150 下午150-330
     return Math.min(TOT - 1, Math.max(0, m <= 690 ? m - 571 : m - 660));
   };
-  const mapX = timeMode ? (isHF ? X : (i => PAD + (tmin(display[i].t) / TOT) * plotW)) : X;
-  const cw = timeMode ? (isHF ? Math.max(1.5, plotW / dn * 0.7) : Math.max(1.5, plotW / TOT * 0.7)) : Math.max(2, Math.min(8, step * 0.6)); // K线/分时柱宽
+  const mapX = timeMode ? (contSess ? X : (i => PAD + (tmin(display[i].t) / TOT) * plotW)) : X;
+  const cw = timeMode ? (contSess ? Math.max(1.5, plotW / dn * 0.7) : Math.max(1.5, plotW / TOT * 0.7)) : Math.max(2, Math.min(8, step * 0.6)); // K线/分时柱宽
 
   // 白底配色
   const upCol = '#f5222d', downCol = '#0aa869'; // A股红涨绿跌
@@ -534,9 +541,9 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   const last = klines[n - 1];
   // 分时：现价/昨收用快照（分时末行是盘后杂数据，相邻价差≈0 会算错涨跌）；K线用数据收盘价
   const lastPrice = (quote && Number(quote.price) > 0) ? Number(quote.price) : last.close;
-  // 国际商品非分时：涨跌额/涨跌幅一律取快照原值（原因见 renderStockPngCanvas 同处注释）
-  const hfSnapChg = (isHF && !timeMode && quote && isFinite(Number(quote.chg))) ? Number(quote.chg) : NaN;
-  const hfBase = (isHF && !timeMode && quote && Number(quote.price) > 0 && isFinite(hfSnapChg))
+  // 国际商品/国内期货非分时：涨跌额与基准一律取快照自带值（原因见 renderStockPngCanvas 同处注释）
+  const hfSnapChg = (contSess && !timeMode && quote && isFinite(Number(quote.chg))) ? Number(quote.chg) : NaN;
+  const hfBase = (contSess && !timeMode && quote && Number(quote.price) > 0 && isFinite(hfSnapChg))
     ? Number(quote.price) - hfSnapChg : null;
   const prevClose = hfBase != null ? hfBase
     : ((timeMode && quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : (klines[n - 2]?.close ?? last.open));
@@ -569,18 +576,18 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
     s += `<line x1="${PAD}" y1="${y}" x2="${W - PAD}" y2="${y}" stroke="${grid}" stroke-width="1" stroke-dasharray="4 4"/>`;
     s += `<text x="${PAD - 10}" y="${y + 5}" text-anchor="end" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">${fp(p)}</text>`;
   }
-  // X 轴时间标签：分时精确对齐曲线时刻 tmin 映射（12:00/13:00 相邻不重复标）；商品取首/中/末；其余取首/中/末
+  // X 轴时间标签：分时精确对齐曲线时刻 tmin 映射（12:00/13:00 相邻不重复标）；连续时段取首/中/末；其余取首/中/末
   if (timeMode) {
-    // 注意 hf_ 新浪分时的 t 本身就带冒号（"06:00"），A股/港美股是紧凑的 "0930"——
+    // 注意 外盘商品与国内期货分时的 t 可能是带冒号的 "06:00"，A股/港美股是紧凑的 "0930"——
     // 先去掉冒号再插，否则会拼成 "06::0"（外盘分时横轴标签一直是这样，2026-09-11 修）
     const fmtT = t => { const s = String(t).replace(':', ''); return s.slice(0, 2) + ':' + s.slice(2, 4); };
-    const lbs = isHF
+    const lbs = contSess
       ? [[0, fmtT(display[0].t)], [Math.floor(dn / 2), fmtT(display[Math.floor(dn / 2)].t)], [dn - 1, fmtT(display[dn - 1].t)]]
       : (isUS
         ? [[0, '09:30'], [90, '11:00'], [180, '12:30'], [270, '14:00'], [TOT - 1, '16:00']]
         : (isHK ? [[0, '09:30'], [60, '10:30'], [120, '11:30'], [180, '14:00'], [240, '15:00'], [TOT - 1, '16:00']] : [[0, '09:30'], [59, '10:30'], [119, '11:30'], [180, '14:00'], [TOT - 1, '15:00']]));
     lbs.forEach(([tm, lb]) => {
-      const x = isHF ? X(tm) : (PAD + (tm / TOT) * plotW);
+      const x = contSess ? X(tm) : (PAD + (tm / TOT) * plotW);
       s += `<text x="${x.toFixed(1)}" y="${TITLE_H + plotH + 16}" text-anchor="middle" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">${lb}</text>`;
     });
   } else {
@@ -601,7 +608,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
       const yRef = Y(prevCloseRef);
       s += `<line x1="${PAD}" y1="${yRef}" x2="${W - PAD}" y2="${yRef}" stroke="${sub}" stroke-width="1.1" stroke-dasharray="4 4" opacity="0.8"/>`;
       s += `<rect x="${PAD - 6}" y="${yRef - 10}" width="70" height="20" rx="3" fill="${sub}"/>`;
-      s += `<text x="${PAD + 29}" y="${yRef + 4}" text-anchor="middle" font-family="PingFang SC,cjk" font-size="11" fill="#fff">昨收 ${fp(prevCloseRef)}</text>`;
+      s += `<text x="${PAD + 29}" y="${yRef + 4}" text-anchor="middle" font-family="PingFang SC,cjk" font-size="11" fill="#fff">${prevLabel} ${fp(prevCloseRef)}</text>`;
     }
     // 价格线颜色：按「昨收」判断（红涨绿跌，见 renderStockPngCanvas 同处注释）
     const priceCol = chg >= 0 ? upCol : downCol;
@@ -617,7 +624,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
     s += `<rect x="${PAD - 8}" y="${yLegend}" width="${W - PAD * 2 + 16}" height="30" rx="8" fill="${panel}"/>`;
     const lg = [[`价格 ${fp(lastPrice)}`, priceCol]];
     if (avgSeries) lg.push([`均价 ${fp(avgSeries[dn - 1])}`, '#f0b90b']);
-    lg.push([`昨收 ${fp(prevCloseRef)}`, sub]);
+    lg.push([`${prevLabel} ${fp(prevCloseRef)}`, sub]);
     lg.forEach((it, i) => {
       const cx = PAD + 60 + i * 220;
       s += `<rect x="${cx - 60}" y="${yLegend + 7}" width="14" height="14" rx="3" fill="${it[1]}"/>`;
