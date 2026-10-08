@@ -30,9 +30,12 @@
 //   GW_HTTP_PORT / GW_WS_PORT         监听端口（默认 3100 / 3101）
 //   GW_BIND_FILE                      bindings 持久化路径（默认 ./bindings.json）
 //   GW_HEARTBEAT_MS                   WS 连接保活间隔：ping/pong 探测 + meta_event 心跳下发（默认 30000）
+//   GW_QQ_KEEPALIVE_MS                QQ WS 套接字 TCP keepalive 起始探测时间（默认 30000）
+//   GW_QQ_STALL_MS                    QQ WS 多久无入站字节判定失联并主动重连（默认 240000）
 
 import { QQBot, MediaFileType } from '@tencent-connect/qqbot-nodejs';
 import http from 'node:http';
+import https from 'node:https';
 import { WebSocketServer } from 'ws';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,6 +52,54 @@ const BIND_FILE = process.env.GW_BIND_FILE || path.join(__dirname, 'bindings.jso
 
 // 日志时间戳（容器 TZ 已设为 Asia/Shanghai，即北京时间）
 const ts = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
+
+// ==================== QQ WS 保活加固（2026-10-08） ====================
+// SDK(@tencent-connect/qqbot-nodejs@1.0.4) 内部 `new WebSocket(...)` 连 QQ 网关时有两个缺口：
+//   1) ws 库不调 setKeepAlive → 套接字没有 TCP keepalive；
+//   2) SDK 里 `case GatewayOp.HEARTBEAT_ACK: break;` → 心跳 ACK 被吞，没有任何活性看门狗。
+// 于是宿主休眠 / 切网 / Docker Desktop 暂停后 TCP 常处于「半开」：客户端仍认为在线，事件被静默
+// 写进黑洞，既收不到推送、也等不到 onclose，只能干等 QQ 侧 ~1h 会话超时才重连（日志里的 1006/4009），
+// 期间用户发指令一律「不回复」，重连后又把积压的消息成批补投 → 表现为「延迟近 1 小时才回」。
+// 这里在 https.request 层挂钩（ws 用 https.request 建连，且运行时取属性，patch 对其可见）：
+//   a) 给该套接字开 TCP keepalive（默认 30s 起探）；
+//   b) 轮询 socket.bytesRead：超过 GW_QQ_STALL_MS（默认 240s）无任何入站字节 → 判定失联，
+//      destroy 套接字逼 SDK 收到 onclose 后重连（RESUME 会把积压消息补投）。
+// 只对 WS Upgrade 请求生效，不影响 QQ REST API 的短连接。
+const QQ_KEEPALIVE_MS = Number(process.env.GW_QQ_KEEPALIVE_MS || 30000);
+const QQ_STALL_MS = Number(process.env.GW_QQ_STALL_MS || 240000);
+const QQ_STALL_POLL_MS = 15000;
+(function hardenQqWs() {
+  const origRequest = https.request;
+  https.request = function patchedRequest(...args) {
+    const req = origRequest.apply(this, args);
+    try {
+      const opts = args[0] && typeof args[0] === 'object' ? args[0] : {};
+      const isWsUpgrade =
+        String((req.getHeader && req.getHeader('upgrade')) || '').toLowerCase() === 'websocket' ||
+        String((opts.headers && (opts.headers.Upgrade || opts.headers.upgrade)) || '').toLowerCase() === 'websocket';
+      if (!isWsUpgrade) return req;
+      req.on('socket', (socket) => {
+        try { socket.setKeepAlive(true, QQ_KEEPALIVE_MS); } catch (_) { /* ignore */ }
+        let lastBytes = socket.bytesRead || 0;
+        let lastAt = Date.now();
+        const timer = setInterval(() => {
+          if (socket.destroyed) { clearInterval(timer); return; }
+          const now = socket.bytesRead || 0;
+          if (now > lastBytes) { lastBytes = now; lastAt = Date.now(); return; }
+          const idleMs = Date.now() - lastAt;
+          if (idleMs >= QQ_STALL_MS) {
+            console.warn(`[ws-guard] ${ts()} QQ WS 已 ${Math.round(idleMs / 1000)}s 无入站字节（疑似半开/失联）→ 主动断开重连`);
+            clearInterval(timer);
+            try { socket.destroy(); } catch (_) { /* ignore */ }
+          }
+        }, QQ_STALL_POLL_MS);
+        socket.on('close', () => clearInterval(timer));
+        console.log(`[ws-guard] ${ts()} QQ WS 套接字已加固（TCP keepalive 起探 ${QQ_KEEPALIVE_MS / 1000}s / 失联阈值 ${QQ_STALL_MS / 1000}s）`);
+      });
+    } catch (_) { /* ignore */ }
+    return req;
+  };
+})();
 
 // ==================== bindings：openid 学习与持久化 ====================
 // { owner: {openid, qq}, users: { [openid]: {qq?, firstSeen} }, groups: { [groupOpenid]: {name?, firstSeen} } }

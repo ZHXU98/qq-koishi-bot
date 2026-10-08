@@ -86,6 +86,41 @@ docker run --rm -v "$PWD/official-bot-gateway:/app" -w /app node:22-alpine \
 排障时用 `docker compose logs --timestamps official-bot-gateway` 比对时间：
 若某段时间空白、随后突然补上，说明期间宿主休眠/断网（恢复后平台会补推旧事件，表现为「很久才回」）。
 
+### 上游 QQ 网关侧加固（2026-10-08，同一根因的另一半）
+
+**上面那套只保住了下游**。`gateway ↔ QQ 官方网关`（`wss://api.sgroup.qq.com/websocket`）这条**上游** WS
+由 SDK 内部创建，同样会「半开/失聪」，而 SDK 有**两个缺口**：
+
+1. `ws` 库不调 `setKeepAlive` → 套接字没有 TCP keepalive（容器 `tcp_keepalive_time` 默认 7200s）；
+2. `gateway-connection.js` 里 `case GatewayOp.HEARTBEAT_ACK: break;` → 心跳 ACK 被吞，**没有任何活性看门狗**。
+
+后果：连接「看着在线、其实收不到推送」，客户端要等 QQ 侧 **~1h 会话超时**（`1006` / `4009`）才重连；
+这期间用户发的指令**没有任何日志**，重连时平台把积压事件**成批补投** → 表现为「延迟近一小时才回一堆」。
+（`1006` 走 reconnect 默认分支 `clearSession:false`，只会 `RESUME`，不做新 `IDENTIFY`。）
+
+**做法**：在 `https.request` 层挂钩（`ws` 用 `https.request` 建连，且是运行时取属性，patch 对其可见），
+**仅对 WS Upgrade 请求**生效，不影响 QQ REST 短连接：
+
+| 机制 | 说明 |
+|---|---|
+| `socket.setKeepAlive(true, GW_QQ_KEEPALIVE_MS)` | 默认 30s 起探，让内核兜住真正死掉的 TCP |
+| 轮询 `socket.bytesRead` | 超过 `GW_QQ_STALL_MS`（默认 **240s**）无任何入站字节 → `socket.destroy()`，逼 SDK 收到 `onclose` 重连（`RESUME` 会补投积压消息） |
+
+**阈值依据**：QQ 的 HELLO 里 `heartbeat_interval = 41250ms` → SDK 每 41.25s 发一次心跳、QQ 回 ACK，
+**健康连接至少每 ~41s 有入站字节**；240s ≈ 漏掉 5.8 个 ACK 周期，因此不会误判。
+可调：`GW_QQ_KEEPALIVE_MS` / `GW_QQ_STALL_MS`。
+
+**日志**：加固成功会打 `[ws-guard] HH:MM:SS QQ WS 套接字已加固（TCP keepalive 起探 30s / 失联阈值 240s）`；
+看门狗触发打 `[ws-guard] … 已 Ns 无入站字节（疑似半开/失联）→ 主动断开重连`。
+
+**用 `[event]`/`[msg]` 定位是哪条链路丢了**（两端都改完才有这个能力）：
+
+| 现象 | 结论 |
+|---|---|
+| 只有 `[event]`、没有 `[msg]` | **内部**（gateway↔qq-reply）链路丢 |
+| `[event]` 时间明显晚于用户发送时间 | **上游**（gateway↔QQ）延迟 |
+| 有 `[msg]`、没有 `[send]` | 路由/处理问题 |
+
 ## 接口（与 NapCat OneBot 兼容）
 
 | 端点 | 说明 |
