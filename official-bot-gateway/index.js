@@ -180,7 +180,7 @@ if (!APP_ID || !APP_SECRET) {
 
 const bot = new QQBot({ appId: APP_ID, appSecret: APP_SECRET, logger: console });
 
-bot.on('ready', (d) => console.log('✅ 官方机器人已连接 Gateway, sessionId:', d?.sessionId || ''));
+bot.on('ready', (d) => console.log('✅ 官方机器人已连接 Gateway, sessionId:', d?.session_id || d?.sessionId || ''));
 bot.on('resumed', () => console.log('↻ 已重连'));
 bot.on('error', (e) => console.error('[bot] 错误:', e?.message || e));
 
