@@ -46,10 +46,13 @@ async function sendReply(ev, text, images = []) {
   if (text) message.push({ type: 'text', data: { text } });
   for (const img of images.slice(0, 4)) message.push({ type: 'image', data: { file: img } });
   const extra = ev._reply && ev._reply.msgId ? { msg_id: ev._reply.msgId } : {};
-  if (ev.message_type === 'group') {
-    return napcat('/send_group_msg', { group_id: ev.group_id, message, ...extra }, { retry: true });
-  }
-  return napcat('/send_private_msg', { user_id: ev.user_id, message, ...extra }, { retry: true });
+  const scope = ev.message_type === 'group' ? 'group' : 'private';
+  const ok = scope === 'group'
+    ? await napcat('/send_group_msg', { group_id: ev.group_id, message, ...extra }, { retry: true })
+    : await napcat('/send_private_msg', { user_id: ev.user_id, message, ...extra }, { retry: true });
+  // 只记成败与形态（回复大多为图，正文无参考价值），便于对照「命令为何没回」
+  console.log(`[send] ${scope === 'group' ? '群' : '私聊'} ${ok ? '✅' : '❌'}${images.length ? ` 🖼${images.length}` : ''}`);
+  return ok;
 }
 
 // 逐张发送预览图（官方通道一条消息只能一张图；已走官方网关，无需 NapCat 频控，间隔 0）
@@ -64,17 +67,19 @@ async function sendImagesSequential(ev, images, text = '', { delay = 0 } = {}) {
 
 function parseMessage(segs) {
   let atMe = false;
+  let atAny = false; // 是否出现任意 @ 段（用于区分「没 @ 」与「@ 了但标识不匹配」）
   let text = '';
   for (const s of Array.isArray(segs) ? segs : []) {
     if (!s || !s.type) continue;
     if (s.type === 'at') {
       // 仅「精确 @ 机器人」触发；@全体成员不触发，避免误回应
+      atAny = true;
       if (String((s.data && s.data.qq) ?? '') === BOT_UIN) atMe = true;
     } else if (s.type === 'text') {
       text += (s.data && s.data.text) || '';
     }
   }
-  return { atMe, text: text.trim() };
+  return { atMe, atAny, text: text.trim() };
 }
 
 let __ownerBind = { at: 0, openid: '' };

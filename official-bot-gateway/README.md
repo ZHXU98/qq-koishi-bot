@@ -65,6 +65,27 @@ docker run --rm -v "$PWD/official-bot-gateway:/app" -w /app node:22-alpine \
 > 背景：2026-09-14 曾因容器 DNS 失效（当天 `ENOTFOUND` 1018 次）+ 启动失败即 `exit(1)` + 每次启动都跑 npm install，
 > 导致网关照 **8 小时**不恢复（17:07 断，次日 01:08 才恢复）。
 
+## WS 连接保活（2026-10-08 加固）
+
+**问题**：宿主休眠 / 切网 / Docker Desktop 暂停后，网关与下游（`qq-reply`）之间的 TCP 经常「半开」——
+本地 `readyState` 仍是 `OPEN`，事件被静默写进黑洞，下游既收不到消息、也等不到 `onclose`，
+于是**永久不重连**。表面现象极具迷惑性：**主动推送（`ths-news` 走 HTTP）一切正常，唯独指令不回复**。
+
+**两道保险**（均以 `GW_HEARTBEAT_MS` 为周期，默认 30s）：
+
+| 机制 | 作用 |
+|---|---|
+| 标准 ws `ping`/`pong` | 无 `pong` 的连接直接 `terminate()`，迫使下游收到 `onclose` 并重连 |
+| 周期性下发 `meta_event` 心跳 | 给下游一个「网关仍在工作」的活性信号（`meta_event` 不参与业务路由） |
+| `broadcast()` 写失败即 `terminate()` | 写失败说明对端已死，立即断开而不留死连接 |
+
+下游 `qq-reply` 据此把「超 `WS_STALE_MS`（默认 90s）收不到任何推送」判定为僵尸连接并主动重连。
+两边配合才能真正自愈（只靠单边都会漏）。
+
+**日志**：入站消息到达时记一条 `[event] HH:MM:SS 群|私聊消息 → 转发 qq-reply`（不含正文）。
+排障时用 `docker compose logs --timestamps official-bot-gateway` 比对时间：
+若某段时间空白、随后突然补上，说明期间宿主休眠/断网（恢复后平台会补推旧事件，表现为「很久才回」）。
+
 ## 接口（与 NapCat OneBot 兼容）
 
 | 端点 | 说明 |

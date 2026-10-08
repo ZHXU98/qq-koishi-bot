@@ -62,6 +62,14 @@ const { cmdZjl } = require('./commands/zjl');
 
 let wsState = 'idle';
 let reconnectTimer = null; // WS 重连定时器（连接失败时 ws 库可能不触发 onclose，必须独立调度）
+let curSocket = null;      // 当前 WS（僵尸检测/迟到回调只作用于它）
+let staleTimer = null;     // 僵尸连接检测定时器
+let lastPushAt = 0;        // 上次收到任何推送（含网关心跳）的时刻
+// 网关每 GW_HEARTBEAT_MS（默认 30s）下发一次 meta_event 心跳；超过阈值仍收不到任何推送，
+// 说明连接已半开（宿主休眠/切网后 onclose 常不触发）→ 主动断开重连。
+const STALE_PUSH_MS = Number(process.env.WS_STALE_MS || 90000);
+const STALE_CHECK_MS = Number(process.env.WS_STALE_CHECK_MS || 15000);
+const ts = () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
 const { initChartFonts } = require('./chart-fonts');
 initChartFonts();
 
@@ -94,7 +102,7 @@ function routeCommand(text) {
 async function handleEvent(ev) {
   if (!ev || ev.post_type !== 'message') return; // 仅处理消息事件
   loadConfig(); // 每次收到消息重新读盘：改 config.json 无需重启立即生效
-  const { atMe, text } = parseMessage(ev.message);
+  const { atMe, atAny, text } = parseMessage(ev.message);
   if (!text) return; // 纯 @ 无文字（或只有图片/表情）→ 不打扰
 
   const uid = String(ev.user_id ?? '');
@@ -118,11 +126,17 @@ async function handleEvent(ev) {
     // 群聊仅管理员：非管理员一律不响应
     if (CONFIG.groupAdminOnly && !isAdmin) return;
     // 群聊仅响应被 @；例外：管理员直接发磁链也触发自动预览（普通成员仍须 @）
-    if (CONFIG.groupAtOnly && !atMe && !(isAdmin && autoMg)) return;
+    if (CONFIG.groupAtOnly && !atMe && !(isAdmin && autoMg)) {
+      // 仅当「确实 @ 了但没被识别」才记一笔（BOT_UIN 与网关 at 标识不一致是 @ 无反应的经典原因）；
+      // 普通未 @ 的消息不记录，避免刷屏。
+      if (atAny) console.log(`[msg] ${ts()} 群消息已 @ 但未被识别（BOT_UIN=${BOT_UIN || '(未设置)'}）→ 忽略`);
+      return;
+    }
   } else {
     return; // 其它消息类型（讨论组等）暂不处理
   }
 
+  const scopeText = ev.message_type === 'group' ? '群' : '私聊';
   let cmd = routeCommand(text);
   if (!cmd) {
     if (autoMg) {
@@ -130,9 +144,12 @@ async function handleEvent(ev) {
       cmd = { name: 'preview', type: 'preview', text: autoMg };
     } else {
       // 群聊/私聊统一：非特定指令的消息（闲聊等）一律忽略，不打扰
+      console.log(`[msg] ${ts()} ${scopeText} 未识别指令 → 忽略`);
       return;
     }
   }
+  // 只记路由结果（指令名），不记正文
+  console.log(`[msg] ${ts()} ${scopeText} → /${cmd.name}`);
 
   // —— 群聊功能区别：非管理员仅允许受限指令集（自动磁链等同 /preview 走同一权限） ——
   const restricted = CONFIG.groupRestrictedCmds || [];
@@ -250,9 +267,12 @@ function connect() {
   wsState = 'connecting';
   console.log(`[ws] 连接 ${WS_URL} ...`);
   const w = new WebSocket(WS_URL);
+  curSocket = w;
+  lastPushAt = Date.now();
   let connected = false;
-  // 统一重连调度：error/close 都可能触发，用定时器防重复；连接失败不依赖 onclose（NapCat 未就绪时常见）
+  // 统一重连调度：error/close 都可能触发，用定时器防重复；连接失败不依赖 onclose（网关未就绪时常见）
   const scheduleReconnect = () => {
+    if (curSocket !== w) return; // 已被更新的连接取代，忽略旧连接的迟到回调
     if (reconnectTimer) return;
     wsState = 'offline';
     console.log(`⚠️ WebSocket ${connected ? '断开' : '连接失败'}，5 秒后重连...`);
@@ -261,9 +281,11 @@ function connect() {
   w.onopen = () => {
     connected = true;
     wsState = 'online';
+    lastPushAt = Date.now();
     console.log('✅ WebSocket 已连接', WS_URL);
   };
   w.onmessage = (e) => {
+    lastPushAt = Date.now(); // 任何入站（含网关心跳 meta_event）都算「连接活着」
     let ev;
     try { ev = JSON.parse(String(e.data)); } catch (_) { return; }
     handleEvent(ev).catch(err => console.error('[event] 处理异常:', err.message));
@@ -273,6 +295,16 @@ function connect() {
     console.error('[ws] 错误:', (err && err.message) || '未知');
     scheduleReconnect();
   };
+  // 僵尸连接检测：半开的 TCP 不会触发 onclose，只能靠「长时间收不到任何推送」判定
+  if (staleTimer) clearInterval(staleTimer);
+  staleTimer = setInterval(() => {
+    if (curSocket !== w || wsState !== 'online') return;
+    const idle = Date.now() - lastPushAt;
+    if (idle <= STALE_PUSH_MS) return;
+    console.log(`⚠️ WebSocket 已 ${Math.round(idle / 1000)}s 收不到任何推送（疑似半开连接），主动断开重连...`);
+    try { w.close(); } catch (_) { /* ignore */ }
+    scheduleReconnect(); // close 未触发 onclose 时的兜底（reconnectTimer 已去重）
+  }, STALE_CHECK_MS);
 }
 
 // ---------- 主流程 ----------

@@ -32,6 +32,7 @@ QQ 用户 ──@ / 指令──▶ 官方 QQ 开放平台 ──▶ official-bo
 - **零依赖**：Node ≥ 21 内置全局 `WebSocket`（事件通道）与 `fetch`（HTTP 回复），无需 `npm install`。
 - **渲染库**：`@napi-rs/canvas`（主，Canvas 2D，进程级字体缓存 ~50ms）+ `@resvg/resvg-js`（兜底），均从 `ths-news-modules` 卷**只读共享**（渲染 `/ss` `/stock` `/stocks` `/zj` 图表用）。
 - **断线自愈**：WS 断开后每 5 秒自动重连。
+- **僵尸连接自愈**：半开 TCP（宿主休眠 / 切网 / Docker Desktop 暂停）不会触发 `onclose`，只靠「断开才重连」会永久静默失联。网关每 `GW_HEARTBEAT_MS`（默认 30s）下发一次 `meta_event` 心跳；本服务超过 `WS_STALE_MS`（默认 90s）收不到任何推送即判定连接已死、主动断开重连（心跳是 `meta_event`，不参与业务路由）。
 - **发送重试**：`send_*` 端点 5 次 × 5s，抵御网关间歇超时。
 - **配置热加载**：`config.json` 每次收到消息时重新读盘。
 - **可写挂载**：仅 `./reply/data`（`/stocks` 组合数据）；`index.js` / `config.json` 仍是只读挂载。
@@ -197,6 +198,8 @@ open data/previews/
 | `NAPCAT_URL` | `http://official-bot-gateway:3100` | 发送地址（OneBot 兼容 HTTP） |
 | `NAPCAT_TOKEN` | 空 | access token（若启用） |
 | `BOT_UIN` | `${QQBOT_APP_ID}` | 机器人标识，用于识别「@」 |
+| `WS_STALE_MS` | `90000` | 僵尸连接阈值：超过这么久收不到任何推送（含网关心跳）即判定半开、主动重连 |
+| `WS_STALE_CHECK_MS` | `15000` | 僵尸检测的巡检间隔 |
 | `NEWS_QUERY_LIMIT` | `10` | `/快讯` 返回条数 |
 | `DAILY_PUSH_ENABLED` | `false` | 每日 21:30 汇总推送总开关（用户已取消，默认关） |
 | `DAILY_PUSH_HOUR` / `DAILY_PUSH_MIN` | `21` / `30` | 汇总推送时间 |
@@ -225,6 +228,14 @@ open data/previews/
 
 ## 排障
 
+- **指令有时不回应 / 隔很久才回**：先看日志分辨是「事件没到」还是「到了没回」——
+  - 网关：`[event] HH:MM:SS 群|私聊消息 → 转发 qq-reply` = 事件已从官方平台送达网关；
+  - 本服务：`[msg] HH:MM:SS 群|私聊 → /指令名` = 已识别并路由（`未识别指令 → 忽略` 表示命令词没匹配上）；
+  - 本服务：`[send] 群|私聊 ✅/❌` = 回复发送结果。
+  若日志在某段时间整段空白、随后才突然补上一条，说明期间宿主休眠/断网——恢复后官方平台会补推旧事件，表现为「12:18 发的消息 13:48 才回」。
+  用 `docker compose logs --timestamps official-bot-gateway qq-reply` 对比时间戳即可定位；
+  若属于半开连接，现已能自愈（见上方「僵尸连接自愈」），不再需要手工 restart。
+- **`@` 了却没反应**：日志出现 `[msg] ... 群消息已 @ 但未被识别（BOT_UIN=xxx）` 即 `BOT_UIN` 与网关转发的 `at` 标识不一致（应取 `${QQBOT_APP_ID}`）。
 - **改了指令没生效**：`index.js` 是 bind mount，但 Node 启动时载入内存，必须 `docker compose restart qq-reply`；改 `config.json` 则无需重启。
 - **日志显示 WebSocket 一直重连**：`official-bot-gateway` 未启动或已重启。确认网关在跑（`docker compose ps`），日志里看到 `✅ WebSocket 已连接 ws://official-bot-gateway:3101` 即就绪。
 - **@ 不识别**：确认 `BOT_UIN` 与网关转发的 `at` 标识一致（当前取 `${QQBOT_APP_ID}`）。可用 `/status` 查看机器人信息与通道状态。

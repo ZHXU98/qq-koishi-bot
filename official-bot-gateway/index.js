@@ -29,6 +29,7 @@
 //   GW_OWNER_TOKEN                    绑定 owner 的口令（默认 bind-owner）
 //   GW_HTTP_PORT / GW_WS_PORT         监听端口（默认 3100 / 3101）
 //   GW_BIND_FILE                      bindings 持久化路径（默认 ./bindings.json）
+//   GW_HEARTBEAT_MS                   WS 连接保活间隔：ping/pong 探测 + meta_event 心跳下发（默认 30000）
 
 import { QQBot, MediaFileType } from '@tencent-connect/qqbot-nodejs';
 import http from 'node:http';
@@ -45,6 +46,9 @@ const OWNER_TOKEN = process.env.GW_OWNER_TOKEN || 'bind-owner';
 const HTTP_PORT = Number(process.env.GW_HTTP_PORT || 3100);
 const WS_PORT = Number(process.env.GW_WS_PORT || 3101);
 const BIND_FILE = process.env.GW_BIND_FILE || path.join(__dirname, 'bindings.json');
+
+// 日志时间戳（容器 TZ 已设为 Asia/Shanghai，即北京时间）
+const ts = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
 
 // ==================== bindings：openid 学习与持久化 ====================
 // { owner: {openid, qq}, users: { [openid]: {qq?, firstSeen} }, groups: { [groupOpenid]: {name?, firstSeen} } }
@@ -169,6 +173,9 @@ bot.on('message', async (ctx, msg) => {
       _reply: { scope: kind === 'group' ? 'group' : 'c2c', targetId: kind === 'group' ? msg.groupOpenid : msg.senderId, msgId: msg.messageId },
     };
     if (kind === 'group') onebot.group_id = msg.groupOpenid;
+    // 只记「事件到达 + 是否转发」这一条元信息（带时间，不含正文），
+    // 用于区分「命令没回」是事件没到、还是到了被下游过滤掉。
+    console.log(`[event] ${ts()} ${kind === 'group' ? '群' : '私聊'}消息 → 转发 qq-reply`);
     broadcast(onebot);
   } catch (e) {
     console.error('[event] 处理入站消息失败:', e.message);
@@ -279,8 +286,41 @@ server.listen(HTTP_PORT, '0.0.0.0', () => console.log(`🌐 网关 HTTP 监听 :
 const wss = new WebSocketServer({ port: WS_PORT }, () => console.log(`🔌 网关 WS 监听 :${WS_PORT} (OneBot 事件推送)`));
 function broadcast(event) {
   const s = JSON.stringify(event);
-  for (const c of wss.clients) if (c.readyState === 1) c.send(s);
+  for (const c of wss.clients) {
+    if (c.readyState !== 1) continue;
+    // 写失败说明对端已死（半开连接本地仍算 OPEN），直接断开，逼下游重连
+    try { c.send(s); } catch (_) { try { c.terminate(); } catch (_) { /* ignore */ } }
+  }
 }
+
+// ---------- 连接保活 ----------
+// 宿主休眠 / 切网 / Docker Desktop 暂停后，TCP 连接经常「半开」：本地 readyState 仍是 OPEN，
+// 事件被静默写进黑洞，下游既收不到消息、也等不到 onclose（于是永远不重连）。
+// 两道保险：
+//   1) 标准 ping/pong —— 无 pong 的半开连接直接 terminate，迫使下游收到 onclose 并重连；
+//   2) 周期性下发 meta_event 心跳 —— 给下游一个「网关仍在工作」的活性信号，下游据此把
+//      「长时间收不到任何推送」判定为僵尸连接（下游 meta_event 不参与业务路由，无副作用）。
+const WS_HEARTBEAT_MS = Number(process.env.GW_HEARTBEAT_MS || 30000);
+wss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('error', () => { try { ws.terminate(); } catch (_) { /* ignore */ } });
+});
+setInterval(() => {
+  const hb = JSON.stringify({
+    post_type: 'meta_event',
+    meta_event_type: 'heartbeat',
+    time: Math.floor(Date.now() / 1000),
+    self_id: APP_ID,
+  });
+  for (const c of wss.clients) {
+    if (c.readyState !== 1) continue;
+    if (c.isAlive === false) { try { c.terminate(); } catch (_) { /* ignore */ } continue; }
+    c.isAlive = false;
+    try { c.ping(); } catch (_) { /* ignore */ }
+    try { c.send(hb); } catch (_) { try { c.terminate(); } catch (_) { /* ignore */ } }
+  }
+}, WS_HEARTBEAT_MS);
 
 // ==================== 启动 ====================
 process.on('SIGINT', () => { console.log('\n退出'); bot.stop(); process.exit(0); });
