@@ -17,6 +17,8 @@ const SS_QUOTES = 'https://qt.gtimg.cn/q=sh000001,sh000300,sz399106';
 const SS_MIN30 = 'https://d.10jqka.com.cn/v6/line/%s/41/last.js';
 // 腾讯代码 → 同花顺代码（sz399106=深证综指，全市场=上证+深证综指）
 const SS_THS = { sh000001: 'hs_1A0001', sh000300: 'hs_399300', sz399106: 'hs_399106' };
+// 全市场卡片高度（标题 / 成交额 / 涨跌家数数字行 + 占比条 / 量能提示）：canvas 与 SVG 版共用，避免两版布局漂移
+const MKT_H = 162;
 // 历史 30 分钟K偶尔混入“截至当前的累计成交额快照”。直接累加会把同一成交额重复计入，
 // 使 fullDay/sameTime 比例畸高并让全天预计值暴涨。按日剔除明显累计快照后再统计。
 function sanitizeDayAmounts(entries) {
@@ -160,13 +162,18 @@ async function prevTradingAmount(code, nowHHMM) {
   async function fetchUpDownCount() {
     const cached = cacheGet('updown');
     if (cached) return cached;
-    // 复用 emFetchJson：东财会阻断部分 IP 的主站节点，需按「上次成功节点优先」轮换到 push2delay
-    const j = await emFetchJson(EM_UP_DOWN);
+    // 复用 emFetchJson：东财会阻断部分 IP 的主站节点，需按「上次成功节点优先」轮换到 push2delay。
+    // 取数失败只该影响这一块的展示，绝不能把整个 /ss 拖挂 —— 故自行兜住异常（与 fetchSw2Flow 对齐）。
+    let j = null;
+    try { j = await emFetchJson(EM_UP_DOWN); }
+    catch (e) { console.error('[ss] 涨跌家数取数异常:', e.message); return null; }
     const diff = j?.data?.diff;
     if (!Array.isArray(diff) || diff.length < 2) return null;
     const up = diff.reduce((s, x) => s + (Number(x.f104) || 0), 0);
     const down = diff.reduce((s, x) => s + (Number(x.f105) || 0), 0);
     const flat = diff.reduce((s, x) => s + (Number(x.f106) || 0), 0);
+    // 三项全 0 = 节点返回空壳结果，按无效处理（不缓存、不展示），避免图上出现 0/0/0 误导
+    if (!up && !down && !flat) return null;
     const result = { up, down, flat };
     cacheSet('updown', result, 30000); // 30 秒缓存
     return result;
@@ -216,7 +223,7 @@ async function prevTradingAmount(code, nowHHMM) {
       return [txt, col];
     };
     // 计算总高度（与 SVG 版布局一致）
-    let H = 18 + 44 + (data.indices.length * (202 + 12)) + 132 + 12 + (data.sw2 && data.sw2.inflow.length ? 206 + 12 : 0) + 16;
+    let H = 18 + 44 + (data.indices.length * (202 + 12)) + MKT_H + 12 + (data.sw2 && data.sw2.inflow.length ? 206 + 12 : 0) + 16;
     const { createCanvas } = require('@napi-rs/canvas');
     const canvas = createCanvas(Math.round(W * 1.2), Math.round(H * 1.2)); // 1.2x 分辨率，兼顾清晰与生成速度
     const ctx = canvas.getContext('2d');
@@ -295,8 +302,7 @@ async function prevTradingAmount(code, nowHHMM) {
 
     // 全市场卡片
     const mc = comp(data.mkt.curYuan, data.mkt.prevYuan);
-    const mktH = 132;
-    rrect(x0, y, cw, mktH, 14, panel);
+    rrect(x0, y, cw, MKT_H, 14, panel);
     ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.font = 'bold 18px cjk';
     ctx.fillText('全市场（沪深两市合计）', x0 + 18, y + 28);
     ctx.font = 'bold 30px cjk';
@@ -305,32 +311,41 @@ async function prevTradingAmount(code, nowHHMM) {
       ctx.fillStyle = sub; ctx.textAlign = 'right'; ctx.font = '15px cjk';
       ctx.fillText(`预计全天成交额 ${data.mkt.est > 0 ? `${f1(data.mkt.est / 10000)}亿` : '待稳定'}`, x0 + cw - 18, y + 62);
     }
-    // 涨跌家数：醒目横条（三段等宽色块：上涨红 / 下跌绿 / 平盘灰）
+    // 涨跌家数：先用三列等宽给出「具体数字」，再用一条占比色块表达强弱。
+    // 旧版把文字画在色块内部、宽度不足 72px 就整段丢弃，导致「平盘」这类小占比永远看不到数字。
+    ctx.textAlign = 'left';
     if (data.ud) {
-      const total = data.ud.up + data.ud.down + data.ud.flat;
-      const barH = 24;
-      const segs = [
+      const udSegs = [
         { label: `上涨 ${data.ud.up}`, col: upC, value: data.ud.up },
         { label: `下跌 ${data.ud.down}`, col: downC, value: data.ud.down },
         { label: `平盘 ${data.ud.flat}`, col: sub, value: data.ud.flat },
       ];
-      let sx = x0 + 18;
-      const usableW = cw - 36;
-      segs.forEach((seg, i) => {
-        const sw = i === segs.length - 1 ? x0 + 18 + usableW - sx : Math.max(22, usableW * seg.value / Math.max(total, 1));
+      const colW3u = (cw - 36) / 3;
+      ctx.font = 'bold 14px cjk';
+      udSegs.forEach((seg, i) => {
         ctx.fillStyle = seg.col;
-        ctx.beginPath(); ctx.roundRect(sx, y + 78, sw - 3, barH, 6); ctx.fill();
-        if (sw > 72) { ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.font = 'bold 14px cjk'; ctx.fillText(seg.label, sx + (sw - 3) / 2, y + 78 + barH / 2); }
+        ctx.fillText(seg.label, x0 + 18 + colW3u * i, y + 92);
+      });
+      const total = Math.max(udSegs.reduce((a, seg) => a + seg.value, 0), 1);
+      const barH = 20, usableW = cw - 36;
+      let sx = x0 + 18;
+      udSegs.forEach((seg, i) => {
+        const sw = i === udSegs.length - 1 ? x0 + 18 + usableW - sx : Math.max(20, usableW * seg.value / total);
+        ctx.fillStyle = seg.col;
+        ctx.beginPath(); ctx.roundRect(sx, y + 104, Math.max(0, sw - 3), barH, 5); ctx.fill();
         sx += sw;
       });
-      ctx.textAlign = 'left';
+    } else {
+      // 取数失败不再静默隐藏：明确标注，避免与「本就没有这个功能」混淆
+      ctx.fillStyle = sub; ctx.font = '13px cjk';
+      ctx.fillText('涨跌家数暂不可用（行情源取数失败）', x0 + 18, y + 102);
     }
     const [mt, mcol] = compLine(mc, !data.closed);
     ctx.fillStyle = mcol === upC ? 'rgba(245,34,45,0.08)' : mcol === downC ? 'rgba(10,168,105,0.08)' : 'rgba(138,145,158,0.08)';
-    ctx.beginPath(); ctx.roundRect(x0 + 18, y + 104, cw - 36, 26, 8); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(x0 + 18, y + 132, cw - 36, 26, 8); ctx.fill();
     ctx.fillStyle = mcol; ctx.textAlign = 'left'; ctx.font = 'bold 13px cjk';
-    ctx.fillText(mt, x0 + 32, y + 121);
-    y += mktH + 12;
+    ctx.fillText(mt, x0 + 32, y + 145);
+    y += MKT_H + 12;
 
     // 申万二级行业资金流
     if (data.sw2 && data.sw2.inflow.length) {
@@ -455,6 +470,10 @@ async function prevTradingAmount(code, nowHHMM) {
         s += `<text x="${cx}" y="${y + 166}" font-family="PingFang SC,cjk" font-size="16" font-weight="bold" fill="${ink}">${esc(c2[1])}</text>`;
       });
       // 与 Canvas 布局一致：量能提示条下移，避免覆盖成交额/预计全天成交量数值。
+      // ⚠️ [ct, cc] 必须在循环内按卡片各自计算：旧版漏了这一行，直接引用了 canvas 分支
+      //    的同名变量，使 SVG 兜底路径必然抛 `cc is not defined` —— canvas 一旦失败，
+      //    整个 /ss 会抛错、用户连任何回复都收不到（而不是降级）。
+      const [ct, cc] = compLine(c, !data.closed);
       s += `<rect x="${x0 + 18}" y="${y + 184}" width="${cw - 36}" height="18" rx="7" fill="${barBg(cc)}"/>`;
       s += `<text x="${x0 + 28}" y="${y + 193}" font-family="PingFang SC,cjk" font-size="12" font-weight="bold" fill="${cc}">${esc(ct)}</text>`;
       y += cardH + 12;
@@ -462,35 +481,38 @@ async function prevTradingAmount(code, nowHHMM) {
 
     // 全市场卡片
     const mc = comp(data.mkt.curYuan, data.mkt.prevYuan);
-    const mktH = 132;
-    s += `<rect x="${x0}" y="${y}" width="${cw}" height="${mktH}" rx="14" fill="${panel}"/>`;
+    s += `<rect x="${x0}" y="${y}" width="${cw}" height="${MKT_H}" rx="14" fill="${panel}"/>`;
     s += `<text x="${x0 + 18}" y="${y + 28}" font-family="PingFang SC,cjk" font-size="18" font-weight="bold" fill="${ink}">全市场（沪深两市合计）</text>`;
     s += `<text x="${x0 + 18}" y="${y + 64}" font-family="PingFang SC,cjk" font-size="30" font-weight="bold" fill="${ink}">${f1(data.mkt.amountWan / 10000)}亿</text>`;
     if (!data.closed) {
       s += `<text x="${x0 + cw - 18}" y="${y + 62}" text-anchor="end" font-family="PingFang SC,cjk" font-size="15" fill="${sub}">预计全天成交额 ${data.mkt.est > 0 ? `${f1(data.mkt.est / 10000)}亿` : '待稳定'}</text>`;
     }
-    // 涨跌家数：醒目横条（三段等宽色块：上涨红 / 下跌绿 / 平盘灰）
+    // 涨跌家数：三列等宽数字 + 占比色块，与 canvas 版布局保持一致
     if (data.ud) {
-      const total = data.ud.up + data.ud.down + data.ud.flat;
-      const barH = 24;
-      const segs = [
+      const udSegs = [
         { label: `上涨 ${data.ud.up}`, col: upC, value: data.ud.up },
         { label: `下跌 ${data.ud.down}`, col: downC, value: data.ud.down },
         { label: `平盘 ${data.ud.flat}`, col: sub, value: data.ud.flat },
       ];
-      const usableW = cw - 36;
+      const colW3u = (cw - 36) / 3;
+      udSegs.forEach((seg, i) => {
+        s += `<text x="${x0 + 18 + colW3u * i}" y="${y + 92}" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="${seg.col}">${esc(seg.label)}</text>`;
+      });
+      const total = Math.max(udSegs.reduce((a, seg) => a + seg.value, 0), 1);
+      const barH = 20, usableW = cw - 36;
       let sx = x0 + 18;
-      segs.forEach((seg, i) => {
-        const sw = i === segs.length - 1 ? x0 + 18 + usableW - sx : Math.max(22, usableW * seg.value / Math.max(total, 1));
-        s += `<rect x="${sx}" y="${y + 78}" width="${Math.max(0, sw - 3)}" height="${barH}" rx="6" fill="${seg.col}"/>`;
-        if (sw > 72) s += `<text x="${sx + (sw - 3) / 2}" y="${y + 78 + barH / 2 + 5}" text-anchor="middle" dominant-baseline="middle" font-family="PingFang SC,cjk" font-size="14" font-weight="bold" fill="#ffffff">${esc(seg.label)}</text>`;
+      udSegs.forEach((seg, i) => {
+        const sw = i === udSegs.length - 1 ? x0 + 18 + usableW - sx : Math.max(20, usableW * seg.value / total);
+        s += `<rect x="${sx}" y="${y + 104}" width="${Math.max(0, sw - 3)}" height="${barH}" rx="5" fill="${seg.col}"/>`;
         sx += sw;
       });
+    } else {
+      s += `<text x="${x0 + 18}" y="${y + 102}" font-family="PingFang SC,cjk" font-size="13" fill="${sub}">涨跌家数暂不可用（行情源取数失败）</text>`;
     }
     const [mt, mcol] = compLine(mc, !data.closed);
-    s += `<rect x="${x0 + 18}" y="${y + 104}" width="${cw - 36}" height="26" rx="8" fill="${barBg(mcol)}"/>`;
-    s += `<text x="${x0 + 32}" y="${y + 121}" font-family="PingFang SC,cjk" font-size="13" font-weight="bold" fill="${mcol}">${esc(mt)}</text>`;
-    y += mktH + 12;
+    s += `<rect x="${x0 + 18}" y="${y + 132}" width="${cw - 36}" height="26" rx="8" fill="${barBg(mcol)}"/>`;
+    s += `<text x="${x0 + 32}" y="${y + 145}" font-family="PingFang SC,cjk" font-size="13" font-weight="bold" fill="${mcol}">${esc(mt)}</text>`;
+    y += MKT_H + 12;
 
     // 申万二级行业资金流
     if (data.sw2 && data.sw2.inflow.length) {
