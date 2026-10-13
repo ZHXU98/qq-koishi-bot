@@ -11,8 +11,8 @@ const STOCK_TIMELINE = 'https://web.ifzq.gtimg.cn/appstock/app/minute/query?code
 const STOCK_SEARCH = 'https://smartbox.gtimg.cn/s3/?v=2&q=%s&t=all'; // 名称→代码（GBK）
 
 // 周期归一化（-d 日线 / -w 周线 / -M 月线 / -t 分时；分钟：-1m/-5m/-30m/-1h）
-const STOCK_PERIODS = { '-d': 'day', '-w': 'week', '-week': 'week', '周线': 'week', '周k': 'week', '-m': 'month', '-M': 'month', '-month': 'month', '月线': 'month', '月k': 'month', '-1m': 'm1', '-5m': 'm5', '-30m': 'm30', '-1h': 'm60', '-t': 'time', '-time': 'time', '分时': 'time' };
-const STOCK_PERIOD_LABEL = { day: '日线', week: '周线', month: '月线', m1: '1分钟', m5: '5分钟', m30: '30分钟', m60: '60分钟', time: '分时' };
+const STOCK_PERIODS = { '-d': 'day', '-w': 'week', '-week': 'week', '周线': 'week', '周k': 'week', '-m': 'month', '-M': 'month', '-month': 'month', '月线': 'month', '月k': 'month', '-1m': 'm1', '-5m': 'm5', '-30m': 'm30', '-1h': 'm60', '-t': 'time', '-time': 'time', '分时': 'time', '-pre': 'premarket', 'pre': 'premarket', '盘前': 'premarket' };
+const STOCK_PERIOD_LABEL = { day: '日线', week: '周线', month: '月线', m1: '1分钟', m5: '5分钟', m30: '30分钟', m60: '60分钟', time: '分时', premarket: '盘前' };
 const STOCK_LONG = ['day', 'week', 'month']; // 长周期（日/周/月，fqkline 接口）
 
 function normalizeCode(raw) {
@@ -144,6 +144,61 @@ function buildAvgLine(disp) {
   });
 }
 
+async function fetchYahooPremarket(code) {
+  if (!String(code || '').startsWith('us')) return null;
+  const symbol = String(code).slice(2).replace(/\.(OQ|N|AM)$/i, '').toUpperCase();
+  if (!/^[A-Z0-9.^-]{1,15}$/.test(symbol)) return null;
+  const ckey = 'yahoo-premarket:' + symbol;
+  const cached = cacheGet(ckey);
+  if (cached) return cached;
+  return coalesceRequest(ckey, async () => {
+    const cachedAgain = cacheGet(ckey);
+    if (cachedAgain) return cachedAgain;
+    try {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d&includePrePost=true`;
+      const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
+      if (!resp.ok) return null;
+      const result = (await resp.json())?.chart?.result?.[0];
+      const timestamps = result?.timestamp;
+      const quote = result?.indicators?.quote?.[0];
+      if (!Array.isArray(timestamps) || !quote) return null;
+      const parts = ts => new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+      }).formatToParts(new Date(ts * 1000)).reduce((o, p) => (o[p.type] = p.value, o), {});
+      const rows = [];
+      for (let i = 0; i < timestamps.length; i++) {
+        const close = Number(quote.close?.[i]);
+        if (!(close > 0)) continue;
+        const p = parts(timestamps[i]);
+        const date = `${p.year}-${p.month}-${p.day}`;
+        const t = `${p.hour}${p.minute}`;
+        if (t < '0400' || t >= '0930') continue;
+        rows.push({
+          date, t, open: Number(quote.open?.[i]) || close, close,
+          high: Number(quote.high?.[i]) || close, low: Number(quote.low?.[i]) || close,
+          vol: Number(quote.volume?.[i]) || 0,
+        });
+      }
+      if (!rows.length) return null;
+      const latestDate = rows[rows.length - 1].date;
+      const nowParts = parts(Math.floor(Date.now() / 1000));
+      const nyToday = `${nowParts.year}-${nowParts.month}-${nowParts.day}`;
+      if (latestDate !== nyToday) return null; // 尚未进入今日盘前、周末或休市日：不拿上一交易日冒充今日盘前
+      const out = rows.filter(row => row.date === latestDate).map(({ date, ...row }) => row);
+      if (!out.length) return null;
+      out._date = latestDate.slice(5);
+      out._prevClose = Number(result?.meta?.chartPreviousClose || result?.meta?.previousClose || result?.meta?.regularMarketPreviousClose) || 0;
+      out._symbol = symbol;
+      cacheSet(ckey, out, 15000);
+      return out;
+    } catch (e) {
+      console.error('[yahoo-premarket] 获取失败', symbol, e && e.message);
+      return null;
+    }
+  });
+}
+
 async function fetchStockKline(code, period) {
   const ckey = 'kline:' + code + ':' + period;
   const cached = cacheGet(ckey);
@@ -185,7 +240,9 @@ async function fetchStockKline(code, period) {
   };
   const isLong = STOCK_LONG.includes(period);
   let result = null;
-  if (EM_IDX_SECID[code] && isLong) {
+  if (period === 'premarket') {
+    result = await fetchYahooPremarket(code);
+  } else if (EM_IDX_SECID[code] && isLong) {
     // 美股指数（道指/标普500）：腾讯无 K 线，走东财 kline（日 klt=101 / 周 102 / 月 103，320 根）
     // 2026-09-11 新增；分时不走此路（东财对指数分时的采样口径与个股不同），仍文本速查
     result = await fetchEmKline(EM_IDX_SECID[code], { day: 101, week: 102, month: 103 }[period]);
@@ -547,5 +604,5 @@ module.exports = {
   calcSMA, calcBOLL, buildAvgLine, fetchStockKline, fetchStockMinuteKline, fetchEmKline,
   HF_SINA_SYM, SINA_GLOBAL_MIN, fetchSinaGlobalMin, SINA_GLOBAL_DAILY, HF_DAILY_TTL,
   fetchSinaGlobalDaily, aggHfKline, fetchSinaGlobalKline, EM_TRENDS, emSecid, fetchEmTrends,
-  fetchStockQuote, EM_STOCK_INDUSTRY, EM_INDUSTRY_BOARDS, EM_INDUSTRY_KLINE, fetchEmStockIndustry, fetchEmIndustryKline, fetchEmIndustryBoards, EM_HOSTS, EM_UA, _emHost, emFetchJson,
+  fetchYahooPremarket, fetchStockQuote, EM_STOCK_INDUSTRY, EM_INDUSTRY_BOARDS, EM_INDUSTRY_KLINE, fetchEmStockIndustry, fetchEmIndustryKline, fetchEmIndustryBoards, EM_HOSTS, EM_UA, _emHost, emFetchJson,
 };

@@ -21,12 +21,12 @@ const STOCKS_RENDER_MAX = 16;  // 单张拼图最多渲染的股票数
 // 组合名：中英文/数字/下划线打头，后接中英文/数字/下划线/点/短横线，总长 1-12；首字符不得是 -（避免与参数混淆）
 const PORTFOLIO_NAME_RE = /^[\u4e00-\u9fa5A-Za-z0-9_][\u4e00-\u9fa5A-Za-z0-9_.\-]{0,11}$/;
 // 只保留 分时/日/周/月 四个周期（用户要求：不需要分钟/小时图）
-const STOCKS_PERIODS = { '-t': 'time', '-time': 'time', '分时': 'time', '-d': 'day', '-day': 'day', '日线': 'day', '-w': 'week', '-week': 'week', '周线': 'week', '-m': 'month', '-month': 'month', '月线': 'month' };
-const STOCKS_PERIOD_LABEL = { day: '日线', week: '周线', month: '月线', time: '分时' };
+const STOCKS_PERIODS = { '-t': 'time', '-time': 'time', '分时': 'time', '-pre': 'premarket', 'pre': 'premarket', '盘前': 'premarket', '-d': 'day', '-day': 'day', '日线': 'day', '-w': 'week', '-week': 'week', '周线': 'week', '-m': 'month', '-month': 'month', '月线': 'month' };
+const STOCKS_PERIOD_LABEL = { day: '日线', week: '周线', month: '月线', time: '分时', premarket: '盘前' };
 const STOCKS_USAGE = [
   '📋 /stocks 股票组合',
   '出图：/stocks <周期> <组合名 或 股票...>',
-  '　　周期（单选）：-t 分时 | -d 日线 | -w 周线 | -m 月线（不写默认日线）',
+  '　　周期（单选）：-t 分时 | -pre 美股盘前 | -d 日线 | -w 周线 | -m 月线（不写默认日线）',
   '　　例：/stocks -d 我的持仓　/stocks -t 600519 000858　/stocks -w 贵州茅台 宁德时代',
   '组合：/stocks -list　组合清单（只列名称+只数）',
   '　　　/stocks -list <组合名>　查看某个组合的成分',
@@ -77,7 +77,8 @@ function stocksGridCols(n) {
 // 子图显示窗口：分时=当日交易时段（商品全量），其余=最近 60 根
 function stocksWindow(it, period) {
   const kl = it.klines || [];
-  if (period !== 'time') return kl.slice(-60);
+  if (period !== 'time' && period !== 'premarket') return kl.slice(-60);
+  if (period === 'premarket') return kl;
   if (it.mkt === 'hf') return kl;
   const cap = it.mkt === 'cn' ? '1500' : '1600';
   const f = kl.filter(k => { const t = String(k.t); return t >= '0930' && t <= cap; });
@@ -210,15 +211,17 @@ function buildStocksPng(items, meta) {
       }
     }
 
-    if (meta.period === 'time') {
+    if (meta.period === 'time' || meta.period === 'premarket') {
       // 分时：价格线（红/绿按昨收）+ 均价线 + 末端圆点
       // 横轴：A股/港股/美股按「交易分钟」映射（午休压缩，与单只 /stock 的 tmin 一致），
       //   让「盘中进行到一半」正确停在对应位置，而不是被索引等距铺满到末尾（=误显示成已收盘）。
       //   商品(hf)近 24h 连续、无固定交易时段，保持索引等距。2026-09-11 修复。
-      const TOT = it.mkt === 'us' ? 390 : (it.mkt === 'hk' ? 330 : 240);
+      const isPreItem = it.itemPeriod === 'premarket';
+      const TOT = isPreItem ? 330 : (it.mkt === 'us' ? 390 : (it.mkt === 'hk' ? 330 : 240));
       const tmin = t => {
         const s = String(t).replace(':', '');
         const m = Number(s.slice(0, 2)) * 60 + Number(s.slice(2, 4));
+        if (isPreItem) return Math.min(TOT - 1, Math.max(0, m - 240));
         if (it.mkt === 'us') return Math.min(TOT - 1, Math.max(0, m - 570));
         if (it.mkt === 'hk') return Math.min(TOT - 1, Math.max(0, m <= 720 ? m - 570 : 150 + (m - 780)));
         return Math.min(TOT - 1, Math.max(0, m <= 690 ? m - 571 : m - 660));
@@ -294,7 +297,7 @@ function buildStocksPng(items, meta) {
       ctx.font = `bold ${Math.max(16, F.meta - 1)}px cjk`;
       const lw = ctx.measureText(liveTxt).width + 12;
       const lx = chX + cellChartW - lw;
-      const ly = meta.period === 'time'
+      const ly = (meta.period === 'time' || meta.period === 'premarket')
         ? (it.chgPct >= 0 ? (chY + 2) : (chY + chartH - 22))
         : (chY + 2);
       ctx.fillStyle = it.chgPct >= 0 ? UP : DOWN;
@@ -527,7 +530,7 @@ async function cmdStocks(args, ctx = {}) {
 
   // —— 出图 ——
   const uniq = [...new Set(periods)];
-  if (uniq.length > 1) return { ok: false, text: '⚠️ 周期只能指定一个（-t 分时 / -d 日线 / -w 周线 / -m 月线）' };
+  if (uniq.length > 1) return { ok: false, text: '⚠️ 周期只能指定一个（-t 分时 / -pre 美股盘前 / -d 日线 / -w 周线 / -m 月线）' };
   const period = uniq[0] || 'day';
   if (!operands.length) return { ok: false, text: STOCKS_USAGE };
 
@@ -557,10 +560,14 @@ async function cmdStocks(args, ctx = {}) {
   const items = await mapLimit(resolved, 4, async t => {
     if (!t.code) return { error: true, code: t.hint, name: t.hint, msg: '未找到该标的' };
     const mkt = t.code.startsWith('us') ? 'us' : t.code.startsWith('hk') ? 'hk' : t.code.startsWith('hf_') ? 'hf' : 'cn';
-    const [kl, qt] = await Promise.all([fetchStockKline(t.code, period), fetchStockQuote(t.code)]);
+    const itemPeriod = period === 'premarket' ? (mkt === 'us' ? 'premarket' : 'time') : period;
+    const [kl, qt] = await Promise.all([fetchStockKline(t.code, itemPeriod), fetchStockQuote(t.code)]);
     const label = (qt && qt.name) || t.hint || t.code;
-    if (!kl || !kl.length) return { error: true, code: t.code, name: label, msg: '取数失败', mkt };
-    return { code: t.code, name: label, klines: kl, quote: qt, mkt };
+    if (!kl || !kl.length) {
+      const msg = itemPeriod === 'premarket' ? '暂无盘前成交' : '取数失败';
+      return { error: true, code: t.code, name: label, msg, mkt };
+    }
+    return { code: t.code, name: label, klines: kl, quote: qt, mkt, itemPeriod };
   });
 
   const valid = items.filter(it => !it.error);
@@ -582,11 +589,15 @@ async function cmdStocks(args, ctx = {}) {
     const cl = disp.map(k => k.close);
     const last = cl[cl.length - 1], first = cl[0];
     const q = it.quote;
-    const livePx = (q && Number(q.price) > 0) ? Number(q.price) : last;
-    const prevClose = (q && Number(q.prevClose) > 0) ? Number(q.prevClose)
-      : (period === 'time' ? first : (it.klines[it.klines.length - 2]?.close ?? first));
-    const chgPct = (q && isFinite(q.chgPct) && q.chgPct !== 0) ? Number(q.chgPct)
-      : (prevClose > 0 ? (livePx - prevClose) / prevClose * 100 : 0);
+    const isPreItem = it.itemPeriod === 'premarket';
+    const livePx = isPreItem ? Number(last) : ((q && Number(q.price) > 0) ? Number(q.price) : last);
+    const prevClose = isPreItem && Number(it.klines._prevClose) > 0 ? Number(it.klines._prevClose)
+      : ((q && Number(q.prevClose) > 0) ? Number(q.prevClose)
+        : ((period === 'time' || period === 'premarket') ? first : (it.klines[it.klines.length - 2]?.close ?? first)));
+    const chgPct = isPreItem
+      ? (prevClose > 0 ? (livePx - prevClose) / prevClose * 100 : 0)
+      : ((q && isFinite(q.chgPct) && q.chgPct !== 0) ? Number(q.chgPct)
+        : (prevClose > 0 ? (livePx - prevClose) / prevClose * 100 : 0));
 
     // 价格精度：场内基金（ETF/LOF）固定 3 位；否则现价有三位小数时保留 3 位
     let prec = isFundCode(it.code) ? 3 : 2;
@@ -599,8 +610,8 @@ async function cmdStocks(args, ctx = {}) {
     it.disp = disp;
     it.chgPct = chgPct;
     it.lineCol = chgPct >= 0 ? '#f5222d' : '#0aa869'; // 分时价格线红绿按昨收涨跌（与单只 /stock 一致）
-    it.baseline = period === 'time' ? (prevClose > 0 ? prevClose : 0) : (first || 0);
-    it.avgLine = (period === 'time' && !/^(sh000|sz399|hkHSI|usDJI|usINX)/.test(it.code))
+    it.baseline = (period === 'time' || period === 'premarket') ? (prevClose > 0 ? prevClose : 0) : (first || 0);
+    it.avgLine = ((period === 'time' || period === 'premarket') && !isPreItem && !/^(sh000|sz399|hkHSI|usDJI|usINX)/.test(it.code))
       ? buildAvgLine(disp) : null;
     // 注：指数（sh000xxx/sz399xxx/hkHSI）的「累计额/累计量」是全部成分股合计，
     //   算出的均价（~2700）与指数点位（~3300）完全不在一个量级，加进 Y 轴会把
@@ -610,8 +621,8 @@ async function cmdStocks(args, ctx = {}) {
     it.livePx = livePx;
     it.livePxTxt = fp(livePx);
     it.metaLeft = codeShort;
-    it.prevText = (period === 'time' && prevClose > 0) ? fp(prevClose) : ''; // 分时昨收数值（图上标签用）
-    if (period === 'time') {
+    it.prevText = ((period === 'time' || period === 'premarket') && prevClose > 0) ? fp(prevClose) : '';
+    if (period === 'time' || period === 'premarket') {
       const hi = Math.max(...disp.map(k => k.high)), lo2 = Math.min(...disp.map(k => k.low));
       const amp = prevClose > 0 ? (hi - lo2) / prevClose * 100 : 0;
       it.metaRight = `${showPrefix ? '振幅 ' : ''}${amp.toFixed(2)}%`;
@@ -629,14 +640,18 @@ async function cmdStocks(args, ctx = {}) {
   const p2 = x => String(x).padStart(2, '0');
   const today = `${dt.getFullYear()}-${p2(dt.getMonth() + 1)}-${p2(dt.getDate())}`;
   const hhmm = `${p2(dt.getHours())}:${p2(dt.getMinutes())}`;
-  const failNote = items.filter(it => it.error).map(it => `${it.name} 取数失败`).join('；');
+  const failNote = items.filter(it => it.error).map(it => `${it.name} ${it.msg || '取数失败'}`).join('；');
   // 数据来源并非只有腾讯：国际商品走新浪全球期货 → 页脚按实际来源标注，避免误导
   const srcs = [];
+  if (items.some(it => !it.error && it.itemPeriod === 'premarket')) srcs.push('Yahoo盘前');
   if (items.some(it => !it.error && it.mkt === 'hf')) srcs.push('新浪全球期货');
-  if (items.some(it => !it.error && it.mkt !== 'hf')) srcs.push('腾讯行情');
+  if (items.some(it => !it.error && it.itemPeriod !== 'premarket' && it.mkt !== 'hf')) srcs.push('腾讯行情');
   // 用途/统计/失败提示一律并进页脚（图内已可见），不再额外单发一条消息——
   // 2026-09-11 用户要求：灰底格 + 页脚已足够说明，重复文本消息是干扰。
+  const mixedNote = period === 'premarket' && items.some(it => !it.error && it.mkt !== 'us')
+    ? '非美股标的按普通分时展示' : '';
   const footer = [`数据来源：${srcs.join(' + ') || '腾讯行情'} · ${STOCKS_PERIOD_LABEL[period]} · 生成 ${today} ${hhmm}`]
+    .concat(mixedNote ? [mixedNote] : [])
     .concat(failNote ? [failNote] : [])
     .concat(notes.filter(Boolean))
     .join('　|　');

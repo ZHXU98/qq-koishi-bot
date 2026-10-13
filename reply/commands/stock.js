@@ -22,7 +22,7 @@ function renderStockPng(code, name, periodLabel, klines, opts, quote) {
   }
 }
 
-function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll, timeMode, prec = 2, futures = false }, quote) {
+function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll, timeMode, premarket = false, prec = 2, futures = false }, quote) {
   const fp = v => isFinite(v) ? Number(v).toFixed(prec) : '-'; // 价格显示精度（ETF 三位小数时 prec=3，普通股票 2）
   const { createCanvas } = require('@napi-rs/canvas');
   const W = 1000, PAD = 74, TITLE_H = 62, VOL_H = 120;
@@ -38,7 +38,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   const H = TITLE_H + VOL_H + LEG_H + (showInfo ? INFO_H : 0) + PAD + 8 + 340;
   const n = klines.length;
   const display = timeMode
-    ? (contSess ? klines : klines.filter(k => { const t = String(k.t); return t >= '0930' && t <= ((isHK || isUS) ? '1600' : '1500'); })) // 分时：当天全部数据（港股/美股到16:00），商品与期货全量
+    ? (premarket ? klines.filter(k => { const t = String(k.t); return t >= '0400' && t < '0930'; }) : (contSess ? klines : klines.filter(k => { const t = String(k.t); return t >= '0930' && t <= ((isHK || isUS) ? '1600' : '1500'); }))) // 盘前：美东04:00-09:29；普通分时按各市场时段
     : (periodLabel === '日线' ? klines.slice(-60) : klines.slice(-120));
   const dn = display.length;
   const plotW = W - PAD * 2, plotH = H - TITLE_H - VOL_H - LEG_H - (showInfo ? INFO_H : 0) - PAD - 8;
@@ -69,8 +69,9 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   const isIndex = /^(sh000|sz399|hkHSI|usDJI|usINX)/.test(code);
   let avgSeries = null, prevCloseRef = 0;
   if (timeMode) {
-    if (quote && Number(quote.prevClose) > 0) prevCloseRef = Number(quote.prevClose);
-    if (!isIndex) avgSeries = buildAvgLine(display); // 均价线（除数自动择优，见 buildAvgLine）
+    if (premarket && Number(klines._prevClose) > 0) prevCloseRef = Number(klines._prevClose);
+    else if (quote && Number(quote.prevClose) > 0) prevCloseRef = Number(quote.prevClose);
+    if (!isIndex && !premarket) avgSeries = buildAvgLine(display); // 盘前源无累计额，不绘制伪均价线
   }
 
   // 价格范围
@@ -92,10 +93,11 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   const step = plotW / dn;
   // 分时：X 轴按「交易分钟连续」映射（A股 9:30-11:30/13:00-15:00=240 分钟；港股 9:30-12:00/13:00-16:00=330 分钟），
   // 午休空档压缩成相邻，价格线自然连续（用户要求"连起来"，不强调午休空档）
-  const TOT = isUS ? 390 : (isHK ? 330 : 240);
+  const TOT = premarket ? 330 : (isUS ? 390 : (isHK ? 330 : 240));
   const tmin = t => {
     const hh = Number(String(t).slice(0, 2)), mm = Number(String(t).slice(2, 4));
     const m = hh * 60 + mm;
+    if (premarket) return Math.min(TOT - 1, Math.max(0, m - 240)); // 美股盘前 04:00-09:30
     if (isUS) return Math.min(TOT - 1, Math.max(0, m - 570)); // 美股 9:30-16:00 连续 390 分钟
     if (isHK) return Math.min(TOT - 1, Math.max(0, m <= 720 ? m - 570 : 150 + (m - 780))); // 上午0-150 下午150-330
     return Math.min(TOT - 1, Math.max(0, m <= 690 ? m - 571 : m - 660));
@@ -117,21 +119,22 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   //   用 klines[n-2] 当昨收会整体偏离一根；② 快照的 f[2] 并非真昨收（与自带涨跌额对不上，
   //   如 hf_GC 现价 4402.84/涨跌 -1.30/f[2] 4406.00 → 三者不自洽）。
   //   故一律由快照涨跌额反推基准，使图内数字与消息标题完全一致。
-  const lastPrice = (quote && Number(quote.price) > 0) ? Number(quote.price) : last.close;
+  const lastPrice = premarket ? Number(last.close) : ((quote && Number(quote.price) > 0) ? Number(quote.price) : last.close);
   // 国际商品/国内期货非分时：涨跌额与基准一律取快照自带值（商品源自身不自洽，自行按基准反算会与标题打架；
   // 期货的基准是昨结算价，日K 相邻两根反算出来的是「昨收」，口径会与快照打架）
   const hfSnapChg = (contSess && !timeMode && quote && isFinite(Number(quote.chg))) ? Number(quote.chg) : NaN;
   const hfBase = (contSess && !timeMode && quote && Number(quote.price) > 0 && isFinite(hfSnapChg))
     ? Number(quote.price) - hfSnapChg : null;
   const prevClose = hfBase != null ? hfBase
-    : ((timeMode && quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : (klines[n - 2]?.close ?? last.open));
+    : ((timeMode && premarket && Number(klines._prevClose) > 0) ? Number(klines._prevClose)
+      : ((timeMode && quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : (klines[n - 2]?.close ?? last.open)));
   // chg / chgPct 是「图内涨跌」的唯一口径（下方 numChg / numPct 直接引用，不再二次计算）
   const chg = isFinite(hfSnapChg) ? hfSnapChg : (lastPrice - prevClose);
   const chgPct = (isFinite(hfSnapChg) && quote && isFinite(Number(quote.chgPct)))
     ? Number(quote.chgPct) : (prevClose ? (chg / prevClose * 100) : 0);
   const chgCol = chg >= 0 ? upC : downC;
   // 分时：以「今开」为红绿基准（与价格线一致）；其他周期用昨收（标准涨跌幅）
-  const openRef = (quote && Number(quote.open) > 0) ? Number(quote.open) : (klines[0]?.close ?? lastPrice);
+  const openRef = premarket ? (klines[0]?.close ?? lastPrice) : ((quote && Number(quote.open) > 0) ? Number(quote.open) : (klines[0]?.close ?? lastPrice));
 
   // === 画 canvas（2x 分辨率输出，提升清晰度） ===
   const canvas = createCanvas(Math.round(W * 1.2), Math.round(H * 1.2));
@@ -191,9 +194,11 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
     const fmtT = t => { const s = String(t).replace(':', ''); return s.slice(0, 2) + ':' + s.slice(2, 4); };
     const lbs = contSess
       ? [[0, fmtT(display[0].t)], [Math.floor(dn / 2), fmtT(display[Math.floor(dn / 2)].t)], [dn - 1, fmtT(display[dn - 1].t)]]
-      : (isUS
-        ? [[0, '09:30'], [90, '11:00'], [180, '12:30'], [270, '14:00'], [TOT - 1, '16:00']]
-        : (isHK ? [[0, '09:30'], [60, '10:30'], [120, '11:30'], [180, '14:00'], [240, '15:00'], [TOT - 1, '16:00']] : [[0, '09:30'], [59, '10:30'], [119, '11:30'], [180, '14:00'], [TOT - 1, '15:00']]));
+      : (premarket
+        ? [[0, '04:00'], [90, '05:30'], [180, '07:00'], [270, '08:30'], [TOT - 1, '09:30']]
+        : (isUS
+          ? [[0, '09:30'], [90, '11:00'], [180, '12:30'], [270, '14:00'], [TOT - 1, '16:00']]
+        : (isHK ? [[0, '09:30'], [60, '10:30'], [120, '11:30'], [180, '14:00'], [240, '15:00'], [TOT - 1, '16:00']] : [[0, '09:30'], [59, '10:30'], [119, '11:30'], [180, '14:00'], [TOT - 1, '15:00']])));
     lbs.forEach(([tm, lb]) => {
       ctx.fillStyle = sub; ctx.font = '12px cjk';
       // hf_ 的 lbs[0] 是「数据索引」而非分钟数（TOT=240 只对 A股/港美股成立），
@@ -460,7 +465,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
 }
 
 // 渲染 K 线 SVG → PNG base64（resvg fallback，@napi-rs/canvas 失败时使用）
-function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, timeMode, prec = 2, futures = false }, quote) {
+function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, timeMode, premarket = false, prec = 2, futures = false }, quote) {
   const fp = v => isFinite(v) ? Number(v).toFixed(prec) : '-'; // 价格显示精度（ETF 三位小数时 prec=3，普通股票 2）
   const W = 1000, PAD = 74, TITLE_H = 62, VOL_H = 120;
   const isHK = code.startsWith('hk'); // 港股：字段口径不同，不显示基本面面板
@@ -477,7 +482,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   const n = klines.length;
   // 显示根数：分时=当天全部分钟（≤240）；日线=60 根（3 个月，指数日波动 20 点左右，根数过多会把近期波动压扁）；其余分钟线=120 根
   const display = timeMode
-    ? (contSess ? klines : klines.filter(k => { const t = String(k.t); return t >= '0930' && t <= ((isHK || isUS) ? '1600' : '1500'); })) // 分时：当天全部数据（港股/美股到16:00），商品与期货全量
+    ? (premarket ? klines.filter(k => { const t = String(k.t); return t >= '0400' && t < '0930'; }) : (contSess ? klines : klines.filter(k => { const t = String(k.t); return t >= '0930' && t <= ((isHK || isUS) ? '1600' : '1500'); }))) // 盘前：美东04:00-09:29；普通分时按各市场时段
     : (periodLabel === '日线' ? klines.slice(-60) : klines.slice(-120));
   const dn = display.length;
   const plotW = W - PAD * 2, plotH = H - TITLE_H - VOL_H - LEG_H - (showInfo ? INFO_H : 0) - PAD - 8;
@@ -495,9 +500,9 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   const isIndex = /^(sh000|sz399|hkHSI|usDJI|usINX)/.test(code);
   let avgSeries = null, prevCloseRef = 0;
   if (timeMode) {
-    // 昨收 = 快照 a[4]（最准），用户要求拿不到就算了不画线
-    if (quote && Number(quote.prevClose) > 0) prevCloseRef = Number(quote.prevClose);
-    if (!isIndex) avgSeries = buildAvgLine(display); // 均价线（除数自动择优，见 buildAvgLine）
+    if (premarket && Number(klines._prevClose) > 0) prevCloseRef = Number(klines._prevClose);
+    else if (quote && Number(quote.prevClose) > 0) prevCloseRef = Number(quote.prevClose);
+    if (!isIndex && !premarket) avgSeries = buildAvgLine(display); // 盘前源无累计额，不绘制伪均价线
   }
 
   // 价格范围：高低点 + BOLL 上下轨 + 均价 + 昨收基准
@@ -519,10 +524,11 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   const Y = p => TITLE_H + plotH - ((p - yMin) / (yMax - yMin)) * plotH;
   const step = plotW / dn;
   // 分时模式：X 轴按「交易分钟连续」映射（A股 240 分钟；港股 9:30-12:00/13:00-16:00=330 分钟），午休相邻不强调
-  const TOT = isUS ? 390 : (isHK ? 330 : 240);
+  const TOT = premarket ? 330 : (isUS ? 390 : (isHK ? 330 : 240));
   const tmin = t => {
     const hh = Number(String(t).slice(0, 2)), mm = Number(String(t).slice(2, 4));
     const m = hh * 60 + mm;
+    if (premarket) return Math.min(TOT - 1, Math.max(0, m - 240)); // 美股盘前 04:00-09:30
     if (isUS) return Math.min(TOT - 1, Math.max(0, m - 570)); // 美股 9:30-16:00 连续 390 分钟
     if (isHK) return Math.min(TOT - 1, Math.max(0, m <= 720 ? m - 570 : 150 + (m - 780))); // 上午0-150 下午150-330
     return Math.min(TOT - 1, Math.max(0, m <= 690 ? m - 571 : m - 660));
@@ -540,20 +546,21 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   // 最新一根 & 涨跌
   const last = klines[n - 1];
   // 分时：现价/昨收用快照（分时末行是盘后杂数据，相邻价差≈0 会算错涨跌）；K线用数据收盘价
-  const lastPrice = (quote && Number(quote.price) > 0) ? Number(quote.price) : last.close;
+  const lastPrice = premarket ? Number(last.close) : ((quote && Number(quote.price) > 0) ? Number(quote.price) : last.close);
   // 国际商品/国内期货非分时：涨跌额与基准一律取快照自带值（原因见 renderStockPngCanvas 同处注释）
   const hfSnapChg = (contSess && !timeMode && quote && isFinite(Number(quote.chg))) ? Number(quote.chg) : NaN;
   const hfBase = (contSess && !timeMode && quote && Number(quote.price) > 0 && isFinite(hfSnapChg))
     ? Number(quote.price) - hfSnapChg : null;
   const prevClose = hfBase != null ? hfBase
-    : ((timeMode && quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : (klines[n - 2]?.close ?? last.open));
+    : ((timeMode && premarket && Number(klines._prevClose) > 0) ? Number(klines._prevClose)
+      : ((timeMode && quote && Number(quote.prevClose) > 0) ? Number(quote.prevClose) : (klines[n - 2]?.close ?? last.open)));
   const chg = isFinite(hfSnapChg) ? hfSnapChg : (lastPrice - prevClose);
   const chgPct = (isFinite(hfSnapChg) && quote && isFinite(Number(quote.chgPct)))
     ? Number(quote.chgPct) : (prevClose ? (chg / prevClose * 100) : 0);
   const isUp = chg >= 0;
   const chgCol = isUp ? upCol : downCol;
   // 分时：以「今开」为红绿基准（与价格线一致）；其他周期用昨收
-  const openRef = (quote && Number(quote.open) > 0) ? Number(quote.open) : (klines[0]?.close ?? lastPrice);
+  const openRef = premarket ? (klines[0]?.close ?? lastPrice) : ((quote && Number(quote.open) > 0) ? Number(quote.open) : (klines[0]?.close ?? lastPrice));
 
   let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
 <rect x="0" y="0" width="${W}" height="${H}" fill="${bg}"/>
@@ -583,9 +590,11 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
     const fmtT = t => { const s = String(t).replace(':', ''); return s.slice(0, 2) + ':' + s.slice(2, 4); };
     const lbs = contSess
       ? [[0, fmtT(display[0].t)], [Math.floor(dn / 2), fmtT(display[Math.floor(dn / 2)].t)], [dn - 1, fmtT(display[dn - 1].t)]]
-      : (isUS
-        ? [[0, '09:30'], [90, '11:00'], [180, '12:30'], [270, '14:00'], [TOT - 1, '16:00']]
-        : (isHK ? [[0, '09:30'], [60, '10:30'], [120, '11:30'], [180, '14:00'], [240, '15:00'], [TOT - 1, '16:00']] : [[0, '09:30'], [59, '10:30'], [119, '11:30'], [180, '14:00'], [TOT - 1, '15:00']]));
+      : (premarket
+        ? [[0, '04:00'], [90, '05:30'], [180, '07:00'], [270, '08:30'], [TOT - 1, '09:30']]
+        : (isUS
+          ? [[0, '09:30'], [90, '11:00'], [180, '12:30'], [270, '14:00'], [TOT - 1, '16:00']]
+        : (isHK ? [[0, '09:30'], [60, '10:30'], [120, '11:30'], [180, '14:00'], [240, '15:00'], [TOT - 1, '16:00']] : [[0, '09:30'], [59, '10:30'], [119, '11:30'], [180, '14:00'], [TOT - 1, '15:00']])));
     lbs.forEach(([tm, lb]) => {
       const x = contSess ? X(tm) : (PAD + (tm / TOT) * plotW);
       s += `<text x="${x.toFixed(1)}" y="${TITLE_H + plotH + 16}" text-anchor="middle" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">${lb}</text>`;
@@ -624,7 +633,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
     s += `<rect x="${PAD - 8}" y="${yLegend}" width="${W - PAD * 2 + 16}" height="30" rx="8" fill="${panel}"/>`;
     const lg = [[`价格 ${fp(lastPrice)}`, priceCol]];
     if (avgSeries) lg.push([`均价 ${fp(avgSeries[dn - 1])}`, '#f0b90b']);
-    lg.push([`${prevLabel} ${fp(prevCloseRef)}`, sub]);
+    if (prevCloseRef) lg.push([`${prevLabel} ${fp(prevCloseRef)}`, sub]);
     lg.forEach((it, i) => {
       const cx = PAD + 60 + i * 220;
       s += `<rect x="${cx - 60}" y="${yLegend + 7}" width="14" height="14" rx="3" fill="${it[1]}"/>`;
@@ -782,12 +791,12 @@ async function cmdStock(args) {
     codeInput = parts.join('');
   }
   const USAGE = '📋 用法：/stock <周期> <代码或名称>\n' +
-    '周期：-d 日线 | -w 周线 | -M 月线 | -1m 1分钟 | -5m 5分钟 | -30m 30分钟 | -1h 60分钟 | -t 分时\n' +
-    '例：/stock -d 600519　/stock -w 贵州茅台　/stock -M 00700　/stock -t AAPL\n' +
+    '周期：-d 日线 | -w 周线 | -M 月线 | -1m 1分钟 | -5m 5分钟 | -30m 30分钟 | -1h 60分钟 | -t 分时 | -pre 美股盘前\n' +
+    '例：/stock -d 600519　/stock -t AAPL　/stock -pre NVDA\n' +
     '不写周期默认日线，如 /stock 600519';
   // 首参以 - 开头但不是合法周期 → 提示格式
   if (parts[0] && parts[0].startsWith('-') && !STOCK_PERIODS[parts[0].toLowerCase()]) {
-    return { ok: false, text: `⚠️ 未知周期「${parts[0]}」，支持：-d / -w / -M / -1m / -5m / -30m / -1h / -t\n\n${USAGE}` };
+    return { ok: false, text: `⚠️ 未知周期「${parts[0]}」，支持：-d / -w / -M / -1m / -5m / -30m / -1h / -t / -pre\n\n${USAGE}` };
   }
   if (!codeInput) return { ok: false, text: USAGE };
 
@@ -804,8 +813,11 @@ async function cmdStock(args) {
   }
   const isUS = code.startsWith('us');
   const isHF = code.startsWith('hf_');
-  // 美股：分钟K 数据源不支持；日/周/月/分时可用（盘后分时自动回退上个交易日）
-  if (isUS && !STOCK_LONG.includes(period) && period !== 'time') {
+  if (period === 'premarket' && !isUS) {
+    return { ok: false, text: '⚠️ 盘前行情目前仅支持美股和美股 ETF\n例：/stock -pre AAPL　/stock -pre NVDA　/stock -pre SPY' };
+  }
+  // 美股：分钟K 数据源不支持；日/周/月/分时/盘前可用
+  if (isUS && !STOCK_LONG.includes(period) && period !== 'time' && period !== 'premarket') {
     return { ok: false, text: `⚠️ 美股暂不支持 ${STOCK_PERIOD_LABEL[period]}线（数据源限制）\n可用：/stock -d ${code}（日线）　/stock -w ${code}（周线）　/stock -M ${code}（月线）　/stock -t ${code}（分时）` };
   }
   // 港股：数据源（腾讯）无分钟K历史；日/周/月/分时可用
@@ -828,33 +840,49 @@ async function cmdStock(args) {
     return { ok: true, text: globalQuoteText(code, q) + note };
   }
   const [kline, quote] = await Promise.all([fetchStockKline(code, period), fetchStockQuote(code)]);
-  if (!kline) return { ok: false, text: `⚠️ 获取 ${code} ${STOCK_PERIOD_LABEL[period]} 数据失败，请确认代码是否正确` };
+  if (!kline) {
+    const msg = period === 'premarket'
+      ? `⚠️ ${code.replace(/^us/, '').replace(/\.\w+$/, '')} 当前没有可用盘前成交（美东盘前 04:00–09:30；休市日或尚未产生交易时可能为空）`
+      : `⚠️ 获取 ${code} ${STOCK_PERIOD_LABEL[period]} 数据失败，请确认代码是否正确`;
+    return { ok: false, text: msg };
+  }
   const name = quote?.name || resolvedName || code;
-  // 分时若用的是历史数据（东财 fallback），在标题标注日期，如「分时 08-31」
-  const periodLabel = (STOCK_PERIOD_LABEL[period] || period) + (period === 'time' && kline._date ? ' ' + kline._date : '');
+  const isPremarket = period === 'premarket';
+  const effectiveQuote = isPremarket ? {
+    ...(quote || {}),
+    price: Number(kline[kline.length - 1]?.close) || 0,
+    prevClose: Number(kline._prevClose) || Number(quote?.prevClose) || 0,
+  } : quote;
+  if (isPremarket && effectiveQuote.prevClose > 0) {
+    effectiveQuote.chg = effectiveQuote.price - effectiveQuote.prevClose;
+    effectiveQuote.chgPct = effectiveQuote.chg / effectiveQuote.prevClose * 100;
+    effectiveQuote.open = Number(kline[0]?.close) || effectiveQuote.price;
+  }
+  // 分时/盘前若带数据日期，在标题标注日期
+  const periodLabel = (STOCK_PERIOD_LABEL[period] || period) + ((period === 'time' || isPremarket) && kline._date ? ' ' + kline._date : '');
 
   const isDay = period === 'day';
-  const isTime = period === 'time';
+  const isTime = period === 'time' || isPremarket;
   const maPeriods = (isDay || period === 'week' || period === 'month') ? [5, 10, 20] : []; // 日/周/月线保留 5/10/20 均线
   const last = kline[kline.length - 1];
   // 价格精度：场内基金（ETF/LOF）固定 3 位（最小变动价位 0.001）；普通股票 2 位；
   //           其余低价品种按真实现价判断（勿扫 qfq 历史价，前复权会产生 3 位假小数）
   let prec = isFundCode(code) ? 3 : 2;
   if (prec === 2) {
-    const ref = (quote && isFinite(quote.price) && Number(quote.price) > 0) ? Number(quote.price) : (isFinite(last.close) ? Number(last.close) : 0);
+    const ref = (effectiveQuote && isFinite(effectiveQuote.price) && Number(effectiveQuote.price) > 0) ? Number(effectiveQuote.price) : (isFinite(last.close) ? Number(last.close) : 0);
     if (ref > 0) {
       const sv = String(ref);
       const dot = sv.indexOf('.');
       if (dot > 0 && sv.slice(dot + 1).replace(/0+$/, '').length > 2) prec = 3;
     }
   }
-  const img = renderStockPng(code, name, periodLabel, kline, { maPeriods, boll: isDay || !isTime, timeMode: isTime, prec }, quote);
+  const img = renderStockPng(code, name, periodLabel, kline, { maPeriods, boll: isDay || !isTime, timeMode: isTime, premarket: isPremarket, prec }, effectiveQuote);
   if (!img) return { ok: false, text: '⚠️ 图表渲染失败（服务端缺少字体/渲染库）' };
 
   const capCode = code.replace(/\.\w+$/, '').toUpperCase(); // usAAPL.OQ → USAAPL（图内代码去交易所后缀）
   const fp = v => isFinite(v) ? Number(v).toFixed(prec) : '-';
-  const lastPx = (quote && isFinite(quote.price) && Number(quote.price) > 0) ? Number(quote.price) : last.close; // 现价用快照（K线末根可能丢精度）
-  const caption = `${resolveNotice}📈 ${name}（${capCode}）${periodLabel}\n现价 ${fp(lastPx)}${quote?.chgPct != null ? `  ${quote.chg >= 0 ? '+' : ''}${fp(Number(quote.chg))} (${quote.chgPct >= 0 ? '+' : ''}${Number(quote.chgPct).toFixed(2)}%)` : ''}`;
+  const lastPx = (effectiveQuote && isFinite(effectiveQuote.price) && Number(effectiveQuote.price) > 0) ? Number(effectiveQuote.price) : last.close;
+  const caption = `${resolveNotice}📈 ${name}（${capCode}）${periodLabel}\n${isPremarket ? '盘前价' : '现价'} ${fp(lastPx)}${effectiveQuote?.chgPct != null ? `  ${effectiveQuote.chg >= 0 ? '+' : ''}${fp(Number(effectiveQuote.chg))} (${effectiveQuote.chgPct >= 0 ? '+' : ''}${Number(effectiveQuote.chgPct).toFixed(2)}%)` : ''}`;
   return { ok: true, text: caption, img };
 }
 
