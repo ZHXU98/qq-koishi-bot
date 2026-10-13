@@ -98,6 +98,12 @@ services:
       - NAPCAT_URL=http://official-bot-gateway:3100
       - BOT_UIN=${QQBOT_APP_ID}
       - TZ=Asia/Shanghai
+      # 2026-10-13：容器没有 IPv6 出口，而 Node 20+ 默认 autoSelectFamily=true（Happy Eyeballs），
+      #   对双栈域名（Yahoo / eastmoney 等）按域名连接时会撞上死掉的 IPv6 → ETIMEDOUT / fetch failed
+      #   秒失败，且表现为「同一个源时好时坏」。关掉自动选族后只走 v4（实测 Yahoo 立即可达）。
+      #   ⚠️ 实测 --dns-result-order=ipv4first 无效（地址顺序本就 v4 在前，问题在 autoSelectFamily）。
+      #   ⚠️ 改 env 必须 `docker compose up -d qq-reply` 重建容器，`restart` 不生效。
+      - NODE_OPTIONS=--no-network-family-autoselection
     # DNS：固定公共解析优先，Docker Desktop 内置解析器兜底（说明见 official-bot-gateway 段）
     dns:
       - 223.5.5.5
