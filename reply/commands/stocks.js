@@ -9,7 +9,7 @@ const { isOwnerCtx, ownerDeniedMsg } = require('../gateway'); // 组合编辑闸
 const {
   STOCK_QUOTE, STOCK_PERIOD_LABEL, normalizeCode, GLOBAL_ALIAS, GLOBAL_TEXT, EM_IDX_SECID,
   resolveStockCode, calcSMA, calcBOLL, buildAvgLine,
-  fetchStockKline, aggHfKline, fetchEmTrends, fetchStockQuote,
+  fetchStockKline, aggHfKline, fetchEmTrends, fetchStockQuote, getYahooPremarketStatus,
 } = require('../market');
 
 //       每格为精简走势（无成交量/均线/BOLL），各自价格轴 + 区间起点虚线基准；
@@ -564,7 +564,10 @@ async function cmdStocks(args, ctx = {}) {
     const [kl, qt] = await Promise.all([fetchStockKline(t.code, itemPeriod), fetchStockQuote(t.code)]);
     const label = (qt && qt.name) || t.hint || t.code;
     if (!kl || !kl.length) {
-      const msg = itemPeriod === 'premarket' ? '暂无盘前成交' : '取数失败';
+      const preStatus = itemPeriod === 'premarket' ? getYahooPremarketStatus(t.code) : '';
+      const msg = itemPeriod === 'premarket'
+        ? (preStatus === 'source_error' ? '盘前数据源暂不可用' : '暂无今日盘前成交')
+        : '取数失败';
       return { error: true, code: t.code, name: label, msg, mkt };
     }
     return { code: t.code, name: label, klines: kl, quote: qt, mkt, itemPeriod };

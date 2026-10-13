@@ -7,7 +7,7 @@ const {
   normalizeCode, GLOBAL_ALIAS, GLOBAL_TEXT, EM_IDX_SECID, resolveStockCode,
   calcSMA, calcBOLL, buildAvgLine,
   fetchStockKline, fetchEmKline, HF_SINA_SYM, fetchSinaGlobalMin, aggHfKline, fetchSinaGlobalKline,
-  emSecid, fetchEmTrends, fetchStockQuote, emFetchJson,
+  emSecid, fetchEmTrends, fetchStockQuote, getYahooPremarketStatus, emFetchJson,
 } = require('../market');
 
 // 渲染 K 线 canvas → PNG base64（@napi-rs/canvas skia 路径，进程级字体缓存，渲染 ~50ms）
@@ -841,8 +841,11 @@ async function cmdStock(args) {
   }
   const [kline, quote] = await Promise.all([fetchStockKline(code, period), fetchStockQuote(code)]);
   if (!kline) {
+    const preStatus = period === 'premarket' ? getYahooPremarketStatus(code) : '';
     const msg = period === 'premarket'
-      ? `⚠️ ${code.replace(/^us/, '').replace(/\.\w+$/, '')} 当前没有可用盘前成交（美东盘前 04:00–09:30；休市日或尚未产生交易时可能为空）`
+      ? (preStatus === 'source_error'
+        ? `⚠️ ${code.replace(/^us/, '').replace(/\.\w+$/, '')} 盘前数据源暂不可用，请稍后重试`
+        : `⚠️ ${code.replace(/^us/, '').replace(/\.\w+$/, '')} 当前没有今日盘前成交（美东盘前 04:00–09:30）`)
       : `⚠️ 获取 ${code} ${STOCK_PERIOD_LABEL[period]} 数据失败，请确认代码是否正确`;
     return { ok: false, text: msg };
   }

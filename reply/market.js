@@ -144,9 +144,17 @@ function buildAvgLine(disp) {
   });
 }
 
+const _yahooPremarketLastGood = new Map(); // symbol → 当日最后一份最完整数据，防止上游残缺响应覆盖
+const _yahooPremarketStatus = new Map();   // symbol → ok / no_data / source_error（供命令层给准确提示）
+function yahooSymbol(code) {
+  return String(code || '').slice(2).replace(/\.(OQ|N|AM)$/i, '').toUpperCase();
+}
+function getYahooPremarketStatus(code) {
+  return _yahooPremarketStatus.get(yahooSymbol(code)) || '';
+}
 async function fetchYahooPremarket(code) {
   if (!String(code || '').startsWith('us')) return null;
-  const symbol = String(code).slice(2).replace(/\.(OQ|N|AM)$/i, '').toUpperCase();
+  const symbol = yahooSymbol(code);
   if (!/^[A-Z0-9.^-]{1,15}$/.test(symbol)) return null;
   const ckey = 'yahoo-premarket:' + symbol;
   const cached = cacheGet(ckey);
@@ -154,48 +162,74 @@ async function fetchYahooPremarket(code) {
   return coalesceRequest(ckey, async () => {
     const cachedAgain = cacheGet(ckey);
     if (cachedAgain) return cachedAgain;
-    try {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d&includePrePost=true`;
-      const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
-      if (!resp.ok) return null;
-      const result = (await resp.json())?.chart?.result?.[0];
+    const dtf = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    });
+    const parts = ts => dtf.formatToParts(new Date(ts * 1000)).reduce((o, p) => (o[p.type] = p.value, o), {});
+    const nowParts = parts(Math.floor(Date.now() / 1000));
+    const nyToday = `${nowParts.year}-${nowParts.month}-${nowParts.day}`;
+    const parseResult = result => {
       const timestamps = result?.timestamp;
       const quote = result?.indicators?.quote?.[0];
       if (!Array.isArray(timestamps) || !quote) return null;
-      const parts = ts => new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-      }).formatToParts(new Date(ts * 1000)).reduce((o, p) => (o[p.type] = p.value, o), {});
-      const rows = [];
+      const out = [];
       for (let i = 0; i < timestamps.length; i++) {
         const close = Number(quote.close?.[i]);
         if (!(close > 0)) continue;
         const p = parts(timestamps[i]);
         const date = `${p.year}-${p.month}-${p.day}`;
         const t = `${p.hour}${p.minute}`;
-        if (t < '0400' || t >= '0930') continue;
-        rows.push({
-          date, t, open: Number(quote.open?.[i]) || close, close,
+        if (date !== nyToday || t < '0400' || t >= '0930') continue;
+        out.push({
+          t, open: Number(quote.open?.[i]) || close, close,
           high: Number(quote.high?.[i]) || close, low: Number(quote.low?.[i]) || close,
           vol: Number(quote.volume?.[i]) || 0,
         });
       }
-      if (!rows.length) return null;
-      const latestDate = rows[rows.length - 1].date;
-      const nowParts = parts(Math.floor(Date.now() / 1000));
-      const nyToday = `${nowParts.year}-${nowParts.month}-${nowParts.day}`;
-      if (latestDate !== nyToday) return null; // 尚未进入今日盘前、周末或休市日：不拿上一交易日冒充今日盘前
-      const out = rows.filter(row => row.date === latestDate).map(({ date, ...row }) => row);
       if (!out.length) return null;
-      out._date = latestDate.slice(5);
+      out._date = nyToday.slice(5);
       out._prevClose = Number(result?.meta?.chartPreviousClose || result?.meta?.previousClose || result?.meta?.regularMarketPreviousClose) || 0;
       out._symbol = symbol;
-      cacheSet(ckey, out, 15000);
       return out;
-    } catch (e) {
-      console.error('[yahoo-premarket] 获取失败', symbol, e && e.message);
-      return null;
+    };
+    const fetchHost = async host => {
+      try {
+        const url = `https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d&includePrePost=true`;
+        const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
+        if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
+        const result = (await resp.json())?.chart?.result?.[0];
+        return { ok: true, data: parseResult(result) };
+      } catch (e) {
+        return { ok: false, error: e && e.message || 'unknown' };
+      }
+    };
+    // Yahoo 两个公开节点偶尔一个只返回零散分钟点；并行取两份，择完整者。
+    let attempts = await Promise.all(['query1', 'query2'].map(fetchHost));
+    let candidates = attempts.filter(x => x.data?.length).map(x => x.data);
+    // 两节点都只给出极少点时再快速重试一次；低流动性股票最终仍保留少量真实成交，不粗暴判空。
+    if (candidates.length && Math.max(...candidates.map(x => x.length)) < 5) {
+      await new Promise(resolve => setTimeout(resolve, 600));
+      const retry = await Promise.all(['query1', 'query2'].map(fetchHost));
+      attempts = attempts.concat(retry);
+      candidates = candidates.concat(retry.filter(x => x.data?.length).map(x => x.data));
     }
+    let best = candidates.sort((a, b) => b.length - a.length)[0] || null;
+    const stale = _yahooPremarketLastGood.get(symbol);
+    if (stale && stale._date === nyToday.slice(5) && (!best || stale.length > best.length)) {
+      best = stale; // 同日上游响应变短视为残缺，退回进程内最后完整数据
+      best._stale = true;
+    }
+    if (best) {
+      _yahooPremarketLastGood.set(symbol, best);
+      _yahooPremarketStatus.set(symbol, 'ok');
+      cacheSet(ckey, best, 15000);
+      return best;
+    }
+    const anySuccess = attempts.some(x => x.ok);
+    _yahooPremarketStatus.set(symbol, anySuccess ? 'no_data' : 'source_error');
+    if (!anySuccess) console.error('[yahoo-premarket] 两节点均失败', symbol, attempts.map(x => x.error).filter(Boolean).join(' / '));
+    return null;
   });
 }
 
@@ -604,5 +638,5 @@ module.exports = {
   calcSMA, calcBOLL, buildAvgLine, fetchStockKline, fetchStockMinuteKline, fetchEmKline,
   HF_SINA_SYM, SINA_GLOBAL_MIN, fetchSinaGlobalMin, SINA_GLOBAL_DAILY, HF_DAILY_TTL,
   fetchSinaGlobalDaily, aggHfKline, fetchSinaGlobalKline, EM_TRENDS, emSecid, fetchEmTrends,
-  fetchYahooPremarket, fetchStockQuote, EM_STOCK_INDUSTRY, EM_INDUSTRY_BOARDS, EM_INDUSTRY_KLINE, fetchEmStockIndustry, fetchEmIndustryKline, fetchEmIndustryBoards, EM_HOSTS, EM_UA, _emHost, emFetchJson,
+  fetchYahooPremarket, getYahooPremarketStatus, fetchStockQuote, EM_STOCK_INDUSTRY, EM_INDUSTRY_BOARDS, EM_INDUSTRY_KLINE, fetchEmStockIndustry, fetchEmIndustryKline, fetchEmIndustryBoards, EM_HOSTS, EM_UA, _emHost, emFetchJson,
 };
