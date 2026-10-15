@@ -807,6 +807,15 @@ async function cmdStock(args) {
     return { ok: false, text: `⚠️ 未知周期「${parts[0]}」，支持：-d / -w / -M / -1m / -5m / -30m / -1h / -t / -pre\n\n${USAGE}` };
   }
   if (!codeInput) return { ok: false, text: USAGE };
+  const londonSpot = codeInput.toLowerCase().replace(/\s+/g, '');
+  if (['伦敦金', '伦敦金现', '伦敦银', '伦敦银现'].includes(londonSpot)) {
+    const metal = londonSpot.includes('银') ? '白银' : '黄金';
+    return {
+      ok: false,
+      text: `⚠️ ${codeInput}通常指场外现货${metal}（${metal === '黄金' ? 'XAU/USD' : 'XAG/USD'}），不是 COMEX 期货。\n` +
+        `如需国际期货，请使用 /stock COMEX${metal} 或 /fc COMEX${metal}`,
+    };
+  }
 
   // 解析代码：数字直用，名称走搜索
   let code = normalizeCode(codeInput);

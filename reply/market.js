@@ -32,8 +32,8 @@ function normalizeCode(raw) {
 const GLOBAL_ALIAS = {
   '布伦特原油': 'hf_OIL', '布油': 'hf_OIL',
   '纽约原油': 'hf_CL', '美油': 'hf_CL', 'wti': 'hf_CL', 'wti原油': 'hf_CL',
-  '黄金': 'hf_GC', '纽约黄金': 'hf_GC', 'comex黄金': 'hf_GC', '伦敦金': 'hf_GC', '伦敦金现': 'hf_GC', '国际金': 'hf_GC',
-  '白银': 'hf_SI', '纽约白银': 'hf_SI', '伦敦银': 'hf_SI',
+  '黄金': 'hf_GC', '纽约黄金': 'hf_GC', 'comex黄金': 'hf_GC', '国际金': 'hf_GC',
+  '白银': 'hf_SI', '纽约白银': 'hf_SI', 'comex白银': 'hf_SI',
   '天然气': 'hf_NG', '美国天然气': 'hf_NG',
   '美铜': 'hf_HG', '伦铜': 'hf_CAD',
   '大豆': 'hf_S', '美豆': 'hf_S', '黄豆': 'hf_S', '美国大豆': 'hf_S',
@@ -63,6 +63,8 @@ async function resolveStockCode(q, { details = false } = {}) {
   const rawQuery = String(q || '').trim();
   const key = rawQuery.toLowerCase();
   const result = { code: '', name: '', exact: false };
+  // 伦敦金/银通常指 XAU/USD、XAG/USD 场外现货，不能冒充 COMEX 纽约期货。
+  if (['伦敦金', '伦敦金现', '伦敦银', '伦敦银现'].includes(key)) return details ? result : '';
   if (GLOBAL_ALIAS[key]) {
     result.code = GLOBAL_ALIAS[key];
     result.name = rawQuery;

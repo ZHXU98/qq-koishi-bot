@@ -13,9 +13,24 @@ const {
   fetchFuturesDaily, fetchFuturesKline, inferPricePrec, futuresVarietyText,
 } = require('../futures');
 const { aggHfKline } = require('../market');
-const { renderStockPng } = require('./stock');
+const { renderStockPng, cmdStock } = require('./stock');
 
 const FUT_USAGE_PERIOD = '-t 分时 | m 1分钟 | 5m 5分钟 | 15m 15分钟 | 30m 30分钟 | 60m 60分钟 | -d 日线（默认）| -w 周线 | -M 月线';
+const GLOBAL_FUTURES = new Map([
+  ['纽约黄金', 'hf_GC'], ['comex黄金', 'hf_GC'], ['国际金', 'hf_GC'],
+  ['纽约白银', 'hf_SI'], ['comex白银', 'hf_SI'],
+  ['纽约原油', 'hf_CL'], ['美油', 'hf_CL'], ['wti', 'hf_CL'], ['wti原油', 'hf_CL'],
+  ['布伦特原油', 'hf_OIL'], ['布油', 'hf_OIL'],
+  ['美国天然气', 'hf_NG'],
+  ['美铜', 'hf_HG'], ['comex铜', 'hf_HG'], ['伦铜', 'hf_CAD'],
+  ['美豆', 'hf_S'], ['美国大豆', 'hf_S'],
+  ['美豆粕', 'hf_SM'], ['美黄豆粉', 'hf_SM'],
+  ['美豆油', 'hf_BO'], ['美黄豆油', 'hf_BO'],
+  ['美玉米', 'hf_C'], ['美国玉米', 'hf_C'],
+  ['美小麦', 'hf_W'], ['美国小麦', 'hf_W'],
+]);
+const GLOBAL_PERIOD_TOKEN = { time: '-t', day: '-d', week: '-w', month: '-M' };
+const LONDON_SPOT = new Set(['伦敦金', '伦敦金现', '伦敦银', '伦敦银现']);
 
 function usageText() {
   return '📋 用法：/fc [周期] <品种 或 合约>\n' +
@@ -23,6 +38,8 @@ function usageText() {
     '合约：生猪2701（指定月份）｜lh2701｜TA601（郑商所 3 位月份自动补全）\n' +
     '　　　不写月份＝主力连续，如 /fc 生猪 → LH0\n' +
     '例：/fc 生猪2701　/fc 螺纹钢　/fc 5m 沪金2612　/fc -t IF2612\n' +
+    '国际：/fc -t COMEX黄金　/fc -d WTI　/fc -w 布伦特原油（仅分时/日/周/月）\n' +
+    '注意：伦敦金/伦敦银是场外现货，不属于期货品种\n' +
     '\n支持品种（名称或代码均可）：\n' + futuresVarietyText();
 }
 
@@ -93,7 +110,28 @@ async function cmdFc(args) {
 
   const resolved = resolveFuturesInput(contract);
   if (!resolved) {
-    return { ok: false, text: `⚠️ 未识别的期货品种/合约「${contract}」\n可填品种名或代码，如 生猪2701 / LH2701 / 生猪\n\n${usageText()}` };
+    const globalKey = contract.toLowerCase().replace(/\s+/g, '');
+    if (LONDON_SPOT.has(globalKey)) {
+      const metal = globalKey.includes('银') ? '白银' : '黄金';
+      return {
+        ok: false,
+        text: `⚠️ ${contract}通常指场外现货${metal}（${metal === '黄金' ? 'XAU/USD' : 'XAG/USD'}），不是期货。\n` +
+          `如需国际期货，请使用 /fc COMEX${metal}；国内期货使用 /fc ${metal}`,
+      };
+    }
+    const globalCode = GLOBAL_FUTURES.get(globalKey);
+    if (globalCode) {
+      const token = GLOBAL_PERIOD_TOKEN[period];
+      if (!token) {
+        return {
+          ok: false,
+          text: `⚠️ 国际期货暂不支持${FUT_PERIOD_LABEL[period] || period}线（新浪全球期货源仅提供分时和日线）\n` +
+            `可用：/fc -t ${contract}　/fc -d ${contract}　/fc -w ${contract}　/fc -M ${contract}`,
+        };
+      }
+      return cmdStock([token, globalCode]);
+    }
+    return { ok: false, text: `⚠️ 未识别的期货品种/合约「${contract}」\n可填国内品种/合约，或明确的国际期货名，如 COMEX黄金 / WTI / 布伦特原油 / 美豆\n\n${usageText()}` };
   }
   const { symbol, isMain, variety } = resolved;
   const label = FUT_PERIOD_LABEL[period] || period;
