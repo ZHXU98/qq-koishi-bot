@@ -224,7 +224,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 | `/ss` | `/指数` | 指数行情图：上证 / 沪深300 / 全市场成交额（盘中含预计全天成交量）/ 申万二级资金流 |
 | `/stock <周期> <代码或名称>` | `/股票` `/K线` | K线图 / 分时图 / 美股盘前图 / 文本速查；连续白底布局，分时标注日内最高/最低及相对今开波动（详见下节） |
 | `/fc [周期] <品种 或 合约>` | `/期货` | **国内期货** K线 / 分时图；合约写法 `生猪2701` / `lh2701` / `生猪`（不写月份=主力连续）；涨跌以**昨结算价**为基准（详见下节） |
-| `/fx [周期] <货币对或名称>` | `/外汇` `/汇率` | **外汇行情**：`-t` 最近滚动24小时（默认）/ `-d` 日线 / `-w` 周线 / `-m` 月线；大陆直连新浪外汇源（详见下节） |
+| `/fx [周期] <货币对或名称>` | `/外汇` `/汇率` | **外汇行情**：`-t` 最近滚动24小时（默认），支持 `-1m/-5m/-30m/-1h/-2h` 分钟K及 `-d/-w/-m` 长周期；大陆直连新浪外汇源（详见下节） |
 | `/an <代码或名称>` | `/分析` `/技术分析` | 多周期技术分析：完整文字分析图 → 日/周/月技术图；全文保留结构、确认/失效、风险及相对沪深300/行业强弱（详见 `reply/AN_GUIDE.md`） |
 | `/t <代码或名称> [-sw 震荡] [-tr 单边]` | `/做T` | 做T参谋：完整文字分析图 → 分时技术图；全文保留当前动作、卖出/买回区、分时确认与执行纪律（详见 `reply/T_GUIDE.md`） |
 | `/stocks <周期> <组合名 或 股票...>` | `/组合` `/自选` | **股票组合拼图**：一张卡片式长图并列多看（详见下节）。查询 / `-list` 所有人可用，`-add` / `-update` / `-del` 仅主人 |
@@ -318,19 +318,35 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 
 | 参数 | 周期 | 说明 |
 |---|---|---|
-| `-t` / `t` / `分时` / `24h` | 最近24小时 | 默认；滚动窗口，不是自然日 00:00–24:00 |
+| `-t` / `t` / `分时` / `24h` | 最近24小时价格线 | 默认；滚动窗口，不是自然日 00:00–24:00 |
+| `-1m` / `1m` | 1分钟K | 数据源最多 1440 根；图中最近 120 根（约2小时） |
+| `-5m` / `5m` | 5分钟K | 原生周期；图中最近 120 根（约10小时） |
+| `-30m` / `30m` | 30分钟K | 原生周期；图中最近 120 根（约2.5个交易日） |
+| `-1h` / `1h` / `60m` | 1小时K | 原生60分钟；图中最近 120 根（约5个交易日） |
+| `-2h` / `2h` / `120m` | 2小时K | 由1小时K按自然双小时聚合；图中最近 120 根（约10个交易日） |
 | `-d` / `d` / `日线` | 日线 | MA5/10/20 + BOLL |
 | `-w` / `w` / `周线` | 周线 | 日 K 本地聚合 |
 | `-m` / `m` / `月线` | 月线 | 日 K 本地聚合 |
 
 ```bash
 /fx USD/CNH          # 美元兑离岸人民币最近24小时
+/fx -1m EUR/USD      # 欧元兑美元1分钟K
+/fx -5m EUR/JPY      # 欧元兑日元5分钟K
+/fx -30m USD/SGD     # 美元兑新加坡元30分钟K
+/fx -1h USD/MXN      # 美元兑墨西哥比索1小时K
+/fx -2h 欧元英镑      # 欧元兑英镑2小时K
 /fx -d EUR/USD       # 欧元兑美元日线
 /fx -w 英镑美元       # 英镑兑美元周线
 /fx -m 美元日元       # 美元兑日元月线
 ```
 
-首批支持：`USD/CNH`、`EUR/USD`、`GBP/USD`、`USD/JPY`、`AUD/USD`、`USD/CHF`、`USD/CAD`、`NZD/USD`、`EUR/CNY`，同时支持相应中文名称。外汇现货没有统一交易所集中成交量，图中不会绘制伪成交量；数据源为新浪 `NewForexService`，大陆服务器可直连，不依赖 Yahoo 或代理。
+完整支持的 22 个货币对（均已验证分钟K、日线和实时快照）：
+
+- **主要直盘**：`USD/CNH`、`EUR/USD`、`GBP/USD`、`USD/JPY`、`AUD/USD`、`USD/CHF`、`USD/CAD`、`NZD/USD`、`EUR/CNY`
+- **欧元交叉盘**：`EUR/JPY`、`EUR/GBP`、`EUR/CHF`、`EUR/AUD`、`EUR/CAD`、`EUR/NZD`
+- **亚洲与新兴市场**：`USD/HKD`、`USD/SGD`、`USD/SEK`、`USD/NOK`、`USD/TRY`、`USD/MXN`、`USD/ZAR`
+
+同时支持相应中文名称。外汇现货没有统一交易所集中成交量，图中不会绘制伪成交量；数据源为新浪 `NewForexService`，大陆服务器可直连，不依赖 Yahoo 或代理。`GBP/JPY`、`AUD/JPY`、`USD/CNY` 等虽然存在快照或日线，但新浪分钟K为空，暂不混入完整支持列表。
 
 ### `/fc` 详解
 
@@ -509,7 +525,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 | 分钟 K（1/5/30/60m） | 腾讯 `proxy.finance.qq.com` mkline |
 | 当日分时 | 腾讯 minute/query、东财 `push2his` trends2 |
 | 美股盘前（普通美股 / ETF） | Yahoo Finance chart（`includePrePost=true`，美东 04:00–09:30） |
-| 外汇最近24小时分时 / 日线 | 新浪 `NewForexService`（`getMinKline` / `getDayKLine`）；周/月由日 K 本地聚合 |
+| 外汇最近24小时 / 分钟K / 日线 | 新浪 `NewForexService`（`getMinKline`：1/5/30/60分钟；2小时本地聚合；`getDayKLine`：日线，周/月本地聚合） |
 | 名称 → 代码搜索 | 腾讯 `smartbox.gtimg.cn`（GBK） |
 | 国际商品分时 / 日线 | 新浪 `GlobalFuturesService`（`getGlobalFuturesMinLine` / `getGlobalFuturesDailyKLine`） |
 | 国内期货快照（商品 / 中金所两套字段） | 新浪 `hq.sinajs.cn` `nf_<合约>`（GBK，需 Referer） |

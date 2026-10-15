@@ -209,7 +209,9 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   } else {
     [0, Math.floor((dn - 1) / 2), dn - 1].forEach(i => {
       const t = String(display[i].t);
-      const label = periodLabel === '日线' ? t.slice(5) : (periodLabel === '周线' || periodLabel === '月线' ? t.slice(2, 7) : t.slice(8, 12).replace(/(\d{2})(\d{2})/, '$1:$2'));
+      const label = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(t)
+        ? t.slice(5, 16)
+        : (periodLabel.startsWith('日线') ? t.slice(5) : ((periodLabel.startsWith('周线') || periodLabel.startsWith('月线')) ? t.slice(2, 7) : t.slice(8, 12).replace(/(\d{2})(\d{2})/, '$1:$2')));
       ctx.fillStyle = sub; ctx.font = '12px cjk';
       ctx.fillText(label, X(i), TITLE_H + plotH + 16);
     });
@@ -607,7 +609,9 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
     const ticks = [0, Math.floor((dn - 1) / 2), dn - 1];
     ticks.forEach(i => {
       const t = String(display[i].t);
-      const label = periodLabel === '日线' ? t.slice(5) : (periodLabel === '周线' || periodLabel === '月线' ? t.slice(2, 7) : t.slice(8, 12).replace(/(\d{2})(\d{2})/, '$1:$2'));
+      const label = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(t)
+        ? t.slice(5, 16)
+        : (periodLabel.startsWith('日线') ? t.slice(5) : ((periodLabel.startsWith('周线') || periodLabel.startsWith('月线')) ? t.slice(2, 7) : t.slice(8, 12).replace(/(\d{2})(\d{2})/, '$1:$2')));
       s += `<text x="${X(i)}" y="${TITLE_H + plotH + 16}" text-anchor="middle" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">${label}</text>`;
     });
   }

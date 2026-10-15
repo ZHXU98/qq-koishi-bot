@@ -1,24 +1,32 @@
 // ============================================================
 // /fx 外汇 K线 / 最近24小时分时图
-// 用法：/fx [-t|-d|-w|-m] <货币对或中文名>
+// 用法：/fx [-t|-1m|-5m|-30m|-1h|-2h|-d|-w|-m] <货币对或中文名>
 // 数据源：新浪外汇（大陆直连）；外汇为 24×5，周末显示最后交易时段
 // ============================================================
-const { resolveFxPair, fetchFxMinute, fetchFxDaily, fetchFxQuote, fxPairText } = require('../forex');
+const { resolveFxPair, fetchFxMinute, fetchFxKline, fetchFxDaily, fetchFxQuote, fxPairText } = require('../forex');
 const { aggHfKline } = require('../market');
 const { renderStockPng } = require('./stock');
 
 const FX_PERIODS = {
   '-t': 'time', 't': 'time', 'time': 'time', '分时': 'time', '24h': 'time',
+  '-1m': 'm1', '1m': 'm1', '1分': 'm1', '1分钟': 'm1',
+  '-5m': 'm5', '5m': 'm5', '5分': 'm5', '5分钟': 'm5',
+  '-30m': 'm30', '30m': 'm30', '30分': 'm30', '30分钟': 'm30',
+  '-1h': 'h1', '1h': 'h1', '60m': 'h1', '1小时': 'h1',
+  '-2h': 'h2', '2h': 'h2', '120m': 'h2', '2小时': 'h2',
   '-d': 'day', 'd': 'day', 'day': 'day', '日': 'day', '日线': 'day',
   '-w': 'week', 'w': 'week', 'week': 'week', '周': 'week', '周线': 'week',
   '-m': 'month', 'm': 'month', '-M': 'month', 'M': 'month', 'month': 'month', '月': 'month', '月线': 'month',
 };
-const FX_LABELS = { time: '最近24小时', day: '日线', week: '周线', month: '月线' };
+const FX_LABELS = {
+  time: '最近24小时', m1: '1分钟', m5: '5分钟', m30: '30分钟', h1: '1小时', h2: '2小时',
+  day: '日线', week: '周线', month: '月线',
+};
 
 function usageText() {
   return '📋 用法：/fx [周期] <货币对或名称>\n' +
-    '周期：-t 最近24小时（默认）｜-d 日线｜-w 周线｜-m 月线\n' +
-    '例：/fx USD/CNH　/fx -d EUR/USD　/fx -w 英镑美元　/fx -m 美元日元\n' +
+    '周期：-t 最近24小时（默认）｜-1m｜-5m｜-30m｜-1h｜-2h｜-d 日线｜-w 周线｜-m 月线\n' +
+    '例：/fx USD/CNH　/fx -5m EUR/USD　/fx -2h 欧元日元　/fx -d 美元日元\n' +
     '支持：' + fxPairText();
 }
 
@@ -76,18 +84,25 @@ async function cmdFx(args) {
   if (!info) return { ok: false, text: `⚠️ 未识别的外汇货币对「${query}」\n\n${usageText()}` };
 
   const isTime = period === 'time';
+  const isIntraday = ['m1', 'm5', 'm30', 'h1', 'h2'].includes(period);
   const [raw, quote] = await Promise.all([
-    isTime ? fetchFxMinute(info) : fetchFxDaily(info),
+    isTime ? fetchFxMinute(info) : (isIntraday ? fetchFxKline(info, period) : fetchFxDaily(info)),
     fetchFxQuote(info),
   ]);
   if (!raw || raw.length < 2) return { ok: false, text: `⚠️ 未取到 ${info.pair} ${FX_LABELS[period]}数据，请稍后重试` };
 
-  const dailyWithCurrent = isTime ? raw : appendCurrentBar(raw, quote);
+  const dailyWithCurrent = (isTime || isIntraday) ? raw : appendCurrentBar(raw, quote);
   const klines = period === 'week' || period === 'month' ? aggHfKline(dailyWithCurrent, period) : dailyWithCurrent;
   if (!klines || klines.length < 2) return { ok: false, text: `⚠️ ${info.pair} ${FX_LABELS[period]}数据不足，暂无法出图` };
 
   if (isTime && Number(raw._prevClose) > 0) raw._prevClose = Number(raw._prevClose);
-  const range = isTime && raw._date ? ` ${raw._date}` : '';
+  const rangeOf = rows => {
+    if (!rows?.length) return '';
+    const fmt = value => String(value || '').slice(5, 16);
+    return `${fmt(rows[0].t)} 至 ${fmt(rows[rows.length - 1].t)}`;
+  };
+  const chartRows = isIntraday ? raw.slice(-120) : raw;
+  const range = isTime && raw._date ? ` ${raw._date}` : (isIntraday ? ` ${rangeOf(chartRows)}` : '');
   const periodLabel = `${FX_LABELS[period]}${range}${isTime ? weekendNotice(raw) : ''}`;
   const effectiveQuote = quote || {
     price: klines[klines.length - 1].close,
