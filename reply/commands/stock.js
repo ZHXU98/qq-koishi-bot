@@ -22,15 +22,15 @@ function renderStockPng(code, name, periodLabel, klines, opts, quote) {
   }
 }
 
-function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll, timeMode, premarket = false, prec = 2, futures = false }, quote) {
+function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll, timeMode, premarket = false, prec = 2, futures = false, continuous = false, noVolume = false }, quote) {
   const fp = v => isFinite(v) ? Number(v).toFixed(prec) : '-'; // 价格显示精度（ETF 三位小数时 prec=3，普通股票 2）
   const { createCanvas } = require('@napi-rs/canvas');
-  const W = 1000, PAD = 74, TITLE_H = 62, VOL_H = 120;
+  const W = 1000, PAD = 74, TITLE_H = 62, VOL_H = noVolume ? 48 : 120;
   const isHK = code.startsWith('hk'); // 港股：字段口径不同，不显示基本面面板
   const isUS = code.startsWith('us');
   const isHF = code.startsWith('hf_'); // 国际商品：接近24h连续交易，分时用索引等距映射
   // 连续交易时段（外盘商品 / 国内期货含夜盘）：分时按索引等距映射，不套用 A股/港股 的时段过滤与分钟对齐
-  const contSess = isHF || futures;
+  const contSess = isHF || futures || continuous;
   const prevLabel = futures ? '昨结' : '昨收'; // 期货涨跌基准是昨结算价，不是昨收
   const showInfo = !isHK && !isUS && !!quote && quote.mktCap > 0; // 有市值即显示（ETF 无 PE/PB 也显示，缺的字段留空）
   const LEG_H = timeMode ? 30 : ((maPeriods && maPeriods.length > 0) ? 66 : 40);
@@ -71,7 +71,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   if (timeMode) {
     if (premarket && Number(klines._prevClose) > 0) prevCloseRef = Number(klines._prevClose);
     else if (quote && Number(quote.prevClose) > 0) prevCloseRef = Number(quote.prevClose);
-    if (!isIndex && !premarket) avgSeries = buildAvgLine(display); // 盘前源无累计额，不绘制伪均价线
+    if (!isIndex && !premarket && !noVolume) avgSeries = buildAvgLine(display); // 无成交量的外汇/盘前源不绘制伪均价线
   }
 
   // 价格范围
@@ -157,7 +157,8 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   ctx.font = 'bold 24px cjk';
   ctx.fillText(name, PAD + 16, 34);
   ctx.fillStyle = sub; ctx.font = '16px cjk';
-  ctx.fillText(code.toUpperCase(), PAD + 16 + name.length * 24 + 8, 34);
+  const displayCode = code.startsWith('fx_') ? code.slice(3).toUpperCase() : code.toUpperCase();
+  ctx.fillText(displayCode, PAD + 16 + name.length * 24 + 8, 34);
   ctx.fillStyle = sub; ctx.font = '13px cjk';
   ctx.fillText(periodLabel, PAD + 16, 54);
   // 标题右侧：现价 + 涨跌（去掉「今日价格」文字标签）
@@ -378,7 +379,7 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   const noVol = !vols.some(v => Number(v) > 0);
   if (noVol) {
     ctx.fillStyle = sub; ctx.font = '13px cjk'; ctx.textAlign = 'center';
-    ctx.fillText('该品种数据源不提供成交量', W / 2, volTop + volH / 2);
+    ctx.fillText(noVolume ? '外汇现货无集中成交量' : '该品种数据源不提供成交量', W / 2, volTop + volH / 2);
   } else {
     for (let i = 0; i < dn; i++) {
       const k = display[i];
@@ -390,8 +391,10 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
       ctx.globalAlpha = 1;
     }
   }
-  ctx.fillStyle = sub; ctx.textAlign = 'left'; ctx.font = '12px cjk';
-  ctx.fillText('成交量', PAD, volTop + volH + 16);
+  if (!noVolume) {
+    ctx.fillStyle = sub; ctx.textAlign = 'left'; ctx.font = '12px cjk';
+    ctx.fillText('成交量', PAD, volTop + volH + 16);
+  }
 
   // 基本面面板（个股）
   if (showInfo) {
@@ -465,14 +468,14 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
 }
 
 // 渲染 K 线 SVG → PNG base64（resvg fallback，@napi-rs/canvas 失败时使用）
-function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, timeMode, premarket = false, prec = 2, futures = false }, quote) {
+function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, timeMode, premarket = false, prec = 2, futures = false, continuous = false, noVolume = false }, quote) {
   const fp = v => isFinite(v) ? Number(v).toFixed(prec) : '-'; // 价格显示精度（ETF 三位小数时 prec=3，普通股票 2）
-  const W = 1000, PAD = 74, TITLE_H = 62, VOL_H = 120;
+  const W = 1000, PAD = 74, TITLE_H = 62, VOL_H = noVolume ? 48 : 120;
   const isHK = code.startsWith('hk'); // 港股：字段口径不同，不显示基本面面板
   const isUS = code.startsWith('us');
   const isHF = code.startsWith('hf_'); // 国际商品：接近24h连续交易，分时用索引等距映射
   // 连续交易时段（外盘商品 / 国内期货含夜盘）：分时按索引等距映射，不套用 A股/港股 的时段过滤与分钟对齐
-  const contSess = isHF || futures;
+  const contSess = isHF || futures || continuous;
   const prevLabel = futures ? '昨结' : '昨收'; // 期货涨跌基准是昨结算价，不是昨收
   const showInfo = !isHK && !isUS && !!quote && quote.mktCap > 0; // 有市值即显示（ETF 无 PE/PB 也显示，缺的字段留空）
   // 分时：图例条占 30px（价格/均价/昨收），需计入否则成交量柱会捅进图例区；日线 66（两行）、分钟线 40（单行）
@@ -502,7 +505,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   if (timeMode) {
     if (premarket && Number(klines._prevClose) > 0) prevCloseRef = Number(klines._prevClose);
     else if (quote && Number(quote.prevClose) > 0) prevCloseRef = Number(quote.prevClose);
-    if (!isIndex && !premarket) avgSeries = buildAvgLine(display); // 盘前源无累计额，不绘制伪均价线
+    if (!isIndex && !premarket && !noVolume) avgSeries = buildAvgLine(display); // 无成交量的外汇/盘前源不绘制伪均价线
   }
 
   // 价格范围：高低点 + BOLL 上下轨 + 均价 + 昨收基准
@@ -562,10 +565,11 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   // 分时：以「今开」为红绿基准（与价格线一致）；其他周期用昨收
   const openRef = premarket ? (klines[0]?.close ?? lastPrice) : ((quote && Number(quote.open) > 0) ? Number(quote.open) : (klines[0]?.close ?? lastPrice));
 
+  const displayCode = code.startsWith('fx_') ? code.slice(3).toUpperCase() : code.toUpperCase();
   let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
 <rect x="0" y="0" width="${W}" height="${H}" fill="${bg}"/>
 <rect x="0" y="0" width="${W}" height="${TITLE_H}" fill="${panel}"/>
-<text x="${PAD}" y="34" font-family="PingFang SC,Hiragino Sans GB,cjk" font-size="24" font-weight="bold" fill="${ink}">${esc(name)} <tspan fill="${sub}" font-size="16">${code.toUpperCase()}</tspan></text>
+<text x="${PAD}" y="34" font-family="PingFang SC,Hiragino Sans GB,cjk" font-size="24" font-weight="bold" fill="${ink}">${esc(name)} <tspan fill="${sub}" font-size="16">${esc(displayCode)}</tspan></text>
 <text x="${PAD}" y="54" font-family="PingFang SC,cjk" font-size="13" fill="${sub}">${periodLabel}</text>`;
   // 标题右侧：今天价格（颜色分时按今开，其他按昨收；涨跌额/涨跌幅数字一律按昨收标准收益率）
   const dCol = chgCol; // 右上角颜色与收益率统一按昨收（红涨绿跌标准口径）
@@ -714,7 +718,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
   // 外盘商品部分品种数据源不给量（黄金/白银/原油/天然气/美铜恒为 0）→ 画占位说明
   const noVol = !vols.some(v => Number(v) > 0);
   if (noVol) {
-    s += `<text x="${W / 2}" y="${volTop + volH / 2}" font-family="PingFang SC,cjk" font-size="13" fill="${sub}" text-anchor="middle">该品种数据源不提供成交量</text>`;
+    s += `<text x="${W / 2}" y="${volTop + volH / 2}" font-family="PingFang SC,cjk" font-size="13" fill="${sub}" text-anchor="middle">${noVolume ? '外汇现货无集中成交量' : '该品种数据源不提供成交量'}</text>`;
   } else {
     for (let i = 0; i < dn; i++) {
       const k = display[i];
@@ -724,7 +728,7 @@ function renderStockPngSvg(code, name, periodLabel, klines, { maPeriods, boll, t
       s += `<rect x="${xk - cw / 2}" y="${volTop + volH - vh}" width="${cw}" height="${vh}" fill="${col}" opacity="0.4" rx="1"/>`;
     }
   }
-  s += `<text x="${PAD}" y="${volTop + volH + 16}" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">成交量</text>`;
+  if (!noVolume) s += `<text x="${PAD}" y="${volTop + volH + 16}" font-family="PingFang SC,cjk" font-size="12" fill="${sub}">成交量</text>`;
 
   // 底部基本面面板（个股，三行全字段）
   if (showInfo) {
