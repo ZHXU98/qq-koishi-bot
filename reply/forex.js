@@ -237,7 +237,7 @@ function fxListText() {
   for (const [title, pairs] of groups) {
     lines.push('', `【${title}】`, ...pairs.map(explain));
   }
-  lines.push('', '输入方式（均等价）：', '/fx EUR/JPY　/fx EURJPY　/fx EUR JPY　/fx 欧元日元', '加周期示例：/fx -5m EUR JPY　/fx -2h 欧元英镑');
+  lines.push('', '输入方式（命令、周期和英文代码均不区分大小写；中英文均可加空格）：', '/fx EUR/JPY　/FX eurjpy　/fx eUr JpY　/fx 欧元 日元', '加周期示例：/FX -5M eur jpy　/fx -2h 欧元 英镑');
   return lines.join('\n');
 }
 
