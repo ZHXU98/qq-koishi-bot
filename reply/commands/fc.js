@@ -17,6 +17,7 @@ const { renderStockPng, cmdStock } = require('./stock');
 
 const FUT_USAGE_PERIOD = '-t 分时 | m 1分钟 | 5m 5分钟 | 15m 15分钟 | 30m 30分钟 | 60m 60分钟 | -d 日线（默认）| -w 周线 | -M 月线';
 const GLOBAL_FUTURES = new Map([
+  ['伦敦金', 'hf_XAU'], ['伦敦金现', 'hf_XAU'], ['现货黄金', 'hf_XAU'], ['xau', 'hf_XAU'], ['xauusd', 'hf_XAU'], ['xau/usd', 'hf_XAU'],
   ['纽约黄金', 'hf_GC'], ['comex黄金', 'hf_GC'], ['国际金', 'hf_GC'],
   ['纽约白银', 'hf_SI'], ['comex白银', 'hf_SI'],
   ['纽约原油', 'hf_CL'], ['美油', 'hf_CL'], ['wti', 'hf_CL'], ['wti原油', 'hf_CL'],
@@ -30,7 +31,7 @@ const GLOBAL_FUTURES = new Map([
   ['美小麦', 'hf_W'], ['美国小麦', 'hf_W'],
 ]);
 const GLOBAL_PERIOD_TOKEN = { time: '-t', day: '-d', week: '-w', month: '-M' };
-const LONDON_SPOT = new Set(['伦敦金', '伦敦金现', '伦敦银', '伦敦银现']);
+const LONDON_SPOT = new Set(['伦敦银', '伦敦银现']);
 
 function usageText() {
   return '📋 用法：/fc [周期] <品种 或 合约>\n' +
@@ -38,8 +39,8 @@ function usageText() {
     '合约：生猪2701（指定月份）｜lh2701｜TA601（郑商所 3 位月份自动补全）\n' +
     '　　　不写月份＝主力连续，如 /fc 生猪 → LH0\n' +
     '例：/fc 生猪2701　/fc 螺纹钢　/fc 5m 沪金2612　/fc -t IF2612\n' +
-    '国际：/fc -t COMEX黄金　/fc -d WTI　/fc -w 布伦特原油（仅分时/日/周/月）\n' +
-    '注意：伦敦金/伦敦银是场外现货，不属于期货品种\n' +
+    '国际：/fc -t 伦敦金　/fc -d COMEX黄金　/fc -w 布伦特原油（仅分时/日/周/月）\n' +
+    '伦敦金为 XAU/USD 现货原始美元/盎司点位，不换汇、不折算沪金\n' +
     '\n支持品种（名称或代码均可）：\n' + futuresVarietyText();
 }
 
@@ -112,11 +113,10 @@ async function cmdFc(args) {
   if (!resolved) {
     const globalKey = contract.toLowerCase().replace(/\s+/g, '');
     if (LONDON_SPOT.has(globalKey)) {
-      const metal = globalKey.includes('银') ? '白银' : '黄金';
       return {
         ok: false,
-        text: `⚠️ ${contract}通常指场外现货${metal}（${metal === '黄金' ? 'XAU/USD' : 'XAG/USD'}），不是期货。\n` +
-          `如需国际期货，请使用 /fc COMEX${metal}；国内期货使用 /fc ${metal}`,
+        text: `⚠️ ${contract}通常指场外现货白银（XAG/USD），当前暂未接入。\n` +
+          '如需国际白银期货，请使用 /fc COMEX白银；国内期货使用 /fc 白银',
       };
     }
     const globalCode = GLOBAL_FUTURES.get(globalKey);
@@ -125,7 +125,7 @@ async function cmdFc(args) {
       if (!token) {
         return {
           ok: false,
-          text: `⚠️ 国际期货暂不支持${FUT_PERIOD_LABEL[period] || period}线（新浪全球期货源仅提供分时和日线）\n` +
+          text: `⚠️ 该国际行情暂不支持${FUT_PERIOD_LABEL[period] || period}线（新浪全球行情源仅提供分时和日线）\n` +
             `可用：/fc -t ${contract}　/fc -d ${contract}　/fc -w ${contract}　/fc -M ${contract}`,
         };
       }

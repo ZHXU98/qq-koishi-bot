@@ -33,6 +33,7 @@ const GLOBAL_ALIAS = {
   '布伦特原油': 'hf_OIL', '布油': 'hf_OIL',
   '纽约原油': 'hf_CL', '美油': 'hf_CL', 'wti': 'hf_CL', 'wti原油': 'hf_CL',
   '黄金': 'hf_GC', '纽约黄金': 'hf_GC', 'comex黄金': 'hf_GC', '国际金': 'hf_GC',
+  '伦敦金': 'hf_XAU', '伦敦金现': 'hf_XAU', '现货黄金': 'hf_XAU', 'xau': 'hf_XAU', 'xauusd': 'hf_XAU', 'xau/usd': 'hf_XAU',
   '白银': 'hf_SI', '纽约白银': 'hf_SI', 'comex白银': 'hf_SI',
   '天然气': 'hf_NG', '美国天然气': 'hf_NG',
   '美铜': 'hf_HG', '伦铜': 'hf_CAD',
@@ -63,8 +64,7 @@ async function resolveStockCode(q, { details = false } = {}) {
   const rawQuery = String(q || '').trim();
   const key = rawQuery.toLowerCase();
   const result = { code: '', name: '', exact: false };
-  // 伦敦金/银通常指 XAU/USD、XAG/USD 场外现货，不能冒充 COMEX 纽约期货。
-  if (['伦敦金', '伦敦金现', '伦敦银', '伦敦银现'].includes(key)) return details ? result : '';
+  if (['伦敦银', '伦敦银现'].includes(key)) return details ? result : '';
   if (GLOBAL_ALIAS[key]) {
     result.code = GLOBAL_ALIAS[key];
     result.name = rawQuery;
@@ -323,7 +323,7 @@ async function fetchEmKline(secid, klt) {
   });
 }
 
-const HF_SINA_SYM = { 'hf_OIL': 'OIL', 'hf_GC': 'GC', 'hf_SI': 'SI', 'hf_CL': 'CL', 'hf_NG': 'NG', 'hf_HG': 'HG', 'hf_CAD': 'CAD',
+const HF_SINA_SYM = { 'hf_XAU': 'XAU', 'hf_OIL': 'OIL', 'hf_GC': 'GC', 'hf_SI': 'SI', 'hf_CL': 'CL', 'hf_NG': 'NG', 'hf_HG': 'HG', 'hf_CAD': 'CAD',
   'hf_S': 'S', 'hf_SM': 'SM', 'hf_BO': 'BO', 'hf_C': 'C', 'hf_W': 'W' };
 const SINA_GLOBAL_MIN = 'https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_Global_=/GlobalFuturesService.getGlobalFuturesMinLine?symbol=%s&type=1';
 async function fetchSinaGlobalMin(code) {
@@ -509,15 +509,20 @@ async function fetchStockQuote(code) {
     if (cachedAgain) return cachedAgain;
     try {
     if (code.startsWith('hf_')) {
-      const resp = await fetch(STOCK_QUOTE.replace('%s', code), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(6000) });
+      const resp = await fetch('https://hq.sinajs.cn/list=' + encodeURIComponent(code), {
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn/' },
+        signal: AbortSignal.timeout(6000),
+      });
       const buf = Buffer.from(await resp.arrayBuffer());
       const text = new TextDecoder('gbk').decode(buf);
-      const m = text.match(/v_[\w.]+="([^"]+)"/);
+      const m = text.match(/hq_str_[\w.]+="([^"]+)"/);
       if (!m) return null;
       const f = m[1].split(',');
-      const price = Number(f[0]), chg = Number(f[1]), prevClose = Number(f[2]);
+      const price = Number(f[0]);
+      const prevClose = Number(f[7]);
+      const chg = (price > 0 && prevClose > 0) ? price - prevClose : 0;
       const result = {
-        name: normStockName(f[13]) || code, isIndex: false, price, prevClose, open: Number(f[3]), high: Number(f[4]), low: Number(f[5]),
+        name: normStockName(f[13]) || code, isIndex: false, price, prevClose, open: Number(f[8]), high: Number(f[4]), low: Number(f[5]),
         chg, chgPct: prevClose > 0 ? chg / prevClose * 100 : 0,
         time: f[6] || '', date: f[12] || '', market: 'hf',
         amount: 0, turnover: 0, volumeRatio: 0, amplitude: 0,

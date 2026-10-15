@@ -115,13 +115,11 @@ function renderStockPngCanvas(code, name, periodLabel, klines, { maPeriods, boll
   // 最新一根
   const last = klines[n - 1];
   // 分时：现价/昨收用快照（分时数据末行是盘后杂数据，相邻价差≈0 会算错涨跌）；K线用数据收盘价
-  // 国际商品(hf_)非分时例外：① 新浪日K最后一根是「已收盘」那根、快照现价属下一交易时段，
-  //   用 klines[n-2] 当昨收会整体偏离一根；② 快照的 f[2] 并非真昨收（与自带涨跌额对不上，
-  //   如 hf_GC 现价 4402.84/涨跌 -1.30/f[2] 4406.00 → 三者不自洽）。
-  //   故一律由快照涨跌额反推基准，使图内数字与消息标题完全一致。
+  // 国际商品(hf_)非分时：新浪日K最后一根与实时快照可能处于不同交易时段，
+  // 因此涨跌额与基准统一使用快照口径，避免按相邻日K反算后与标题实时行情不一致。
   const lastPrice = premarket ? Number(last.close) : ((quote && Number(quote.price) > 0) ? Number(quote.price) : last.close);
-  // 国际商品/国内期货非分时：涨跌额与基准一律取快照自带值（商品源自身不自洽，自行按基准反算会与标题打架；
-  // 期货的基准是昨结算价，日K 相邻两根反算出来的是「昨收」，口径会与快照打架）
+  // 国际商品/国内期货非分时：涨跌额与基准统一取快照值；全球行情避免跨交易时段的日K偏移，
+  // 国内期货则必须使用昨结算价，不能用日K相邻收盘价替代。
   const hfSnapChg = (contSess && !timeMode && quote && isFinite(Number(quote.chg))) ? Number(quote.chg) : NaN;
   const hfBase = (contSess && !timeMode && quote && Number(quote.price) > 0 && isFinite(hfSnapChg))
     ? Number(quote.price) - hfSnapChg : null;
@@ -808,12 +806,11 @@ async function cmdStock(args) {
   }
   if (!codeInput) return { ok: false, text: USAGE };
   const londonSpot = codeInput.toLowerCase().replace(/\s+/g, '');
-  if (['伦敦金', '伦敦金现', '伦敦银', '伦敦银现'].includes(londonSpot)) {
-    const metal = londonSpot.includes('银') ? '白银' : '黄金';
+  if (['伦敦银', '伦敦银现'].includes(londonSpot)) {
     return {
       ok: false,
-      text: `⚠️ ${codeInput}通常指场外现货${metal}（${metal === '黄金' ? 'XAU/USD' : 'XAG/USD'}），不是 COMEX 期货。\n` +
-        `如需国际期货，请使用 /stock COMEX${metal} 或 /fc COMEX${metal}`,
+      text: `⚠️ ${codeInput}通常指场外现货白银（XAG/USD），当前暂未接入。\n` +
+        '如需国际白银期货，请使用 /stock COMEX白银 或 /fc COMEX白银',
     };
   }
 
@@ -866,7 +863,9 @@ async function cmdStock(args) {
       : `⚠️ 获取 ${code} ${STOCK_PERIOD_LABEL[period]} 数据失败，请确认代码是否正确`;
     return { ok: false, text: msg };
   }
-  const name = quote?.name || resolvedName || code;
+  const name = code === 'hf_XAU'
+    ? '伦敦金现货（美元/盎司）'
+    : (quote?.name || resolvedName || code);
   const isPremarket = period === 'premarket';
   const effectiveQuote = isPremarket ? {
     ...(quote || {}),
