@@ -11,6 +11,13 @@ const FX_DAY_URL = 'https://quotes.sina.cn/forex/api/openapi.php/NewForexService
 const FX_QUOTE_URL = 'https://hq.sinajs.cn/list=%s';
 const FX_HEADERS = { 'User-Agent': 'Mozilla/5.0', Referer: 'https://finance.sina.com.cn/' };
 
+const FX_CURRENCIES = {
+  USD: '美元', EUR: '欧元', GBP: '英镑', JPY: '日元', AUD: '澳元',
+  CHF: '瑞士法郎', CAD: '加元', NZD: '新西兰元', CNH: '离岸人民币', CNY: '人民币',
+  HKD: '港元', SGD: '新加坡元', SEK: '瑞典克朗', NOK: '挪威克朗',
+  TRY: '土耳其里拉', MXN: '墨西哥比索', ZAR: '南非兰特',
+};
+
 const FX_PAIRS = {
   'USD/CNH': { symbol: 'fx_susdcnh', name: '美元兑离岸人民币', prec: 4 },
   'EUR/USD': { symbol: 'fx_seurusd', name: '欧元兑美元', prec: 5 },
@@ -209,7 +216,32 @@ function fxPairText() {
   return Object.entries(FX_PAIRS).map(([pair, x]) => `${pair} ${x.name}`).join('｜');
 }
 
+function fxListText() {
+  const explain = pair => {
+    const [base, quote] = pair.split('/');
+    return `${pair}  ${FX_PAIRS[pair].name}（1${FX_CURRENCIES[base]}＝多少${FX_CURRENCIES[quote]}）`;
+  };
+  const groups = [
+    ['主要直盘', ['USD/CNH', 'EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CHF', 'USD/CAD', 'NZD/USD', 'EUR/CNY']],
+    ['欧元交叉盘', ['EUR/JPY', 'EUR/GBP', 'EUR/CHF', 'EUR/AUD', 'EUR/CAD', 'EUR/NZD']],
+    ['亚洲与新兴市场', ['USD/HKD', 'USD/SGD', 'USD/SEK', 'USD/NOK', 'USD/TRY', 'USD/MXN', 'USD/ZAR']],
+  ];
+  const codes = Object.entries(FX_CURRENCIES).map(([code, name]) => `${code} ${name}`).join('｜');
+  const lines = [
+    '💱 外汇货币对说明',
+    '货币对按市场标准方向报价，不按数值大小排列。斜杠前是基础货币，后是计价货币。',
+    '例如 EUR/JPY 177.00 表示：1欧元＝177.00日元。反向 JPY/EUR 可用 1÷177.00 计算，但不是常用报价方向。',
+    '',
+    `代码：${codes}`,
+  ];
+  for (const [title, pairs] of groups) {
+    lines.push('', `【${title}】`, ...pairs.map(explain));
+  }
+  lines.push('', '输入方式（均等价）：', '/fx EUR/JPY　/fx EURJPY　/fx EUR JPY　/fx 欧元日元', '加周期示例：/fx -5m EUR JPY　/fx -2h 欧元英镑');
+  return lines.join('\n');
+}
+
 module.exports = {
-  FX_PAIRS, FX_ALIASES, resolveFxPair,
-  fetchFxMinute, fetchFxKline, aggregateFxHours, fetchFxDaily, fetchFxQuote, fxPairText,
+  FX_PAIRS, FX_ALIASES, FX_CURRENCIES, resolveFxPair,
+  fetchFxMinute, fetchFxKline, aggregateFxHours, fetchFxDaily, fetchFxQuote, fxPairText, fxListText,
 };

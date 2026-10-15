@@ -3,7 +3,7 @@
 // 用法：/fx [-t|-1m|-5m|-30m|-1h|-2h|-d|-w|-m] <货币对或中文名>
 // 数据源：新浪外汇（大陆直连）；外汇为 24×5，周末显示最后交易时段
 // ============================================================
-const { resolveFxPair, fetchFxMinute, fetchFxKline, fetchFxDaily, fetchFxQuote, fxPairText } = require('../forex');
+const { resolveFxPair, fetchFxMinute, fetchFxKline, fetchFxDaily, fetchFxQuote, fxPairText, fxListText } = require('../forex');
 const { aggHfKline } = require('../market');
 const { renderStockPng } = require('./stock');
 
@@ -24,7 +24,7 @@ const FX_LABELS = {
 };
 
 function usageText() {
-  return '📋 用法：/fx [周期] <货币对或名称>\n' +
+  return '📋 用法：/fx [周期] <货币对或名称>｜/fx -list\n' +
     '周期：-t 最近24小时（默认）｜-1m｜-5m｜-30m｜-1h｜-2h｜-d 日线｜-w 周线｜-m 月线\n' +
     '例：/fx USD/CNH　/fx -5m EUR/USD　/fx -2h 欧元日元　/fx -d 美元日元\n' +
     '支持：' + fxPairText();
@@ -75,6 +75,9 @@ function appendCurrentBar(daily, quote) {
 
 async function cmdFx(args) {
   const parts = (args || []).map(x => String(x).trim()).filter(Boolean);
+  if (parts.length === 1 && ['-list', 'list', '列表', '品种', '帮助'].includes(parts[0].toLowerCase())) {
+    return { ok: true, text: fxListText() };
+  }
   const badPeriod = parts.find(x => x.startsWith('-') && !periodOf(x));
   if (badPeriod) return { ok: false, text: `⚠️ 未知周期「${badPeriod}」\n\n${usageText()}` };
 
