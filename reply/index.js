@@ -202,7 +202,8 @@ async function handleEvent(ev) {
   } else if (cmd.type === 'stock') {
     const r = await cmdStock(cmd.args);
     if (r.ok && r.img) {
-      await sendReply(ev, '', [r.img]); // 只发图，信息都在图上
+      // 多候选时仍只发送一条图文消息；候选字符串作为图片消息 content 附带。
+      await sendReply(ev, r.note || '', [r.img]);
     } else {
       await sendReply(ev, r.text || '⚠️ 图表生成失败');
     }

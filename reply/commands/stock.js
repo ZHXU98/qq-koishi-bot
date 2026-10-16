@@ -818,11 +818,13 @@ async function cmdStock(args) {
   let code = normalizeCode(codeInput);
   let resolvedName = '';
   let resolveNotice = '';
+  let resolvedCandidates = [];
   if (!code) {
     const resolved = await resolveStockCode(codeInput, { details: true });
     code = resolved.code;
     if (!code) return { ok: false, text: `⚠️ 未找到「${codeInput}」，请用代码或股票/ETF/港股/美股名称` };
     resolvedName = resolved.name || codeInput;
+    resolvedCandidates = resolved.candidates || [];
     if (!resolved.exact) resolveNotice = `🔎 已按「${resolvedName}」查询\n`;
   }
   const isUS = code.startsWith('us');
@@ -902,7 +904,18 @@ async function cmdStock(args) {
   const fp = v => isFinite(v) ? Number(v).toFixed(prec) : '-';
   const lastPx = (effectiveQuote && isFinite(effectiveQuote.price) && Number(effectiveQuote.price) > 0) ? Number(effectiveQuote.price) : last.close;
   const caption = `${resolveNotice}📈 ${name}（${capCode}）${periodLabel}\n${isPremarket ? '盘前价' : '现价'} ${fp(lastPx)}${effectiveQuote?.chgPct != null ? `  ${effectiveQuote.chg >= 0 ? '+' : ''}${fp(Number(effectiveQuote.chg))} (${effectiveQuote.chgPct >= 0 ? '+' : ''}${Number(effectiveQuote.chgPct).toFixed(2)}%)` : ''}`;
-  return { ok: true, text: caption, img };
+  let note = '';
+  if (resolvedCandidates.length > 1) {
+    const marketName = market => ({ sh: 'A股', sz: 'A股', bj: 'A股', hk: '港股', us: '美股' }[market] || market.toUpperCase());
+    const shown = resolvedCandidates.slice(0, 5);
+    const lines = shown.map((item, i) => {
+      const current = item.code === code ? '（当前图）' : '';
+      return `${i + 1}. ${marketName(item.market)}｜${item.rawCode}｜${item.name}${current}`;
+    });
+    if (resolvedCandidates.length > shown.length) lines.push(`…另有 ${resolvedCandidates.length - shown.length} 个候选未显示`);
+    note = `🔎 腾讯返回 ${resolvedCandidates.length} 个候选：\n${lines.join('\n')}`;
+  }
+  return { ok: true, text: caption, note, img };
 }
 
 // 商品（hf_）/全球指数（usDJI/usIXIC/usINX/hkHSI）文本速查：无K线数据，仅输出快照行情

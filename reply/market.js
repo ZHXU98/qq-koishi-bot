@@ -63,7 +63,7 @@ const EM_IDX_SECID = { 'usDJI': '100.DJIA', 'usINX': '100.SPX' };
 async function resolveStockCode(q, { details = false } = {}) {
   const rawQuery = String(q || '').trim();
   const key = rawQuery.toLowerCase();
-  const result = { code: '', name: '', exact: false };
+  const result = { code: '', name: '', exact: false, candidates: [] };
   if (['伦敦银', '伦敦银现'].includes(key)) return details ? result : '';
   if (GLOBAL_ALIAS[key]) {
     result.code = GLOBAL_ALIAS[key];
@@ -88,8 +88,9 @@ async function resolveStockCode(q, { details = false } = {}) {
       let code = '';
       if (market === 'us') code = 'us' + rawCode.toUpperCase();
       else if (/^\d{5,6}$/.test(rawCode)) code = market + rawCode;
-      return code ? { code, name } : null;
+      return code ? { market, rawCode, code, name } : null;
     }).filter(Boolean);
+    result.candidates = candidates;
     if (!candidates.length) return details ? result : '';
     const normalizedQuery = normStockName(rawQuery).toLowerCase();
     const hit = candidates.find(item => item.name.toLowerCase() === normalizedQuery) || candidates[0];
