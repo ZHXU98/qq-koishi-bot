@@ -34,7 +34,7 @@ process.env.no_proxy = '*';
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 // 未传报告路径时，按当天日期自动查找的目录；可经 REPORT_DIR 覆盖（换电脑时指向你的复盘目录）
 const REPORT_DIR = process.env.REPORT_DIR || '/Users/zhangxu/WorkBuddy/个人demo/daily-review';
-// 2026-08-26：默认指向官方机器人网关（OneBot 兼容）；NapCat 旧链路已停用
+// 2026-08-26：默认指向官方机器人网关（OneBot 兼容）；也可通过 NAPCAT_URL 指向备用 NapCat 通道
 const NAPCAT_URL = process.env.NAPCAT_URL || 'http://127.0.0.1:3100';
 const TOKEN = process.env.NAPCAT_TOKEN || '';
 const MSG_FORMAT = (process.env.MESSAGE_FORMAT || 'array').toLowerCase();

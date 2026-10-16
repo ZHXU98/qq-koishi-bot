@@ -9,13 +9,13 @@
 | **快讯转发** | `ths-news` | 容器 | 每 5 分钟拉取同花顺官方「重要」快讯，渲染中文图片卡片推送 |
 | **A股复盘推送** | `a-share-report` | 宿主机脚本 | 把 A股 复盘 HTML 渲染成长图推送到 QQ |
 
-> **历史沿革**：项目早期基于 **Koishi + NapCat**（个人号方案）。Koishi 栈已完全移除；NapCat 通道于 2026-09-02 停用（个人号频繁掉线、风控风险高），整体切到官方机器人通道。NapCat 相关服务在 `docker-compose.yml` 中保留为注释，可随时恢复（见[备用通道](#napcat-备用通道已停用)）。
+> **历史沿革**：项目早期基于 **Koishi + NapCat**（个人号方案）。Koishi 栈已完全移除；2026-09-02 起默认部署切换为官方机器人通道。NapCat 仍作为非官方备用通道保留，相关服务在 `docker-compose.yml` 中默认不启动，可按需恢复（见 [NapCat 备用通道](#napcat-备用通道默认未启动)）。
 
 ---
 
 ## 为什么换成官方机器人
 
-| | NapCat（个人号，已停用） | 官方机器人（现行） |
+| | NapCat（非官方备用通道，默认未启动） | 官方机器人（默认适配器） |
 |---|---|---|
 | 掉线 | 频繁，需扫码 / 密码回退 | **不掉线** |
 | 账号风险 | 高，有封号风险 | 官方合规通道 |
@@ -79,7 +79,7 @@ qq-koishi-bot/
 │   ├── chart-fonts.js                  # 图表字体初始化
 │   ├── package.json                    # Canvas / Resvg 渲染依赖
 │   ├── config.json                     # 权限配置（官方通道用）
-│   ├── config.napcat.json              # 权限配置（NapCat 通道备用，当前停用）
+│   ├── config.napcat.json              # 权限配置（NapCat 备用通道）
 │   ├── data/                           # /stocks 组合数据（可写挂载；portfolios.json 已 gitignore）
 │   └── README.md
 ├── ths-news/                         # ★ 同花顺重要资讯转发
@@ -93,8 +93,7 @@ qq-koishi-bot/
 │   ├── push_report.js                  # 主脚本：健康检查 → 渲染 → 推送
 │   ├── render_report.js                # 仅渲染不推送（手动预览）
 │   └── push_targets.json               # 推送目标（已 gitignore）
-├── monitor/                          # NapCat 掉线监控（宿主机脚本，随 NapCat 一并停用）
-└── napcat/                           # NapCat 运行数据（登录态，已 gitignore，保留备查）
+└── napcat/                           # NapCat 备用通道运行数据（登录态，已 gitignore）
 ```
 
 ---
@@ -636,9 +635,9 @@ NODE_PATH=<ws>/node_modules node a-share-report/render_report.js /path/to/report
 
 ---
 
-## NapCat 备用通道（已停用）
+## NapCat 备用通道（默认未启动）
 
-NapCat（非官方个人号方案）于 **2026-09-02 停用**——个人号频繁掉线且风控风险高。相关服务在 `docker-compose.yml` 中**整体注释保留**，恢复步骤：
+NapCat 是保留的非官方个人号备用通道。由于个人号存在掉线和风控风险，当前 `docker-compose.yml` 默认使用官方适配器，NapCat 服务段保持注释、按需恢复：
 
 1. 取消 `napcat` 与 `qq-reply-napcat` 两段注释；
 2. `.env` 填入 `QQ_ACCOUNT`（建议小号）；
@@ -647,7 +646,7 @@ NapCat（非官方个人号方案）于 **2026-09-02 停用**——个人号频�
 
 该通道使用**独立权限配置** `reply/config.napcat.json`，与官方通道的 `config.json` 互不影响。
 
-`monitor/check_napcat.sh` 是配套的掉线守护脚本（`online && good` 双真判断，掉线自动重启自愈、需扫码时导出二维码）。**官方机器人在线稳定，该监控对现行通道不再适用**。
+旧 `monitor/` 自动守护已删除：该方案无法在机器人彻底掉线时通过机器人自身可靠感知和送达告警。恢复 NapCat 后请通过 WebUI、容器日志或独立于 QQ 机器人的外部监控检查登录状态。
 
 ---
 
@@ -697,7 +696,6 @@ docker compose down
 | Skill | 职责 |
 |---|---|
 | `qq-reply-service` | qq-reply 指令服务的部署 / 排障 / 扩展经验 |
-| `napcat-monitor` | NapCat 掉线监控与按需扫码工作流（随 NapCat 停用） |
 
 **全局**（用户级，组成「A股复盘推送」自动化包）：
 

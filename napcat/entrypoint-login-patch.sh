@@ -3,12 +3,10 @@
 #
 # 背景：NapCat 原生逻辑中，一旦配置了 NAPCAT_QUICK_PASSWORD，密码回退「失败/需验证码」时
 #       不会自动进入二维码扫码（napcat.mjs 条件 `!l && !d && !t.isLogined` 中
-#       !d = 未尝试过密码才出二维码），导致「票据失效 + 密码失败」时卡死在登录失败态，
-#       只能靠掉线监控反复 restart 空转，无限折腾。
+#       !d = 未尝试过密码才出二维码），导致「票据失效 + 密码失败」时卡死在登录失败态。
 #
-# 补丁效果：密码回退（原生只尝试一次）失败后，同样立即刷新二维码进入扫码等待态 →
-#           monitor/check_napcat.sh 检测到 /app/napcat/cache/qrcode.png 后导出
-#           monitor/latest_qr.png 并通知 → 用户找 WorkBuddy 扫码登录。
+# 补丁效果：密码回退（原生只尝试一次）失败后，立即刷新二维码进入扫码等待态；
+#           用户可在 NapCat WebUI 中查看并完成登录。
 #
 # 注意：napcat.mjs 是镜像启动时由原 entrypoint 从 NapCat.Shell.zip 解压生成，
 #       wrapper 先于原 entrypoint 运行，因此需自备同样的一次性解压逻辑，

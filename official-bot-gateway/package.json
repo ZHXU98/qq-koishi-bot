@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "官方QQ机器人网关：OneBot 兼容层，替代 NapCat 接入官方开放平台（appid+appsecret）",
+  "description": "官方QQ机器人 OneBot 兼容适配器；NapCat 备用通道继续保留",
   "scripts": {
     "start": "node index.js"
   },

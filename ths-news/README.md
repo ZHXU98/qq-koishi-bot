@@ -10,7 +10,7 @@
 - 自动化：容器内 `start_news_cron.sh` 每 **5 分钟**拉取一次；同花顺已标记为重要（`import>0`）的资讯再经过**事件等级 + 主题规则**分类：红色风险/商品强事件立即推，黄色关注与普通重要仍按原有缓冲聚合推送。
 - 主题：覆盖黄金避险、原油能源、天然气煤炭、工业金属、新能源资源、农产品、利率汇率、宏观政策、地缘供应链、科技产业、地产金融；同一条卡片展示时间、主题和事件等级标签。
 
-> 历史上推送走 NapCat（个人号），2026-08-26 起改接官方网关；环境变量名沿用 `NAPCAT_URL` 未改。
+> 当前 Compose 默认通过官方网关推送；NapCat 非官方通道仍作为备用保留、默认未启动。历史变量名 `NAPCAT_URL` 实际表示 OneBot HTTP 地址。
 
 ---
 
@@ -41,7 +41,7 @@ qq-koishi-bot/
 ├── .env.example              # 凭证模板（QQBOT_APP_ID / QQBOT_APP_SECRET）
 ├── .gitignore                # 已忽略字体/密钥/日志
 ├── official-bot-gateway/     # 官方机器人网关（OneBot 兼容层）
-├── napcat/                   # NapCat 运行数据（登录态，已 gitignore，通道已停用）
+├── napcat/                   # NapCat 备用通道运行数据（默认未启动）
 └── ths-news/                 # ★ 本服务全部源码与文档
     ├── fetch_ths_news.js        # 主脚本（含全部渲染/过滤/推送逻辑）
     ├── news_rules.json             # ★ 事件等级/主题词库（每轮热加载，无需重启）

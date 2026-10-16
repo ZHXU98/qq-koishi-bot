@@ -1,16 +1,16 @@
 version: "3.8"
 
 # ============================================================
-# 当前架构（2026-09-02）：官方通道为主（NapCat 个人号当天停用：老掉线）
+# 当前架构（2026-09-02 起）：官方适配器默认启用，NapCat 作为备用通道保留
 #   - official-bot-gateway：官方开放平台机器人网关（快讯查询 + 每日汇总 + qq-reply 通道）
 #   - qq-reply：官方通道回复服务（接 official-bot-gateway，权限配置 reply/config.json）
 #   - ths-news：快讯转发（发送走官方网关）
-#   - napcat / qq-reply-napcat：已注释停用（个人号易掉线风控）；恢复方法见下方服务注释
+#   - napcat / qq-reply-napcat：备用通道，服务段注释保留、默认不启动
 # 配置热加载：config 文件每条消息重读盘，改完无需重启。
 # ============================================================
 
 services:
-  # ==================== NapCat 非官方机器人（2026-09-02 启用于当天停用：个人号老掉线） ====================
+  # ==================== NapCat 非官方备用通道（默认未启动） ====================
   # 如需恢复：取消下方 napcat / qq-reply-napcat 两段注释 → docker compose up -d napcat qq-reply-napcat
   # → NapCat 需重新扫码（登录态在 ./napcat/QQ，失效则 docker restart napcat 出新二维码）
   # 注意：个人号有风控/掉线风险；权限独立配置 reply/config.napcat.json（与官方 config.json 分开）
@@ -93,7 +93,7 @@ services:
       - ./ths-news:/ths-news:ro
     environment:
       - NODE_PATH=/app/node_modules
-      # 2026-08-26：改接官方网关（NapCat 弃用）；BOT_UIN 与网关转发的 at.qq 一致（官方 APP_ID）
+      # 2026-08-26：默认改接官方网关；BOT_UIN 与网关转发的 at.qq 一致（官方 APP_ID）
       - NAPCAT_WS_URL=ws://official-bot-gateway:3101
       - NAPCAT_URL=http://official-bot-gateway:3100
       - BOT_UIN=${QQBOT_APP_ID}
@@ -113,7 +113,7 @@ services:
       - botnet
     command: ["node", "/app/index.js"]
 
-  # NapCat 通道回复服务（2026-09-02 启用于当天停用：个人号老掉线；如需恢复随 napcat 一起取消注释）
+  # NapCat 通道回复服务（默认未启动；如需恢复随 napcat 一起取消注释）
   # 同一份 index.js，但挂载独立权限配置 config.napcat.json（群权限与官方 Bot 分开，互不影响）
   # qq-reply-napcat:
   #   image: node:22-alpine
@@ -137,7 +137,7 @@ services:
   #     - botnet
   #   command: ["node", "/app/index.js"]
 
-  # 官方 QQ 机器人网关（新途径）：OneBot 兼容层，接入官方开放平台（appid+appsecret）
+  # 官方 QQ 机器人网关（默认适配器）：OneBot 兼容层，接入官方开放平台（appid+appsecret）
   # 与 NapCat 并行运行，互不影响；跑通后可把 ths-news/qq-reply 的 NAPCAT_URL 指向本网关
   official-bot-gateway:
     image: node:22-alpine
