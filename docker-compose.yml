@@ -114,7 +114,7 @@ services:
     command: ["node", "/app/index.js"]
 
   # NapCat 通道回复服务（默认未启动；如需恢复随 napcat 一起取消注释）
-  # 同一份 index.js，但挂载独立权限配置 config.napcat.json（群权限与官方 Bot 分开，互不影响）
+  # 完整挂载模块化 reply 源码，并用 config.napcat.json 覆盖默认配置（与官方通道权限隔离）
   # qq-reply-napcat:
   #   image: node:22-alpine
   #   container_name: qq-reply-napcat
@@ -123,16 +123,23 @@ services:
   #   depends_on:
   #     - napcat
   #   volumes:
-  #     - ./reply/index.js:/app/index.js:ro
-  #     - ./reply/package.json:/app/package.json:ro
-  #     - ./reply/config.napcat.json:/app/config.json:ro   # 独立权限配置（NapCat 版）
+  #     - ./reply:/app
+  #     - ./reply/config.napcat.json:/app/config.json:ro
+  #     - ./reply/data:/app/data
   #     - ths-news-modules:/app/node_modules:ro
   #     - ./ths-news/fonts:/app/fonts:ro
+  #     - ./ths-news:/ths-news:ro
   #   environment:
+  #     - NODE_PATH=/app/node_modules
   #     - NAPCAT_WS_URL=ws://napcat:3001
   #     - NAPCAT_URL=http://napcat:3000
   #     - BOT_UIN=${QQ_ACCOUNT}
   #     - TZ=Asia/Shanghai
+  #     - NODE_OPTIONS=--no-network-family-autoselection
+  #   dns:
+  #     - 223.5.5.5
+  #     - 119.29.29.29
+  #     - 192.168.65.7
   #   networks:
   #     - botnet
   #   command: ["node", "/app/index.js"]
