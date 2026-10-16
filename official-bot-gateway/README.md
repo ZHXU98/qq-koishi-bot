@@ -150,7 +150,7 @@ docker compose up -d            # 三个容器一起起
 docker logs -f official-bot-gateway
 ```
 
-> 注意：**不要**试图在容器里改 `/app/index.js` —— 它是 `:ro` 只读挂载，`sed -i` 会失败。要改就改宿主的 `reply/index.js`（变量名 `NAPCAT_*` 沿用历史命名，指向的已是网关），改完 `docker compose restart qq-reply`。
+> `reply/` 当前以完整目录 bind mount 到 `/app`。请修改宿主的 `reply/` 源码，代码改动后执行 `docker compose restart qq-reply`；`config.json` 每条消息热加载，无需重启。变量名 `NAPCAT_*` 沿用历史命名，当前指向官方网关。
 
 ## 已知差异 / 注意
 
