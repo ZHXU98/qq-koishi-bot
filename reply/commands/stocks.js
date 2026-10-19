@@ -648,6 +648,7 @@ async function cmdStocks(args, ctx = {}) {
   const srcs = [];
   if (items.some(it => !it.error && it.itemPeriod === 'premarket')) srcs.push('Yahoo盘前');
   if (items.some(it => !it.error && it.mkt === 'hf')) srcs.push('新浪全球期货');
+  if (items.some(it => !it.error && it.klines && it.klines._src === 'sina')) srcs.push('新浪美股分时');
   if (items.some(it => !it.error && it.itemPeriod !== 'premarket' && it.mkt !== 'hf')) srcs.push('腾讯行情');
   // 用途/统计/失败提示一律并进页脚（图内已可见），不再额外单发一条消息——
   // 2026-09-11 用户要求：灰底格 + 页脚已足够说明，重复文本消息是干扰。

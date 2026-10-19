@@ -303,7 +303,14 @@ async function fetchStockKline(code, period) {
       result = await fetchOnce(url, code);
       // 分时：腾讯在没开盘/休市/美股盘后时只有 0-1 行 → 用东财最近交易日分时（ndays=1 自动取最近交易日）
       if (period === 'time' && (!result || result.length < 2)) {
-        result = await fetchEmTrends(emSecid(code), code.startsWith('us'));
+        if (code.startsWith('us')) {
+          // 美股：腾讯美股分钟只回 1 行，历来全靠东财 trends2；该接口 2026-10 起对本机出口直接 RST
+          // （同域名 kline 仍 200）→ 改为新浪 1 分钟优先、东财兜底，否则整个美股组合「取数失败」无图
+          const sina = await fetchSinaUsMin(code);
+          result = (sina && sina.length >= 2) ? sina : await fetchEmTrends(emSecid(code), true);
+        } else {
+          result = await fetchEmTrends(emSecid(code), false);
+        }
       }
     }
   }
@@ -477,6 +484,51 @@ async function fetchEmTrends(secid, isUS) {
   } catch (e) { console.error('[fetchEmTrends] 异常', secid, e && e.message); return null; }
 }
 
+// 美股分时（新浪，2026-10-19 起为美股主源）：东财 trends2 对本机出口 RST 时的替代
+// 接口固定回最近 5 个交易日、type=1 为 1 分钟粒度；d 是美东时间，a 是该分钟成交额（美元）→ 均价可用累计额/累计量精确算
+// 注意：必须用 stock.finance.sina.com.cn 的 jsonp_v2；quotes.sina.cn 的 json_v2 会回 {"__ERROR":3,"Service not valid"}
+const SINA_US_MIN = 'https://stock.finance.sina.com.cn/usstock/api/jsonp_v2.php/var%20_US_MIN_=/US_MinKService.getMinK?symbol=%s&type=1';
+async function fetchSinaUsMin(code) {
+  const sym = String(code).replace(/^us/i, '').replace(/\.\w+$/, '').toUpperCase();
+  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(sym)) return null;
+  try {
+    const resp = await fetch(SINA_US_MIN.replace('%s', encodeURIComponent(sym)), {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn/' },
+      signal: AbortSignal.timeout(9000),
+    });
+    const txt = await resp.text();
+    const si = txt.indexOf('(['), ei = txt.lastIndexOf('])');
+    if (si < 0 || ei < si) return null;
+    const rows = JSON.parse(txt.slice(si + 1, ei + 1));
+    if (!Array.isArray(rows) || rows.length < 2) return null;
+    // 只取最近一个交易日（接口给 5 日，画分时不能把历史日子接在同一根时间轴上）
+    const lastDay = String(rows[rows.length - 1].d || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(lastDay)) return null;
+    let cumVol = 0, cumAmt = 0;
+    const out = [];
+    for (const r of rows) {
+      const ds = String(r.d || '');
+      if (ds.slice(0, 10) !== lastDay) continue;
+      const close = Number(r.c);
+      if (!(close > 0)) continue;
+      const vol = Number(r.v) || 0;
+      cumVol += vol;
+      cumAmt += Number(r.a) || 0;
+      out.push({
+        t: ds.slice(11, 13) + ds.slice(14, 16),   // 美东 HHMM，与东财分支同口径
+        open: Number(r.o) || close, close,
+        high: Number(r.h) || close, low: Number(r.l) || close,
+        vol, cumVol, cumAmt,
+        avgPrice: (cumVol > 0 && cumAmt > 0) ? cumAmt / cumVol : close,
+      });
+    }
+    if (out.length < 2) return null;
+    out._date = lastDay.slice(5);
+    out._src = 'sina';          // 供页脚标注实际来源（stocks.js 按 klines._src 判断）
+    return out;
+  } catch (_) { return null; }
+}
+
 async function fetchStockMinuteKline(code, period = 'm1', limit = 400) {
   const lim = Math.max(1, Math.min(1000, Number(limit) || 400));
   const ckey = `minute:${code}:${period}:${lim}`;
@@ -646,5 +698,6 @@ module.exports = {
   calcSMA, calcBOLL, buildAvgLine, fetchStockKline, fetchStockMinuteKline, fetchEmKline,
   HF_SINA_SYM, SINA_GLOBAL_MIN, fetchSinaGlobalMin, SINA_GLOBAL_DAILY, HF_DAILY_TTL,
   fetchSinaGlobalDaily, aggHfKline, fetchSinaGlobalKline, EM_TRENDS, emSecid, fetchEmTrends,
+  SINA_US_MIN, fetchSinaUsMin,
   fetchYahooPremarket, getYahooPremarketStatus, fetchStockQuote, EM_STOCK_INDUSTRY, EM_INDUSTRY_BOARDS, EM_INDUSTRY_KLINE, fetchEmStockIndustry, fetchEmIndustryKline, fetchEmIndustryBoards, EM_HOSTS, EM_UA, _emHost, emFetchJson,
 };
