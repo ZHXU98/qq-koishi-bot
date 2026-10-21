@@ -8,7 +8,7 @@ const { cacheGet, cacheSet, mapLimit, normStockName, nowText, isFundCode } = req
 const { isOwnerCtx, ownerDeniedMsg } = require('../gateway'); // 组合编辑闸门（拆分后漏引入 → -add/-update/-del 曾 ReferenceError）
 const {
   STOCK_QUOTE, STOCK_PERIOD_LABEL, normalizeCode, GLOBAL_ALIAS, GLOBAL_TEXT, EM_IDX_SECID,
-  resolveStockCode, calcSMA, calcBOLL, buildAvgLine,
+  resolveStockCode, calcSMA, calcBOLL, buildAvgLine, BARE_PERIOD,
   fetchStockKline, aggHfKline, fetchEmTrends, fetchStockQuote, getYahooPremarketStatus,
 } = require('../market');
 
@@ -27,6 +27,7 @@ const STOCKS_USAGE = [
   '📋 /stocks 股票组合',
   '出图：/stocks <周期> <组合名 或 股票...>',
   '　　周期（单选）：-t 分时 | -pre 美股盘前 | -d 日线 | -w 周线 | -m 月线（不写默认日线）',
+  '　　　　（t/d/w/m 也可省略减号，如 /stocks t 美股存储）',
   '　　例：/stocks -d 我的持仓　/stocks -t 600519 000858　/stocks -w 贵州茅台 宁德时代',
   '组合：/stocks -list　组合清单（只列名称+只数）',
   '　　　/stocks -list <组合名>　查看某个组合的成分',
@@ -376,6 +377,10 @@ async function cmdStocks(args, ctx = {}) {
       name = (i + 1 < raw.length ? raw[++i] : '').trim(); nameFromFlag = true; continue;
     }
     if (STOCKS_PERIODS[pl]) { periods.push(STOCKS_PERIODS[pl]); continue; }
+    // 手机端敲 - 不方便：首/尾 token 允许省略减号（t/d/w/m）。组合名与股票名不会是单字母，风险可控
+    if ((i === 0 || i === raw.length - 1) && !pl.startsWith('-') && raw.length > 1 && BARE_PERIOD[pl]) {
+      periods.push(BARE_PERIOD[pl]); continue;
+    }
     // 以 - 开头的 token 一律当未知参数（组合名不允许以 - 打头）；
     // 编辑指令下额外提示「它可能是你想写的组合名」，避免用户以为命令坏了
     if (p.startsWith('-') && p.length > 1) {

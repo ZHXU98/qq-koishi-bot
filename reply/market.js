@@ -13,6 +13,10 @@ const STOCK_SEARCH = 'https://smartbox.gtimg.cn/s3/?v=2&q=%s&t=all'; // 名称�
 // 周期归一化（-d 日线 / -w 周线 / -M 月线 / -t 分时；分钟：-1m/-5m/-30m/-1h）
 const STOCK_PERIODS = { '-d': 'day', '-w': 'week', '-week': 'week', '周线': 'week', '周k': 'week', '-m': 'month', '-M': 'month', '-month': 'month', '月线': 'month', '月k': 'month', '-1m': 'm1', '-5m': 'm5', '-30m': 'm30', '-1h': 'm60', '-t': 'time', '-time': 'time', '分时': 'time', '-pre': 'premarket', 'pre': 'premarket', '盘前': 'premarket' };
 const STOCK_PERIOD_LABEL = { day: '日线', week: '周线', month: '月线', m1: '1分钟', m5: '5分钟', m30: '30分钟', m60: '60分钟', time: '分时', premarket: '盘前' };
+// 手机端敲「-」不方便 → 允许省略前导 - 的周期别名（t/d/w/m）。
+// ⚠️ 只在「后面还跟着代码/组合名」时才当周期用：美股 T/D/W/M（AT&T / Dominion / Wayfair / Macy's）
+//    本身就是合法代码，单独一个字母必须仍然按代码解析。
+const BARE_PERIOD = { t: 'time', d: 'day', w: 'week', m: 'month' };
 const STOCK_LONG = ['day', 'week', 'month']; // 长周期（日/周/月，fqkline 接口）
 
 function normalizeCode(raw) {
@@ -693,7 +697,7 @@ async function emFetchJson(url, timeout = 8000) {
 
 module.exports = {
   STOCK_QUOTE, STOCK_FQKLINE, STOCK_MINUTE, STOCK_TIMELINE, STOCK_SEARCH,
-  STOCK_PERIODS, STOCK_PERIOD_LABEL, STOCK_LONG,
+  STOCK_PERIODS, STOCK_PERIOD_LABEL, BARE_PERIOD, STOCK_LONG,
   normalizeCode, GLOBAL_ALIAS, GLOBAL_TEXT, EM_IDX_SECID, resolveStockCode,
   calcSMA, calcBOLL, buildAvgLine, fetchStockKline, fetchStockMinuteKline, fetchEmKline,
   HF_SINA_SYM, SINA_GLOBAL_MIN, fetchSinaGlobalMin, SINA_GLOBAL_DAILY, HF_DAILY_TTL,

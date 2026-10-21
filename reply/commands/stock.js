@@ -3,7 +3,7 @@
 // ============================================================
 const { cacheGet, cacheSet, esc, normStockName, f2p, isFundCode } = require('../utils');
 const {
-  STOCK_QUOTE, STOCK_FQKLINE, STOCK_MINUTE, STOCK_TIMELINE, STOCK_PERIODS, STOCK_PERIOD_LABEL, STOCK_LONG,
+  STOCK_QUOTE, STOCK_FQKLINE, STOCK_MINUTE, STOCK_TIMELINE, STOCK_PERIODS, STOCK_PERIOD_LABEL, BARE_PERIOD, STOCK_LONG,
   normalizeCode, GLOBAL_ALIAS, GLOBAL_TEXT, EM_IDX_SECID, resolveStockCode,
   calcSMA, calcBOLL, buildAvgLine,
   fetchStockKline, fetchEmKline, HF_SINA_SYM, fetchSinaGlobalMin, aggHfKline, fetchSinaGlobalKline,
@@ -790,15 +790,22 @@ async function cmdStock(args) {
   const parts = (args || []).map(a => a.trim()).filter(Boolean);
   let period = 'day';
   let codeInput = '';
-  if (parts.length >= 1 && STOCK_PERIODS[parts[0].toLowerCase()]) {
-    period = STOCK_PERIODS[parts[0].toLowerCase()];
+  const tok0 = (parts[0] || '').toLowerCase();
+  // 手机端敲 - 不方便：t/d/w/m 省略前导 -（仅当后面还有代码时；单独一个字母仍是美股代码 T/D/W/M）
+  const bareHit = (!tok0.startsWith('-') && parts.length >= 2 && BARE_PERIOD[tok0]) || '';
+  if (bareHit) {
+    period = bareHit;
+    codeInput = parts.slice(1).join('');
+  } else if (parts.length >= 1 && STOCK_PERIODS[tok0]) {
+    period = STOCK_PERIODS[tok0];
     codeInput = parts.slice(1).join('');
   } else {
     codeInput = parts.join('');
   }
   const USAGE = '📋 用法：/stock <周期> <代码或名称>\n' +
     '周期：-d 日线 | -w 周线 | -M 月线 | -1m 1分钟 | -5m 5分钟 | -30m 30分钟 | -1h 60分钟 | -t 分时 | -pre 美股盘前\n' +
-    '例：/stock -d 600519　/stock -t AAPL　/stock -pre NVDA\n' +
+    '　　（t/d/w/m 也可省略前面的减号，如 /stock t 600519）\n' +
+    '例：/stock -d 600519　/stock t 600519　/stock -t AAPL　/stock -pre NVDA\n' +
     '不写周期默认日线，如 /stock 600519';
   // 首参以 - 开头但不是合法周期 → 提示格式
   if (parts[0] && parts[0].startsWith('-') && !STOCK_PERIODS[parts[0].toLowerCase()]) {

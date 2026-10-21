@@ -76,9 +76,7 @@ const { initChartFonts } = require('./chart-fonts');
 initChartFonts();
 
 // ---------- 指令路由 ----------
-function routeCommand(text) {
-  const parts = text.split(/\s+/);
-  const raw = (parts.shift() || '').toLowerCase().replace(/^[\/／]/, '');
+function routeByWord(raw, parts) {
   switch (raw) {
     case 'help': case '菜单': return { name: 'help', type: 'text', text: cmdHelp() };
     case 'ping': case '存活': return { name: 'ping', type: 'text', text: cmdPing() };
@@ -87,7 +85,7 @@ function routeCommand(text) {
     case 'preview': case '预览': case '磁力预览': case 'seed': return { name: 'preview', type: 'preview', text: parts.join(' ') };
     case '快讯': case 'news': case '资讯': return { name: 'news', type: 'news' };
     case 'ss': case '指数': return { name: 'ss', type: 'ss' };
-    case 'stock': case '股票': case 'K线': return { name: 'stock', type: 'stock', args: parts };
+    case 'stock': case '股票': case 'K线': case 'k线': return { name: 'stock', type: 'stock', args: parts };
     case 'fc': case '期货': return { name: 'fc', type: 'fc', args: parts };
     case 'fx': case '外汇': case '汇率': return { name: 'fx', type: 'fx', args: parts };
     case 'stocks': case '组合': case '自选': return { name: 'stocks', type: 'stocks', args: parts };
@@ -99,6 +97,21 @@ function routeCommand(text) {
     case 'zjl': case 'flow': case '资金流': case '资金流向': return { name: 'zjl', type: 'zjl', args: parts };
     default: return null;
   }
+}
+
+function routeCommand(text) {
+  const parts = text.split(/\s+/);
+  const raw = (parts.shift() || '').toLowerCase().replace(/^[\/／]/, '');
+  const hit = routeByWord(raw, parts);
+  if (hit) return hit;
+  // 容错：手机端容易漏掉「命令」与「-参数」之间的空格（曾把 /stock -t 打成 stock-t 被整条静默丢弃）
+  // → 在第一个减号处切开重试一次，减号部分塞回参数最前面
+  const di = raw.indexOf('-');
+  if (di > 0 && raw.length > di + 1) {
+    const retried = routeByWord(raw.slice(0, di), [raw.slice(di), ...parts]);
+    if (retried && retried.args) return retried; // 只对「带参数」的命令生效，避免 preview/echo 之类误命中
+  }
+  return null;
 }
 
 // ---------- 事件处理 ----------
