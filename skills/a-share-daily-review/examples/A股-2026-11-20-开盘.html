@@ -8,23 +8,24 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: #e9e8e4; font-family: "PingFang SC","Noto Sans SC","Hiragino Sans GB","Microsoft YaHei",sans-serif; color: #14130f; -webkit-font-smoothing: antialiased; }
   .page { width: 600px; margin: 0 auto; background: #ffffff; }
-  /* 深色刊头（只做刊头，不铺整页） */
-  .board { background: #111110; color: #f5f2ea; padding: 16px 22px 18px; }
-  .board .top { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: .18em; color: #8f887b; }
-  .board h1 { margin: 10px 0 0; font-size: 26px; line-height: 1.34; font-weight: 700; letter-spacing: -.01em; color: #fff; }
-  .board h1 em { font-style: normal; color: #ff8a75; }
-  .board .lead { margin-top: 9px; font-size: 11.5px; line-height: 1.8; color: #b8b1a4; }
-  .board .lead b { color: #f3e6c8; }
+  /* 刊头：浅底，只留一道粗黑线 + 一枚小黑标签做界定 */
+  .board { background: #fbfaf5; padding: 18px 22px 16px; border-top: 5px solid #14130f; }
+  .board .top { display: flex; justify-content: space-between; align-items: center; font-size: 10px; letter-spacing: .12em; color: #9a917f; }
+  .board .top .tag { background: #14130f; color: #f7f4ec; padding: 2px 7px 3px; border-radius: 2px; letter-spacing: .12em; }
+  .board h1 { margin: 12px 0 0; font-size: 25px; line-height: 1.36; font-weight: 700; letter-spacing: -.01em; color: #14130f; }
+  .board h1 em { font-style: normal; color: #c0392b; }
+  .board .lead { margin-top: 9px; font-size: 11.5px; line-height: 1.8; color: #55504a; }
+  .board .lead b { color: #14130f; font-weight: 700; }
   .wrap { padding: 0 22px 20px; }
-  /* 数字墙 */
-  .wall { margin-top: -6px; background: #1b1a17; color: #f5f2ea; padding: 14px 16px 16px; }
-  .wall .hd { font-size: 9.5px; letter-spacing: .14em; color: #8f887b; margin-bottom: 9px; }
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: #34322c; }
-  .cell { background: #1b1a17; padding: 9px 10px 10px; }
-  .cell .nm { font-size: 9.5px; color: #8f887b; letter-spacing: .04em; }
-  .cell .gap { font-size: 17px; font-weight: 700; margin-top: 3px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-  .cell .after { font-size: 9.5px; color: #8f887b; margin-top: 3px; font-variant-numeric: tabular-nums; }
-  .g-dn { color: #6fbf95; } .g-up { color: #ff8a75; } .g-neu { color: #c9c2b4; }
+  /* 数字墙：浅底细网格，不再用深底 */
+  .wall { background: #f7f5ef; padding: 13px 22px 15px; border-bottom: 1px solid #e4dfd2; }
+  .wall .hd { font-size: 9.5px; letter-spacing: .14em; color: #8a8377; margin-bottom: 9px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: #e2ddd0; border: 1px solid #e2ddd0; }
+  .cell { background: #fffefb; padding: 9px 10px 10px; }
+  .cell .nm { font-size: 9.5px; color: #8a8377; letter-spacing: .04em; }
+  .cell .gap { font-size: 19px; font-weight: 700; margin-top: 3px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .cell .after { font-size: 9.5px; color: #8a8377; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .g-dn { color: #2d6a4f; } .g-up { color: #c0392b; } .g-neu { color: #5f594f; }
   /* 正文 */
   h2 { margin: 22px 0 0; font-size: 13.5px; font-weight: 700; padding-bottom: 6px; border-bottom: 2px solid #14130f; display: flex; align-items: baseline; }
   h2 span { margin-left: auto; font-size: 9.5px; color: #8a8377; font-weight: 500; letter-spacing: .04em; }
@@ -54,7 +55,7 @@
 <body>
 <div class="page">
   <div class="board">
-    <div class="top"><span>开盘快报 · 09:30</span><span>2026-11-20</span></div>
+    <div class="top"><span class="tag">开盘快报 · 09:30</span><span>2026-11-20 星期五</span></div>
     <h1>全线低开，科创50 一个人低了 <em>3.21%</em></h1>
     <div class="lead">隔夜外盘三条线全部指向科技，A 股照单执行；<b>唯一不服从的是上证 50</b>——它低开 1.56%，最后收 +0.45%，把指数从坑里拽回了一半。</div>
   </div>

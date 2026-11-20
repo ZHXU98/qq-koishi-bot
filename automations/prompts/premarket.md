@@ -71,7 +71,7 @@ westock quote fxUSDCNY
 风格参考 `skills/a-share-daily-review/references/house_style.md`：
 主标题自带结论与数字（如「外盘先跌为敬，A 股今天开盘只有一条路」），首屏说尽，章节编号带数据副标题，图表配一句口径注。
 **禁止复用历史 HTML 的骨架与 class 结构**，这一份要和昨天那份不一样。
-硬约束只有三条：浅底深字（深色只做刊头/点缀）、上涨红 `#c0392b` / 下跌绿 `#2d6a4f`、第一屏能读到结论。
+硬约束只有三条：浅底深字（深色只做小黑标签或一道细黑条，不要整块深色刊头）、上涨红 `#c0392b` / 下跌绿 `#2d6a4f`、第一屏能读到结论。
 手机 600px 宽，1-2 屏。
 
 写入 `a-share-report/reports/A股-<YYYY-MM-DD>-早盘.html`（目录不存在先 mkdir -p）。含 ECharts 时先 `node --check` 内联 JS；离线渲染用相对路径 `../vendor/echarts.min.js`。
