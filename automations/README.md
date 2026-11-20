@@ -5,12 +5,16 @@ clone 仓库后照着重建即可，不用重新想一遍 prompt。
 
 ## 四个任务
 
-| 时间（周一至周五） | 名称 | 输出 | prompt 源文件 | 现役 ID |
-|---|---|---|---|---|
-| 08:10 | A股早盘（外盘映射 + 昨日复盘对照） | `a-share-report/reports/A股-<日期>-早盘.html` | `prompts/premarket.md` | `8a14e451-d934-489f-b0e5-a2e926fb803d` |
-| 09:30 | A股开盘（外盘映射 + 昨日结论验证） | `...-开盘.html` | `prompts/open.md` | `218dce67-3a77-471d-983b-ca9eb944ec13` |
-| 11:40 | A股午盘（含情绪速览） | `...-午盘.html` | `prompts/midday.md` | `4262ae61-4331-4cee-bda3-c3631c246cb7` |
-| 16:00 | A股盘后复盘（含情绪分析） | `...-复盘.html` | `prompts/close.md` | `012b69df-d586-450f-9ae9-346d8ca0d52a` |
+| 时间（周一至周五） | 名称（=运行中任务的 name） | 技能锚点 | 篇幅 | 输出 | prompt 源文件 | 现役 ID |
+|---|---|---|---|---|---|---|
+| 08:10 | A股早盘 08:10（外盘映射+昨日复盘对照） | 路径六 · **盘前版** | 1-2 屏 | `a-share-report/reports/A股-<日期>-早盘.html` | `prompts/premarket.md` | `8a14e451-d934-489f-b0e5-a2e926fb803d` |
+| 09:30 | A股开盘 09:30（竞价现状 + 外盘对账） | 路径六 · **竞价版** | **1 屏** | `...-开盘.html` | `prompts/open.md` | `218dce67-3a77-471d-983b-ca9eb944ec13` |
+| 11:40 | A股午盘 11:40（含情绪速览） | 路径七（必答五问） | 2-3 屏 | `...-午盘.html` | `prompts/midday.md` | `4262ae61-4331-4cee-bda3-c3631c246cb7` |
+| 16:00 | A股盘后复盘 16:00（含情绪分析） | 默认路径 + 情绪速览 | 3-5 屏 | `...-复盘.html` | `prompts/close.md` | `012b69df-d586-450f-9ae9-346d8ca0d52a` |
+
+**路径六有两个版本，别弄反**：08:10 是「盘前版」（拿昨日复盘关注清单逐条检验，是预判）；
+09:30 竞价已出结果，走「竞价版」（只答两问：竞价把今天开在哪、跟外盘对得上吗，1 屏，不做逐条验证、不做映射矩阵清单）。
+两份都叫「开盘映射」，但职责完全不同。
 
 统一规则：仅工作日跑；先判交易日，休市不推送；数据只走 westock / neodata；报告生成后经
 `a-share-report/push_report.js` 渲染成图推到 QQ 私聊（目标在 `a-share-report/push_targets.json`，已 gitignore）。
@@ -54,4 +58,6 @@ python3 scripts/sync-automations.py     # 用 prompts/*.md 重新生成 *.json
 - **prompt 里不写绝对路径**：cwd 就是仓库根，报告、skill、脚本一律用相对路径，换机才不用改
 - **skill 引用项目内路径**：`skills/a-share-daily-review/SKILL.md`，运行时副本只在没仓库时兜底
 - **风格不写死在 prompt 里**：讲要素，不讲版式；风格基准指向 `references/house_style.md`
-- 改完 prompt 要同时更新运行中的任务，否则下一次触发的还是旧 prompt
+- **篇幅写成硬约束**：开盘 1 屏、早盘 1-2 屏、午盘 2-3 屏、复盘 3-5 屏；跑歪了先从篇幅回看
+- **改 md 后两步都要做**：`python3 scripts/sync-automations.py` 同步 json，再用 automation 工具把
+  prompt 推给运行中的任务——只改仓库不会影响下一次触发

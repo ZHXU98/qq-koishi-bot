@@ -9,6 +9,7 @@
   "cwd": "<repo root, 例如 /Users/zhangxu/Desktop/qq-koishi-bot>",
   "skill": "skills/a-share-daily-review/SKILL.md",
   "skill_anchor": "默认路径（技术面三维分析）+ 情绪速览",
+  "length": "3-5 屏 / 6～9 个编号章节",
   "style": "skills/a-share-daily-review/references/house_style.md",
   "output": "a-share-report/reports/A股-<YYYY-MM-DD>-复盘.html",
   "push": "a-share-report/push_report.js",
