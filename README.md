@@ -184,13 +184,26 @@ docker logs -f official-bot-gateway     # 看到「✅ 官方机器人已连接 
 bind-owner
 #   机器人回「✅ 已绑定为管理员」即成功
 
-# ② 让机器人进群：把它拉进目标群，群里随便 @ 一次（openid 被自动学习）
+# ② 让机器人进群：把它拉进目标群，群里随便 @ 一次（群 openid 被自动学习）
 
 # ③ 查看学到的绑定
 curl -s http://127.0.0.1:3100/bindings
 ```
 
-学完之后，第 2 步的两个 JSON 文件里**直接填 QQ 号 / 群号**即可（**推送目标配置热加载，改完无需重启**）。
+**群聊还差一步，这步不能省**：官方事件里只有群 openid，没有群号，所以 `groups` 里学到的那条**只有 openid、`qq` 是空的**。要让它能按群号推送，得手动补上群号，再重启网关（bindings 是启动时读进内存的）：
+
+```bash
+# official-bot-gateway/bindings.json
+"groups": {
+  "0C8B659CEA602C4165ADAB0CF5D6271C": { "name": "", "firstSeen": "...", "qq": "609994072" }
+}
+
+docker compose restart official-bot-gateway
+```
+
+私聊不需要这步：owner 的 openid 由 `bind-owner` 写入，`users` 里其他人的 `qq` 也是同样手动补。
+
+学完之后，第 2 步的 `push_targets.json` 里**直接填 QQ 号 / 群号**即可（**推送目标配置热加载，改完无需重启**）。
 
 ### 6. 验证
 
