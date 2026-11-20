@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A股早盘 · 2026-11-20</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{width:600px;background:#fbfaf8;color:#16181d;
+       font-family:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+       font-size:14px;line-height:1.65;-webkit-font-smoothing:antialiased}
+  .wrap{padding:30px 30px 26px}
+  .mast{display:flex;justify-content:space-between;align-items:flex-end;
+        border-bottom:2px solid #16181d;padding-bottom:10px}
+  .mast .kicker{font-size:11px;letter-spacing:.22em;color:#8a8578}
+  .mast .kicker b{color:#b8452f}
+  h1{font-size:27px;line-height:1.28;letter-spacing:-.4px;margin-top:6px;font-weight:700}
+  .date{font-size:11px;color:#8a8578;text-align:right;line-height:1.7;white-space:nowrap;padding-left:14px}
+  .verdict{margin:22px 0 4px;padding-left:16px;border-left:3px solid #b8452f}
+  .verdict p{font-size:15px;line-height:1.72;color:#2b2d33}
+  .verdict p em{font-style:normal;font-weight:600;color:#4a5b78}
+  .verdict p u{text-decoration:none;font-weight:600;color:#2d6a4f}
+  .nums{display:flex;margin:18px -1px 0}
+  .nums div{flex:1;padding:0 10px;border-left:1px solid #e2ded4}
+  .nums div:first-child{border-left:0;padding-left:0}
+  .nums .n{font-size:10px;color:#8a8578}
+  .nums .v{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.5px;margin-top:1px}
+  .nums .d{font-size:11px;font-variant-numeric:tabular-nums}
+  .dn{color:#2d6a4f}.up{color:#c0392b}.flat{color:#8a8578}
+  h2{font-size:12px;letter-spacing:.14em;color:#6b6f78;font-weight:600;
+     margin:30px 0 12px;display:flex;align-items:center;gap:9px}
+  h2:before{content:"";width:14px;height:1px;background:#b8452f;flex:none}
+  h2 span{font-weight:400;letter-spacing:0;color:#a8a396;font-size:11px;margin-left:auto}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{font-size:10.5px;color:#8a8578;font-weight:500;text-align:right;padding:0 0 7px;
+     border-bottom:1px solid #dcd7cb}
+  th:first-child,td:first-child{text-align:left}
+  td{padding:7px 0;border-bottom:1px solid #efece4;text-align:right;
+     font-variant-numeric:tabular-nums}
+  tr:last-child td{border-bottom:0}
+  .hl td{background:#f6f2e8;font-weight:600}
+  .lamps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+  .lamp{background:#fff;border:1px solid #e6e2d8;border-radius:3px;padding:9px 10px}
+  .lamp .t{font-size:10px;color:#8a8578}
+  .lamp .s{font-size:12.5px;font-weight:600;margin-top:2px;display:flex;align-items:center;gap:5px}
+  .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .check{border-top:1px solid #dcd7cb}
+  .check .row{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid #efece4;align-items:flex-start}
+  .check .q{flex:1;font-size:12.5px;color:#2b2d33}
+  .check .q i{font-style:normal;color:#a8a396;font-size:11px;display:block;margin-top:1px}
+  .tag{font-size:10.5px;padding:2px 7px;border-radius:2px;white-space:nowrap;flex:none;margin-top:1px;font-weight:600}
+  .t-break{background:#fbe9e7;color:#b8452f}
+  .t-hold{background:#e8f0ea;color:#2d6a4f}
+  .t-wait{background:#eeece5;color:#6b6f78}
+  .mod{margin-top:24px;padding:13px 15px;background:#fff;border:1px solid #e6e2d8;border-left:3px solid #4a5b78}
+  .mod .h{font-size:11px;color:#4a5b78;letter-spacing:.1em;font-weight:600;margin-bottom:6px}
+  .mod p{font-size:12.5px;color:#3a3d44;line-height:1.7}
+  ol.watch{list-style:none;counter-reset:w}
+  ol.watch li{counter-increment:w;position:relative;padding:9px 0 9px 26px;
+              border-bottom:1px solid #efece4;font-size:12.5px;color:#2b2d33}
+  ol.watch li:last-child{border-bottom:0}
+  ol.watch li:before{content:counter(w);position:absolute;left:0;top:10px;width:17px;height:17px;
+    border:1px solid #c9c3b4;border-radius:50%;font-size:10px;color:#8a8578;
+    text-align:center;line-height:16px;font-variant-numeric:tabular-nums}
+  .risk{margin-top:14px;background:#f6f2e8;padding:12px 15px;border-radius:2px}
+  .risk .h{font-size:11px;color:#8a7550;letter-spacing:.1em;font-weight:600;margin-bottom:5px}
+  .risk li{list-style:none;font-size:12px;color:#5c5445;padding:3px 0 3px 12px;position:relative}
+  .risk li:before{content:"×";position:absolute;left:0;color:#b8452f;font-size:10px;top:4px}
+  .chart{width:100%;height:250px}
+  .note{font-size:10.5px;color:#a8a396;margin-top:6px;line-height:1.6}
+  footer{margin-top:30px;padding-top:12px;border-top:1px solid #dcd7cb;
+         font-size:10.5px;color:#a8a396;line-height:1.75}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="mast">
+    <div>
+      <div class="kicker">A 股 · 盘前简报 · <b>外盘映射</b></div>
+      <h1>外盘先跌为敬，<br>今天开盘要还的账</h1>
+    </div>
+    <div class="date">2026-11-20<br>08:10 盘前<br>基准 11-19</div>
+  </div>
+
+  <div class="verdict">
+    <p>昨天是<em>科技孤岛式上涨</em>，今天隔夜美股把这座岛掀了：纳指、道指、标普<u>全部收在日内最低</u>，日韩接力重挫，白银单日跌 6%。开盘倾向于<em>科技链集体补跌</em>，指数级别的杀跌压力大于结构机会。</p>
+  </div>
+
+  <div class="nums">
+    <div><div class="n">纳指</div><div class="v dn">-2.25%</div><div class="d dn">收于日内低点</div></div>
+    <div><div class="n">日经225</div><div class="v dn">-5.06%</div><div class="d dn">亚太领跌</div></div>
+    <div><div class="n">COMEX白银</div><div class="v dn">-6.20%</div><div class="d dn">流动性冲击</div></div>
+    <div><div class="n">美元人民币</div><div class="v dn">6.6708</div><div class="d dn">-0.28%</div></div>
+  </div>
+
+  <h2>一、昨日收在哪儿 <span>11-19 收盘 · 今日尚未开盘</span></h2>
+  <table>
+    <thead><tr><th>指数</th><th>收盘</th><th>涨跌</th><th>位置</th></tr></thead>
+    <tbody>
+      <tr><td>上证指数</td><td>3577.62</td><td class="dn">-0.28%</td><td>MA5 上方一步</td></tr>
+      <tr class="hl"><td>科创50</td><td>1270.78</td><td class="up">+1.83%</td><td>唯一红盘</td></tr>
+      <tr><td>上证50</td><td>2773.46</td><td class="up">+0.32%</td><td>抗跌</td></tr>
+      <tr><td>创业板指</td><td>2293.34</td><td class="dn">-0.79%</td><td>三连阴</td></tr>
+      <tr><td>中证1000</td><td>5938.90</td><td class="dn">-1.88%</td><td>收在最低</td></tr>
+      <tr><td>国证2000</td><td>7834.50</td><td class="dn">-2.35%</td><td>收在最低</td></tr>
+    </tbody>
+  </table>
+  <div class="note">一句话结构：大盘靠权重稳住，小盘与题材失血，科技一枝独秀。这种结构对外盘最敏感——外围科技一杀，A 股没有第二条腿承接。</div>
+
+  <h2>二、外盘三线 <span>美股收盘 / 日韩早盘 / 商品延时</span></h2>
+  <div class="lamps">
+    <div class="lamp"><div class="t">隔夜美股</div><div class="s"><span class="dot" style="background:#2d6a4f"></span>全线深跌</div></div>
+    <div class="lamp"><div class="t">亚太早盘</div><div class="s"><span class="dot" style="background:#2d6a4f"></span>日韩重挫</div></div>
+    <div class="lamp"><div class="t">大宗商品</div><div class="s"><span class="dot" style="background:#2d6a4f"></span>金属崩·油稳</div></div>
+    <div class="lamp"><div class="t">汇率</div><div class="s"><span class="dot" style="background:#c9a227"></span>人民币走强</div></div>
+  </div>
+  <div class="chart" id="c1"></div>
+  <div class="note">美股为 11-19 收盘；日经为 11-20 早盘（开盘约 10 分钟，样本短）；韩国 9:00 才开盘，KOSPI200 与三星为昨收；商品为延时报价。</div>
+
+  <h2>三、昨日四条假设，今早逐条对 <span>结论只给三种</span></h2>
+  <div class="check">
+    <div class="row">
+      <div class="q">科创50 昨日逆势 +1.83%，能否延续？<i>→ 隔夜纳指 -2.25% 且收在日内最低，半导体链条无处躲</i></div>
+      <div class="tag t-break">可能破坏</div>
+    </div>
+    <div class="row">
+      <div class="q">国证2000 连跌且收在最低，小盘能否止跌？<i>→ 日经 -5.06%、KOSPI200 -5.53%，亚太小盘同步失血</i></div>
+      <div class="tag t-break">可能破坏</div>
+    </div>
+    <div class="row">
+      <div class="q">上证 3500 一线能否守住？<i>→ MA60 在 3793 远上方，BOLL 下轨 3566，昨日已贴在下轨</i></div>
+      <div class="tag t-wait">待开盘验证</div>
+    </div>
+    <div class="row">
+      <div class="q">红利与大金融的抗跌能否延续？<i>→ 但黄金 -3.48%、白银 -6.20%，避险资产同跌，是流动性问题不是偏好问题</i></div>
+      <div class="tag t-wait">待开盘验证</div>
+    </div>
+  </div>
+
+  <h2>四、映射矩阵 <span>外盘信号 → A 股落点</span></h2>
+  <table>
+    <thead><tr><th>外盘信号</th><th>A 股落点</th><th>方向</th><th>强度</th></tr></thead>
+    <tbody>
+      <tr><td>纳指 -2.25%、收于最低</td><td>半导体 · 存储 · 光模块</td><td class="dn">利空</td><td>强</td></tr>
+      <tr><td>三星 -7.01%</td><td>存储芯片 · 面板</td><td class="dn">利空</td><td>强</td></tr>
+      <tr><td>日经 -5.06%</td><td>精密制造 · 被动元件</td><td class="dn">利空</td><td>中</td></tr>
+      <tr><td>白银 -6.20%、铜 -2.41%</td><td>有色 · 光伏辅材</td><td class="dn">利空</td><td>强</td></tr>
+      <tr><td>黄金 -3.48%</td><td>黄金股</td><td class="dn">利空</td><td>强</td></tr>
+      <tr><td>原油 -0.19%（唯一持平）</td><td>油气 · 油服</td><td class="flat">中性</td><td>弱</td></tr>
+      <tr><td>人民币 -0.28%</td><td>航空 · 造纸 · 外资偏好蓝筹</td><td class="up">边际利好</td><td>弱</td></tr>
+    </tbody>
+  </table>
+
+  <h2>五、开盘盯这四件事 <span>附失效条件</span></h2>
+  <ol class="watch">
+    <li><b>科创50 的低开幅度。</b>低于 2% 说明映射偏弱；超过 4% 说明外资在系统性减科技。它的昨日收盘 1270.78 就是标尺。</li>
+    <li><b>上证 3500 与 BOLL 下轨 3547 一起看。</b>跌破 3500 且当天不收回，"权重护盘"假设作废。</li>
+    <li><b>银行、保险的成交额占比。</b>昨日上午国有大行 6/6 全红、主力净流入 262 亿。今天继续放量上涨是主动避险，缩量微涨只是没人卖。</li>
+    <li><b>涨停家数能否守住 30 家。</b>昨日 30 涨停、68 跌停已是弱平衡，开盘半小时少于 15 家，退潮确认。</li>
+  </ol>
+
+  <div class="risk">
+    <div class="h">映射失效的三个信号</div>
+    <li>外盘全线大跌但 A 股低开翻红：有增量资金进场，映射不成立</li>
+    <li>科技杀跌但涨停家数反而增加：资金在题材内部换手，不是系统性撤退</li>
+    <li>金银止跌回升而 A 股继续跌：跌的是 A 股自身逻辑，不是全球流动性</li>
+  </div>
+
+  <div class="mod">
+    <div class="h">一句话落点</div>
+    <p>今天不是"跌不跌"，是<b>跌多深、谁先止血</b>。科技链的映射最硬，红利是唯一有承接记录的板块；但黄金白银同步下跌提示这次是流动性冲击，防御品种也未必安全。开盘先看科创50 的低开幅度是打折还是加码。</p>
+  </div>
+
+  <footer>
+    数据来源：westock（指数/板块/期货/汇率）、neodata（日经225）。基准为 2026-11-19 收盘，本地无当日复盘文件，昨日数据由日 K 回补。<br>
+    本报告为盘前推演，不含 11-20 任何盘中数据。以上分析基于公开数据，不构成投资建议。
+  </footer>
+</div>
+
+<script src="../../../a-share-report/vendor/echarts.min.js"></script>
+<script>
+(function(){
+  var el=document.getElementById('c1');
+  if(!window.echarts||!el){return;}
+  var items=[
+    {n:'三星电子',v:-7.01},{n:'COMEX白银',v:-6.20},{n:'KOSPI200',v:-5.53},
+    {n:'日经225',v:-5.06},{n:'COMEX黄金',v:-3.48},{n:'COMEX铜',v:-2.41},
+    {n:'纳斯达克',v:-2.25},{n:'道琼斯',v:-2.19},{n:'标普500',v:-2.02},
+    {n:'恒生指数',v:-1.89},{n:'WTI原油',v:-0.19}
+  ];
+  var ch=echarts.init(el,null,{renderer:'canvas'});
+  ch.setOption({
+    animation:false,
+    grid:{left:80,right:46,top:6,bottom:6},
+    xAxis:{type:'value',min:-8,max:1,show:false},
+    yAxis:{type:'category',inverse:true,data:items.map(function(d){return d.n}),
+      axisLine:{show:false},axisTick:{show:false},
+      axisLabel:{color:'#4a4d55',fontSize:11}},
+    series:[{
+      type:'bar',barWidth:9,
+      data:items.map(function(d){return {value:d.v,itemStyle:{color:d.v<0?'#2d6a4f':'#c0392b'}}}),
+      label:{show:true,position:'right',formatter:function(p){return p.value.toFixed(2)+'%'},
+        color:'#4a4d55',fontSize:10.5},
+      markLine:{silent:true,symbol:'none',lineStyle:{color:'#c9c3b4',width:1},
+        data:[{xAxis:0}],label:{show:false}}
+    }]
+  });
+  window.addEventListener('resize',function(){ch.resize()});
+})();
+</script>
+</body>
+</html>

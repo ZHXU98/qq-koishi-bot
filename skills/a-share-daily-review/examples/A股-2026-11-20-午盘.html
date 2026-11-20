@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A股午盘 · 2026-11-20</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{width:600px;background:#ffffff;color:#16181d;
+       font-family:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+       font-size:13px;line-height:1.62;-webkit-font-smoothing:antialiased}
+  .wrap{padding:26px 30px 24px}
+  /* 头部：左标题 / 右大数字 */
+  .head{display:flex;justify-content:space-between;align-items:flex-start;
+        padding-bottom:14px;border-bottom:1px solid #e8e6e0}
+  .head .l .k{font-size:10px;letter-spacing:.2em;color:#9b968a}
+  .head .l h1{font-size:20px;font-weight:700;margin-top:7px;line-height:1.45;letter-spacing:-.2px}
+  .head .l h1 b{color:#b0402f}
+  .head .r{text-align:right;padding-left:16px}
+  .head .r .n{font-size:34px;font-weight:700;color:#1f6b46;letter-spacing:-1.5px;
+              font-variant-numeric:tabular-nums;line-height:1.05}
+  .head .r .s{font-size:10px;color:#9b968a;margin-top:3px}
+  /* 指数网格 */
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#e8e6e0;
+        margin-top:16px;border:1px solid #e8e6e0}
+  .cell{background:#fbfaf8;padding:9px 10px}
+  .cell .n{font-size:10px;color:#8f8a7e}
+  .cell .p{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+  .cell .c{font-size:11px;font-variant-numeric:tabular-nums;display:flex;justify-content:space-between}
+  .gn{color:#1f6b46}.rd{color:#b0402f}.mut{color:#8f8a7e}
+  .amt{display:flex;gap:16px;margin-top:9px;font-size:11px;color:#6f6a5f;font-variant-numeric:tabular-nums}
+  .amt b{color:#16181d;font-size:12px}
+  /* 情绪条：深色横条 */
+  .mood{margin-top:20px;background:#20232a;color:#efeae1;padding:14px 16px}
+  .mood .top{display:flex;align-items:baseline;gap:10px}
+  .mood .lv{font-size:17px;font-weight:700;color:#f0827a;letter-spacing:.02em}
+  .mood .lv em{font-style:normal;font-size:10px;color:#8b8d95;font-weight:400;margin-left:4px;letter-spacing:.1em}
+  .mood .nums{margin-left:auto;font-size:11px;color:#b6b3aa;font-variant-numeric:tabular-nums}
+  .mood .lines{margin-top:9px;border-top:1px solid #33363f;padding-top:8px}
+  .mood .lines div{font-size:11.5px;color:#cfcac1;padding:2px 0;display:flex;gap:8px}
+  .mood .lines span{color:#8b8d95;flex:none;width:52px;font-size:10.5px}
+  h3{font-size:11px;font-weight:700;color:#3d3a33;letter-spacing:.08em;margin:24px 0 10px;
+     display:flex;justify-content:space-between;align-items:baseline}
+  h3 em{font-style:normal;font-weight:400;color:#a8a396;font-size:10px;letter-spacing:0}
+  /* 板块双栏 */
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  .srow{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:11.5px}
+  .srow .nm{width:74px;flex:none;color:#2b2d33;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .srow .tr{flex:1;height:7px;background:#f2f0eb;position:relative}
+  .srow .tr i{position:absolute;left:0;top:0;height:7px;display:block}
+  .srow .vv{width:38px;text-align:right;font-variant-numeric:tabular-nums;font-size:11px;flex:none}
+  .sub{font-size:10px;color:#a8a396;margin-bottom:4px;letter-spacing:.05em}
+  /* 资金 */
+  .flow{margin-top:6px;border-top:1px solid #e8e6e0;padding-top:9px}
+  .flow div{font-size:11.5px;color:#3a3d44;padding:3px 0;display:flex;justify-content:space-between}
+  .flow b{font-variant-numeric:tabular-nums;font-weight:600}
+  /* 下午看点 */
+  .pm{margin-top:22px;border-left:2px solid #b0402f;padding-left:14px}
+  .pm .h{font-size:10px;letter-spacing:.16em;color:#b0402f;font-weight:600;margin-bottom:6px}
+  .pm ol{list-style:none;counter-reset:p}
+  .pm li{counter-increment:p;font-size:12px;color:#33363c;padding:4px 0 4px 18px;position:relative}
+  .pm li:before{content:counter(p)".";position:absolute;left:0;color:#b0402f;font-weight:700;font-size:11px}
+  .chart{width:100%;height:150px;margin-top:2px}
+  footer{margin-top:24px;padding-top:11px;border-top:1px solid #e8e6e0;font-size:10px;color:#a8a396;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <div class="l">
+      <div class="k">A 股 · 午盘 · 11:30</div>
+      <h1>半日跌 1.57%，<br>跌停 68 家说明<b>不只是科技的事</b></h1>
+    </div>
+    <div class="r">
+      <div class="n">-1.57%</div>
+      <div class="s">上证 3521.40<br>两市半日 8556 亿</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="cell"><div class="n">上证指数</div><div class="p gn">3521.40</div><div class="c"><span class="gn">-1.57%</span><span class="mut">4039 亿</span></div></div>
+    <div class="cell"><div class="n">深证成指</div><div class="p gn">10365.76</div><div class="c"><span class="gn">-2.05%</span><span class="mut">4517 亿</span></div></div>
+    <div class="cell"><div class="n">创业板指</div><div class="p gn">2245.61</div><div class="c"><span class="gn">-2.08%</span><span class="mut">2120 亿</span></div></div>
+    <div class="cell"><div class="n">科创50</div><div class="p gn">1236.38</div><div class="c"><span class="gn">-2.71%</span><span class="mut">偏低</span></div></div>
+    <div class="cell"><div class="n">上证50</div><div class="p gn">2722.76</div><div class="c"><span class="gn">-1.83%</span><span class="mut">抗跌</span></div></div>
+    <div class="cell"><div class="n">沪深300</div><div class="p gn">3916.96</div><div class="c"><span class="gn">-1.70%</span><span class="mut">—</span></div></div>
+    <div class="cell"><div class="n">中证1000</div><div class="p gn">5812.99</div><div class="c"><span class="gn">-2.12%</span><span class="mut">—</span></div></div>
+    <div class="cell"><div class="n">国证2000</div><div class="p gn">7682.03</div><div class="c"><span class="gn">-1.95%</span><span class="mut">—</span></div></div>
+  </div>
+  <div class="amt"><span>半日成交 <b>8556 亿</b></span><span>沪 4039 / 深 4517</span><span>全天 14222 亿（+1171 亿）</span></div>
+
+  <div class="mood">
+    <div class="top">
+      <div class="lv">冰点<em>情绪六档</em></div>
+      <div class="nums">涨 313 · 跌 5236 · 涨停 30 · 跌停 68</div>
+    </div>
+    <div class="lines">
+      <div><span>赚钱效应</span>上涨占比 5%，过去一年只有 36% 的交易日比今天更差</div>
+      <div><span>结构</span>跌超 5% 的股票 2860 只，占全市场一半以上</div>
+      <div><span>下午看点</span>看银行能不能把指数扛住，还是只剩它一个人在红</div>
+    </div>
+  </div>
+
+  <h3>成交额：放量下跌 <em>较上一交易日增 1171 亿</em></h3>
+  <div class="chart" id="c1"></div>
+
+  <h3>行业强弱 <em>124 个行业：涨 12 / 跌 112</em></h3>
+  <div class="cols">
+    <div>
+      <div class="sub">领涨 · 清一色防御</div>
+      <div class="srow"><div class="nm">国有大行</div><div class="tr"><i style="width:100%;background:#b0402f"></i></div><div class="vv rd">+2.52%</div></div>
+      <div class="srow"><div class="nm">保险</div><div class="tr"><i style="width:49%;background:#b0402f"></i></div><div class="vv rd">+1.23%</div></div>
+      <div class="srow"><div class="nm">股份制银行</div><div class="tr"><i style="width:47%;background:#b0402f"></i></div><div class="vv rd">+1.18%</div></div>
+      <div class="srow"><div class="nm">炼化贸易</div><div class="tr"><i style="width:37%;background:#b0402f"></i></div><div class="vv rd">+0.93%</div></div>
+      <div class="srow"><div class="nm">煤炭开采</div><div class="tr"><i style="width:18%;background:#b0402f"></i></div><div class="vv rd">+0.45%</div></div>
+      <div class="srow"><div class="nm">白酒</div><div class="tr"><i style="width:16%;background:#b0402f"></i></div><div class="vv rd">+0.41%</div></div>
+    </div>
+    <div>
+      <div class="sub">领跌 · 电子链条集体</div>
+      <div class="srow"><div class="nm">其他电子</div><div class="tr"><i style="width:100%;background:#1f6b46"></i></div><div class="vv gn">-6.99%</div></div>
+      <div class="srow"><div class="nm">非金属材料</div><div class="tr"><i style="width:93%;background:#1f6b46"></i></div><div class="vv gn">-6.52%</div></div>
+      <div class="srow"><div class="nm">金属新材料</div><div class="tr"><i style="width:91%;background:#1f6b46"></i></div><div class="vv gn">-6.38%</div></div>
+      <div class="srow"><div class="nm">电子化学品</div><div class="tr"><i style="width:91%;background:#1f6b46"></i></div><div class="vv gn">-6.37%</div></div>
+      <div class="srow"><div class="nm">军工电子</div><div class="tr"><i style="width:86%;background:#1f6b46"></i></div><div class="vv gn">-6.00%</div></div>
+      <div class="srow"><div class="nm">通用设备</div><div class="tr"><i style="width:86%;background:#1f6b46"></i></div><div class="vv gn">-5.98%</div></div>
+    </div>
+  </div>
+
+  <div class="flow">
+    <div><span>国有大型银行 · 主力净流入</span><b class="rd">+262 亿</b></div>
+    <div><span>股份制银行 · 主力净流入</span><b class="gn">-612 亿</b></div>
+    <div><span>自动化设备 · 主力净流出</span><b class="gn">-145 亿</b></div>
+  </div>
+
+  <div class="pm">
+    <div class="h">下午三个观察点</div>
+    <ol>
+      <li>银行板块午后能否维持红盘。国有大行 6/6 全红、主力净流入 262 亿是唯一的正反馈，一旦它转绿，指数就没有锚了。</li>
+      <li>跌停家数会不会从 68 家继续扩大。这是判断"情绪冰点"还是"情绪崩塌"的分水岭。</li>
+      <li>科创50 的半日低点在 1219 附近（当日最低），午后若二次下探不破，说明早盘是恐慌定价。</li>
+    </ol>
+  </div>
+
+  <footer>
+    数据来源：westock。指数点位与半日成交额为 11:30 分时快照；行业涨跌、资金流与情绪分布为当日收盘口径，用于结构参考。<br>
+    以上分析基于公开数据，不构成投资建议。
+  </footer>
+</div>
+
+<script src="../../../a-share-report/vendor/echarts.min.js"></script>
+<script>
+(function(){
+  var el=document.getElementById('c1');
+  if(!window.echarts||!el){return;}
+  var ch=echarts.init(el,null,{renderer:'canvas'});
+  ch.setOption({
+    animation:false,
+    grid:{left:52,right:52,top:14,bottom:22},
+    xAxis:{type:'category',data:['11-18','11-19','11-20'],
+      axisLine:{lineStyle:{color:'#e8e6e0'}},axisTick:{show:false},
+      axisLabel:{color:'#8f8a7e',fontSize:10}},
+    yAxis:{type:'value',min:12000,max:15000,show:false},
+    series:[{type:'bar',barWidth:34,
+      data:[{value:13480,itemStyle:{color:'#dcd8cd'}},
+            {value:13051,itemStyle:{color:'#dcd8cd'}},
+            {value:14222,itemStyle:{color:'#b0402f'}}],
+      label:{show:true,position:'top',formatter:'{c} 亿',color:'#6f6a5f',fontSize:10.5},
+      markLine:{silent:true,symbol:'none',lineStyle:{color:'#c9c4b6',type:'dashed'},
+        data:[{yAxis:13051,label:{formatter:'前值 13051',color:'#a8a396',fontSize:9.5,position:'end'}}]}
+    }]
+  });
+  window.addEventListener('resize',function(){ch.resize()});
+})();
+</script>
+</body>
+</html>

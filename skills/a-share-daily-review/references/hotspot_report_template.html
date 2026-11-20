@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YYYY-MM-DD A股市场热点复盘报告</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg: #fff7ed; --card: #fff; --text: #1c1917; --muted: #9a3412;
+    --border: #fed7aa; --accent: #c2410c; --red: #dc2626; --green: #16a34a;
+    --header-from: #9a3412; --header-to: #ea580c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.6; padding: 24px 16px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  .header {
+    background: linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%);
+    color: #fff; border-radius: 12px; padding: 24px; margin-bottom: 16px;
+  }
+  .header h1 { font-size: 1.35rem; font-weight: 700; }
+  .header .meta { opacity: 0.88; font-size: 0.85rem; margin-top: 6px; }
+  .tldr {
+    background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--accent);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 16px;
+  }
+  .tldr h2 { font-size: 0.95rem; color: var(--accent); margin-bottom: 8px; }
+  .tldr ul { padding-left: 1.1em; font-size: 0.9rem; }
+  .tldr li { margin: 4px 0; }
+  h2.section {
+    font-size: 1.05rem; font-weight: 600; margin: 28px 0 12px;
+    padding-bottom: 6px; border-bottom: 2px solid var(--accent); color: var(--accent);
+  }
+  .grid { display: grid; gap: 12px; margin-bottom: 16px; }
+  .grid-3 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px;
+  }
+  .card .label { font-size: 0.8rem; color: var(--muted); }
+  .card .val { font-size: 1.5rem; font-weight: 700; margin-top: 4px; }
+  .card .sub { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+  .up { color: var(--red); } .down { color: var(--green); }
+  .chart-box { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .chart-box .chart { width: 100%; height: 360px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.875rem; background: var(--card); border-radius: 10px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 16px; }
+  th { background: #f9fafb; color: var(--muted); font-weight: 500; padding: 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); }
+  .sector-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .sector-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .sector-card .name { font-weight: 600; margin-bottom: 4px; }
+  .footer {
+    margin-top: 28px; padding-top: 12px; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 0.75rem; text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>A股市场热点复盘报告</h1>
+    <div class="meta">日期：YYYY-MM-DD</div>
+  </div>
+
+  <div class="tldr">
+    <h2>今日要点</h2>
+    <ul>
+      <li>[大盘定性 + 量能]</li>
+      <li>[主线板块 / 资金方向]</li>
+      <li>[成交额与主力流入亮点]</li>
+    </ul>
+  </div>
+
+  <h2 class="section">一、今日大盘概览</h2>
+  <div class="grid grid-3">
+    <div class="card">
+      <div class="label">上证指数</div>
+      <div class="val up">XXXX.XX</div>
+      <div class="sub up">+X.XX% · 成交 XX.X 亿</div>
+    </div>
+    <!-- 深证成指 / 创业板指 同结构；下跌用 class="down" -->
+  </div>
+
+  <h2 class="section">二、5日板块涨幅（TOP15）</h2>
+  <div class="chart-box"><div id="sector5dChart" class="chart"></div></div>
+  <table>
+    <thead><tr><th>排名</th><th>板块</th><th>5日涨幅</th><th>今日涨幅</th><th>成交额(亿)</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>…</td><td class="up">+X.XX%</td><td class="up">+X.XX%</td><td>XX.X</td></tr>
+    </tbody>
+  </table>
+
+  <h2 class="section">三、今日热点板块</h2>
+  <div class="sector-grid">
+    <div class="sector-card">
+      <div class="name">板块名</div>
+      <div class="up" style="font-size:1.1rem;font-weight:700">+X.XX%</div>
+      <div style="font-size:0.8rem;color:var(--muted);margin-top:4px">成交 XX.X亿 · 主力 XX.X亿</div>
+    </div>
+  </div>
+
+  <h2 class="section">四、个股成交额 TOP20</h2>
+  <div class="chart-box"><div id="volChart" class="chart"></div></div>
+  <table>
+    <thead><tr><th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>成交额(亿)</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>sh600000</td><td>…</td><td>XX.XX</td><td class="up">+X.XX%</td><td>XX.X</td></tr>
+    </tbody>
+  </table>
+
+  <h2 class="section">五、主力净流入 TOP20</h2>
+  <div class="chart-box"><div id="inflowChart" class="chart"></div></div>
+  <table>
+    <thead><tr><th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>主力净流入(亿)</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>…</td><td>…</td><td>…</td><td class="up">…</td><td class="up">XX.X</td></tr>
+    </tbody>
+  </table>
+
+  <h2 class="section">六、10日涨幅 TOP20（沪深主板，排除创业板/科创板）</h2>
+  <div class="chart-box"><div id="gain10Chart" class="chart"></div></div>
+  <table>
+    <thead><tr><th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>10日涨幅</th><th>所属板块</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>…</td><td>…</td><td>…</td><td class="up">+X.XX%</td><td>…</td></tr>
+    </tbody>
+  </table>
+
+  <div class="footer">本报告仅供参考，不构成投资建议 · 生成时间：YYYY-MM-DD HH:MM</div>
+</div>
+
+<script>
+// 单位：涨跌幅为百分比数值，成交额/资金为「亿元」。交付前 node --check
+const riseColor = '#dc2626';
+const fallColor = '#16a34a';
+function pickColor(val) { return !val ? '#9ca3af' : (val > 0 ? riseColor : fallColor); }
+
+const sectorFiveDayData = [ /* {name, changePct_5d} */ ];
+const volTopData = [ /* {name, amountYi} */ ];
+const inflowTopData = [ /* {name, mainNetFlowYi} */ ];
+const gainTenDayData = [ /* {name, changePct_10d} */ ];
+
+if (sectorFiveDayData.length) {
+  echarts.init(document.getElementById('sector5dChart')).setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 100, right: 24, top: 16, bottom: 24 },
+    xAxis: { type: 'value', axisLabel: { formatter: '{value}%' } },
+    yAxis: { type: 'category', data: sectorFiveDayData.map(function (entry) { return entry.name; }) },
+    series: [{
+      type: 'bar',
+      data: sectorFiveDayData.map(function (entry) {
+        return { value: entry.changePct_5d, itemStyle: { color: pickColor(entry.changePct_5d) } };
+      })
+    }]
+  });
+}
+if (volTopData.length) {
+  echarts.init(document.getElementById('volChart')).setOption({
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: volTopData.map(function (entry) { return entry.name; }), axisLabel: { rotate: 40 } },
+    yAxis: { type: 'value', axisLabel: { formatter: '{value}亿' } },
+    series: [{ type: 'bar', data: volTopData.map(function (entry) { return entry.amountYi; }), itemStyle: { color: '#2563eb' } }]
+  });
+}
+if (inflowTopData.length) {
+  echarts.init(document.getElementById('inflowChart')).setOption({
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: inflowTopData.map(function (entry) { return entry.name; }), axisLabel: { rotate: 40 } },
+    yAxis: { type: 'value', axisLabel: { formatter: '{value}亿' } },
+    series: [{
+      type: 'bar',
+      data: inflowTopData.map(function (entry) {
+        return { value: entry.mainNetFlowYi, itemStyle: { color: pickColor(entry.mainNetFlowYi) } };
+      })
+    }]
+  });
+}
+if (gainTenDayData.length) {
+  echarts.init(document.getElementById('gain10Chart')).setOption({
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: gainTenDayData.map(function (entry) { return entry.name; }), axisLabel: { rotate: 40 } },
+    yAxis: { type: 'value', axisLabel: { formatter: '{value}%' } },
+    series: [{
+      type: 'bar',
+      data: gainTenDayData.map(function (entry) {
+        return { value: entry.changePct_10d, itemStyle: { color: pickColor(entry.changePct_10d) } };
+      })
+    }]
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A股盘后复盘 · 2026-11-20</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{width:600px;background:#fdfcf9;color:#191b21;
+       font-family:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+       font-size:13.5px;line-height:1.68;-webkit-font-smoothing:antialiased}
+  .wrap{padding:28px 32px 26px}
+  /* 刊头 */
+  .head{border-bottom:3px double #191b21;padding-bottom:12px}
+  .head .row{display:flex;justify-content:space-between;align-items:baseline}
+  .head .k{font-size:10px;letter-spacing:.24em;color:#a29c8d}
+  .head .k b{color:#4a5b78}
+  .head .d{font-size:10.5px;color:#a29c8d;font-variant-numeric:tabular-nums}
+  h1{font-size:28px;font-weight:700;line-height:1.3;letter-spacing:-.5px;margin-top:8px}
+  .lede{font-size:12.5px;color:#6b6659;margin-top:8px;line-height:1.7}
+  /* TL;DR */
+  .tldr{margin-top:18px;padding:15px 17px;background:#f3f1ea;border-left:3px solid #4a5b78}
+  .tldr .h{font-size:10px;letter-spacing:.16em;color:#4a5b78;font-weight:700;margin-bottom:7px}
+  .tldr p{font-size:13px;color:#2c2f36;line-height:1.72}
+  .tldr p+p{margin-top:6px}
+  .tldr b{color:#b0402f}
+  .tldr u{text-decoration:none;color:#1f6b46;font-weight:600}
+  /* 章节 */
+  h2{font-size:13px;font-weight:700;letter-spacing:.02em;margin:26px 0 11px;
+     padding-bottom:6px;border-bottom:1px solid #ddd8ca;color:#191b21;
+     display:flex;align-items:baseline;gap:8px}
+  h2 i{font-style:normal;font-size:10px;color:#b0402f;letter-spacing:.1em;font-weight:700}
+  h2 em{font-style:normal;margin-left:auto;font-size:10px;color:#a29c8d;font-weight:400}
+  /* 表格 */
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{font-size:10px;color:#a29c8d;font-weight:500;text-align:right;padding:0 0 6px;
+     border-bottom:1px solid #ddd8ca}
+  th:first-child,td:first-child{text-align:left}
+  td{padding:7px 0;border-bottom:1px solid #f0ece2;text-align:right;font-variant-numeric:tabular-nums}
+  tr:last-child td{border-bottom:0}
+  tr.sum td{border-top:1px solid #ddd8ca;border-bottom:0;font-weight:600}
+  .gn{color:#1f6b46}.rd{color:#b0402f}.mut{color:#a29c8d}
+  .chart{width:100%;height:210px;margin-top:4px}
+  .chart.small{height:170px}
+  .cap{font-size:10px;color:#a29c8d;margin-top:2px;line-height:1.55}
+  /* 情绪带：四行，紧凑 */
+  .mood{margin-top:4px;border:1px solid #ddd8ca;background:#fff}
+  .mood .r{display:flex;border-bottom:1px solid #f0ece2}
+  .mood .r:last-child{border-bottom:0}
+  .mood .lb{width:78px;flex:none;background:#f3f1ea;font-size:10.5px;color:#6b6659;
+            padding:8px 10px;letter-spacing:.03em}
+  .mood .vl{flex:1;padding:8px 12px;font-size:12px;color:#2c2f36;font-variant-numeric:tabular-nums}
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:2px;margin-right:6px}
+  .b-ice{background:#e7eef2;color:#2f5b74}
+  .b-down{background:#fbeae8;color:#b0402f}
+  /* 板块双列 */
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .srow{display:flex;align-items:center;gap:7px;padding:3px 0;font-size:11.5px}
+  .srow .nm{width:76px;flex:none;color:#2c2f36;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .srow .tr{flex:1;height:6px;background:#f3f1ea;position:relative}
+  .srow .tr i{position:absolute;left:0;top:0;height:6px;display:block}
+  .srow .vv{width:36px;text-align:right;font-variant-numeric:tabular-nums;flex:none}
+  .sub{font-size:10px;color:#a29c8d;margin-bottom:5px}
+  /* 三档 */
+  .tier{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#ddd8ca;border:1px solid #ddd8ca;margin-top:4px}
+  .tier .c{background:#fff;padding:10px 11px}
+  .tier .c.on{background:#f3f1ea}
+  .tier .k{font-size:10px;color:#8f8a7e}
+  .tier .v{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.3px;margin-top:1px}
+  .tier .s{font-size:10px;color:#8f8a7e;margin-top:2px;line-height:1.45}
+  /* 清单 */
+  ol.next{list-style:none;counter-reset:n}
+  ol.next li{counter-increment:n;position:relative;padding:9px 0 9px 24px;
+             border-bottom:1px solid #f0ece2;font-size:12.5px;color:#2c2f36;line-height:1.6}
+  ol.next li:last-child{border-bottom:0}
+  ol.next li:before{content:counter(n);position:absolute;left:0;top:10px;font-size:10px;
+    color:#a29c8d;font-variant-numeric:tabular-nums}
+  ol.next li b{color:#191b21}
+  .warn{margin-top:14px;padding:11px 14px;background:#f7ece9;font-size:11.5px;color:#7d4436;line-height:1.65}
+  .warn b{color:#b0402f}
+  footer{margin-top:26px;padding-top:11px;border-top:1px solid #ddd8ca;font-size:10px;color:#a29c8d;line-height:1.75}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <div class="row">
+      <div class="k">A 股 · 收盘复盘 · <b>全维度</b></div>
+      <div class="d">2026-11-20 · 周五</div>
+    </div>
+    <h1>涨的只有 313 家，<br>跌停 68 家：这是一次清算</h1>
+    <div class="lede">外盘三条线同时给压力，A 股把昨天的科技行情一次性还了回去。全天 2860 只个股跌超 5%，指数跌幅远小于个股，说明权重在硬扛。</div>
+  </div>
+
+  <div class="tldr">
+    <div class="h">核心结论</div>
+    <p>上证 <b>-1.23%</b> 收 3533.79，表面温和；深成 -3.09%、创业板 -3.54%、国证2000 -5.15%，<u>真实跌幅在小盘和成长端</u>。</p>
+    <p>唯一红盘是上证50 <b>+0.45%</b>，靠国有大行 +2.52%（主力净流入 262 亿）和保险 +1.23% 撑住。这不是普跌，是<b>高低切换的暴力版</b>。</p>
+    <p>技术面已跌破 BOLL 下轨 3547，MACD 负值扩大到 -7.84，RSI6 掉到 18.14。情绪定性<b>冰点</b>，周期定位<b>主跌</b>。</p>
+  </div>
+
+  <h2><i>01</i>量能与涨跌分布<em>成交 14222 亿 · 放大 1171 亿</em></h2>
+  <div class="chart" id="c1"></div>
+  <div class="cap">按涨跌幅区间统计个股家数。左侧为跌（绿），右侧为涨（红）；<b>跌 5~7% 的 1728 只与跌超 7% 的 1064 只合计 2792 只</b>，占全市场一半。</div>
+
+  <h2><i>02</i>指数收盘<em>八大口径</em></h2>
+  <table>
+    <thead><tr><th>指数</th><th>收盘</th><th>涨跌</th><th>振幅</th><th>成交额</th></tr></thead>
+    <tbody>
+      <tr><td>上证指数</td><td>3533.79</td><td class="gn">-1.23%</td><td>1.05%</td><td>7026 亿</td></tr>
+      <tr><td>深证成指</td><td>10256.39</td><td class="gn">-3.09%</td><td>1.72%</td><td>7196 亿</td></tr>
+      <tr><td>创业板指</td><td>2212.13</td><td class="gn">-3.54%</td><td>2.15%</td><td>3350 亿</td></tr>
+      <tr><td>科创50</td><td>1231.09</td><td class="gn">-3.12%</td><td>2.77%</td><td>919 亿</td></tr>
+      <tr class="sum"><td>上证50</td><td>2785.92</td><td class="rd">+0.45%</td><td>3.01%</td><td>1572 亿</td></tr>
+      <tr><td>沪深300</td><td>3954.57</td><td class="gn">-0.76%</td><td>1.67%</td><td>4411 亿</td></tr>
+      <tr><td>中证1000</td><td>5648.63</td><td class="gn">-4.89%</td><td>3.25%</td><td>2571 亿</td></tr>
+      <tr><td>国证2000</td><td>7431.20</td><td class="gn">-5.15%</td><td>3.68%</td><td class="mut">—</td></tr>
+    </tbody>
+  </table>
+  <div class="cap">上证50 振幅 3.01% 是全场最大：低开 -1.56%、盘中最低 2709，收盘反而 +0.45%，日内波幅接近 3 个百分点，是全天最激烈的一次多空换手。</div>
+
+  <h2><i>03</i>情绪分析<em>四行，不展开</em></h2>
+  <div class="mood">
+    <div class="r"><div class="lb">情绪</div><div class="vl"><span class="badge b-ice">冰点</span>涨 313 / 跌 5236，涨停 30 / 跌停 68，成交 14222 亿（放量 1171 亿）</div></div>
+    <div class="r"><div class="lb">赚钱效应</div><div class="vl">上涨占比 5%，昨日涨停今日大面积溢价为负，接力基本失效</div></div>
+    <div class="r"><div class="lb">结构</div><div class="vl">跌超 5% 共 2860 只，涨停 30 家集中在银行、渔业、个别题材，无板块效应</div></div>
+    <div class="r"><div class="lb">周期定位</div><div class="vl"><span class="badge b-down">主跌</span>指数从 3949 高点回落已 10 个交易日，尚未出现缩量止跌信号</div></div>
+  </div>
+
+  <h2><i>04</i>走势与均线<em>近 44 个交易日</em></h2>
+  <div class="chart small" id="c2"></div>
+  <div class="cap">上证收盘点位。9 月 22 日高点 3952 至今日 3533，回撤 10.6%；MA5 3577、MA10 3618、MA20 3637 全部在上方，均线呈空头排列。</div>
+
+  <h2><i>05</i>板块与资金<em>行业 涨 12 / 跌 112</em></h2>
+  <div class="cols">
+    <div>
+      <div class="sub">领涨：只有防御在涨</div>
+      <div class="srow"><div class="nm">国有大型银行</div><div class="tr"><i style="width:100%;background:#b0402f"></i></div><div class="vv rd">+2.52%</div></div>
+      <div class="srow"><div class="nm">保险</div><div class="tr"><i style="width:49%;background:#b0402f"></i></div><div class="vv rd">+1.23%</div></div>
+      <div class="srow"><div class="nm">股份制银行</div><div class="tr"><i style="width:47%;background:#b0402f"></i></div><div class="vv rd">+1.18%</div></div>
+      <div class="srow"><div class="nm">炼化及贸易</div><div class="tr"><i style="width:37%;background:#b0402f"></i></div><div class="vv rd">+0.93%</div></div>
+      <div class="srow"><div class="nm">煤炭开采</div><div class="tr"><i style="width:18%;background:#b0402f"></i></div><div class="vv rd">+0.45%</div></div>
+      <div class="srow"><div class="nm">白酒</div><div class="tr"><i style="width:16%;background:#b0402f"></i></div><div class="vv rd">+0.41%</div></div>
+    </div>
+    <div>
+      <div class="sub">领跌：电子链条全灭</div>
+      <div class="srow"><div class="nm">其他电子</div><div class="tr"><i style="width:100%;background:#1f6b46"></i></div><div class="vv gn">-6.99%</div></div>
+      <div class="srow"><div class="nm">非金属材料</div><div class="tr"><i style="width:93%;background:#1f6b46"></i></div><div class="vv gn">-6.52%</div></div>
+      <div class="srow"><div class="nm">金属新材料</div><div class="tr"><i style="width:91%;background:#1f6b46"></i></div><div class="vv gn">-6.38%</div></div>
+      <div class="srow"><div class="nm">电子化学品</div><div class="tr"><i style="width:91%;background:#1f6b46"></i></div><div class="vv gn">-6.37%</div></div>
+      <div class="srow"><div class="nm">军工电子</div><div class="tr"><i style="width:86%;background:#1f6b46"></i></div><div class="vv gn">-6.00%</div></div>
+      <div class="srow"><div class="nm">通用设备</div><div class="tr"><i style="width:86%;background:#1f6b46"></i></div><div class="vv gn">-5.98%</div></div>
+    </div>
+  </div>
+  <div class="cap" style="margin-top:8px">资金方向高度一致：国有大行主力净流入 262 亿，股份制银行净流出 612 亿（板块内部分化），自动化设备 -145 亿、其他电子 -65 亿。自动化设备 82 只成分股 <b>0 只上涨</b>。</div>
+
+  <h2><i>06</i>技术面三档<em>收盘 3533.79</em></h2>
+  <div class="tier">
+    <div class="c on"><div class="k">第一档 · 已触及</div><div class="v" style="color:#b0402f">3500</div><div class="s">整数关 + 今日最低 3500.83，收盘仅高出 33 点</div></div>
+    <div class="c"><div class="k">第二档 · 压力</div><div class="v">3577</div><div class="s">MA5，收复才算短线止跌</div></div>
+    <div class="c"><div class="k">第三档 · 趋势</div><div class="v">3637</div><div class="s">MA20，站上才谈反转</div></div>
+  </div>
+  <div class="cap" style="margin-top:6px">辅助指标：BOLL 下轨 3547.46 已被跌破（收盘 3533.79），MACD -7.84 负值扩大，KDJ_K 22.97、RSI6 18.14 —— 超卖但未钝化，尚不构成反弹信号。</div>
+
+  <h2><i>07</i>次日关注清单<em>周一开盘验证</em></h2>
+  <ol class="next">
+    <li><b>3500 是本周生死线。</b>今日最低 3500.83 贴着它反弹，等于市场自己承认这条线。周一若直接低开在其下方，第一档失效。</li>
+    <li><b>国证2000 能否止跌。</b>今日收 7431.20 又是全天最低，连续三天收在最低位，小盘没止血，指数反弹也是假的。</li>
+    <li><b>银行、保险、石油会不会补跌。</b>这三者是今天唯一的红盘来源。它们若开始调整，说明防御资金也在撤，市场进入无差别下跌。</li>
+    <li><b>半导体能否缩量。</b>其他电子 -6.99%、电子化学品 -6.37%，主力仍在流出。缩量比反弹更重要，放量反弹往往是接盘。</li>
+    <li><b>涨停能否回到 50 家以上、跌停收到 20 家以下。</b>今天 30 / 68，已经是弱平衡；两个数字同时改善才算情绪修复。</li>
+    <li><b>隔夜外盘是否止跌。</b>今日的杀跌由外盘触发，映射链条还在。纳指与日经不再新低，A 股才有喘息空间。</li>
+  </ol>
+
+  <div class="warn">
+    <b>风险提示：</b>今日放量下跌 1171 亿，是"有人在卖"而非"没人买"。跌超 5% 的个股占一半，属于流动性挤压特征，不宜用"超跌反弹"逻辑提前接。
+  </div>
+
+  <footer>
+    数据来源：westock（指数、板块、资金流、技术指标、涨跌分布）。情绪分档依据：跌停 ≥50 或下跌家数 &gt;4000 判冰点。<br>
+    以上分析基于公开数据，不构成投资建议。
+  </footer>
+</div>
+
+<script src="../../../a-share-report/vendor/echarts.min.js"></script>
+<script>
+(function(){
+  if(!window.echarts){return;}
+
+  var d1=document.getElementById('c1');
+  if(d1){
+    var bins=[
+      {n:'跌停',v:68,c:'#134e37'},{n:'< -7%',v:1064,c:'#1f6b46'},
+      {n:'-7~-5',v:1728,c:'#2f7d5b'},{n:'-5~-2',v:1820,c:'#4f9375'},
+      {n:'-2~0',v:556,c:'#8fbba6'},{n:'0~2',v:186,c:'#e0a49b'},
+      {n:'2~5',v:73,c:'#cf7a6d'},{n:'5~7',v:8,c:'#c25a4a'},
+      {n:'> 7%',v:16,c:'#b0402f'},{n:'涨停',v:30,c:'#96291c'}
+    ];
+    var ch1=echarts.init(d1,null,{renderer:'canvas'});
+    ch1.setOption({
+      animation:false,
+      grid:{left:44,right:12,top:20,bottom:26},
+      xAxis:{type:'category',data:bins.map(function(x){return x.n}),
+        axisLine:{lineStyle:{color:'#ddd8ca'}},axisTick:{show:false},
+        axisLabel:{color:'#8f8a7e',fontSize:9.5,interval:0}},
+      yAxis:{type:'value',splitLine:{lineStyle:{color:'#f0ece2'}},
+        axisLabel:{color:'#a29c8d',fontSize:9.5},axisLine:{show:false}},
+      series:[{type:'bar',barWidth:'62%',
+        data:bins.map(function(x){return {value:x.v,itemStyle:{color:x.c}}}),
+        label:{show:true,position:'top',color:'#6b6659',fontSize:9.5,
+          formatter:function(p){return p.value>=100?p.value:''}}}]
+    });
+    window.addEventListener('resize',function(){ch1.resize()});
+  }
+
+  var d2=document.getElementById('c2');
+  if(d2){
+    var raw="2026-09-11,3888.11 2026-09-14,3885.33 2026-09-15,3864.28 2026-09-16,3891.6 2026-09-17,3875.6 2026-09-18,3911.87 2026-09-21,3949.91 2026-09-22,3952.13 2026-09-23,3936.52 2026-09-24,3888.37 2026-09-28,3823.62 2026-09-29,3830.45 2026-09-30,3842.19 2026-10-08,3811.9 2026-10-09,3813.79 2026-10-12,3797.24 2026-10-13,3800.86 2026-10-14,3767.23 2026-10-15,3707.48 2026-10-16,3716.28 2026-10-19,3730.92 2026-10-20,3735.37 2026-10-21,3713.03 2026-10-22,3658.03 2026-10-23,3690.48 2026-10-26,3697.52 2026-10-27,3648.3 2026-10-28,3681.47 2026-10-29,3651.43 2026-10-30,3599.02 2026-11-02,3638.03 2026-11-03,3608.1 2026-11-04,3686.17 2026-11-05,3689.91 2026-11-06,3649.18 2026-11-09,3660.79 2026-11-10,3663.72 2026-11-11,3680.64 2026-11-12,3655.83 2026-11-13,3634.35 2026-11-16,3602.57 2026-11-17,3584.58 2026-11-18,3587.83 2026-11-19,3577.62 2026-11-20,3533.79";
+    var arr=raw.split(' ').map(function(s){var p=s.split(',');return [p[0].slice(5),parseFloat(p[1])]});
+    var ch2=echarts.init(d2,null,{renderer:'canvas'});
+    ch2.setOption({
+      animation:false,
+      grid:{left:44,right:40,top:14,bottom:22},
+      xAxis:{type:'category',data:arr.map(function(x){return x[0]}),
+        axisLine:{lineStyle:{color:'#ddd8ca'}},axisTick:{show:false},
+        axisLabel:{color:'#a29c8d',fontSize:9.5,interval:Math.floor(arr.length/5)}},
+      yAxis:{type:'value',min:3450,max:4000,splitLine:{lineStyle:{color:'#f0ece2'}},
+        axisLabel:{color:'#a29c8d',fontSize:9.5},axisLine:{show:false}},
+      series:[{
+        type:'line',data:arr.map(function(x){return x[1]}),smooth:true,symbol:'none',
+        lineStyle:{color:'#4a5b78',width:1.6},
+        areaStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,[
+          {offset:0,color:'rgba(74,91,120,0.16)'},{offset:1,color:'rgba(74,91,120,0.01)'}])},
+        markLine:{silent:true,symbol:'none',
+          data:[{yAxis:3637,lineStyle:{color:'#c9a227',type:'dashed',width:1},
+                 label:{formatter:'MA20 3637',color:'#a58a3a',fontSize:9,position:'insideStartTop'}},
+                {yAxis:3500,lineStyle:{color:'#b0402f',type:'dashed',width:1},
+                 label:{formatter:'3500',color:'#b0402f',fontSize:9,position:'insideStartBottom'}}]}
+      }]
+    });
+    window.addEventListener('resize',function(){ch2.resize()});
+  }
+})();
+</script>
+</body>
+</html>

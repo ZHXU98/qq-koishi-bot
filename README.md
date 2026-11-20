@@ -92,7 +92,19 @@ qq-koishi-bot/
 ├── a-share-report/                   # ★ A股 复盘推送（宿主机脚本，非容器）
 │   ├── push_report.js                  # 主脚本：健康检查 → 渲染 → 推送
 │   ├── render_report.js                # 仅渲染不推送（手动预览）
+│   ├── vendor/echarts.min.js           # ECharts 本地库（离线渲染用，随项目入库）
 │   └── push_targets.json               # 推送目标（已 gitignore）
+├── skills/                           # ★ WorkBuddy skill 真源（重装后一条命令装回）
+│   └── a-share-daily-review/           # A股复盘 skill：SKILL.md + references + examples
+├── automations/                      # ★ 四个 A股定时任务的配置备份（rrule + prompt 全文）
+│   ├── a-share-{premarket,open,midday,close}.json
+│   └── prompts/*.md                    # prompt 源文件
+├── scripts/                          # 运维/迁移脚本
+│   ├── clean-logs.sh                   # 宿主机日志清理
+│   ├── install-log-cleanup.sh          # 装 cron 定时清理
+│   ├── install-skills.sh               # 仓库 ↔ 运行时 skill 同步
+│   └── sync-automations.py             # prompts/*.md → automations/*.json
+├── package.json                      # 宿主机依赖声明（puppeteer-core）
 └── napcat/                           # NapCat 备用通道运行数据（登录态，已 gitignore）
 ```
 
@@ -632,6 +644,43 @@ NODE_PATH=<ws>/node_modules node a-share-report/render_report.js /path/to/report
 | `REPORT_PNG` | `/tmp/a_share_report.png` | 渲染输出 PNG 路径 |
 
 > 详见 [`a-share-report/SKILL.md`](./a-share-report/SKILL.md)。
+
+---
+
+## A股 定时任务（automations）与 skill（skills）
+
+每天四份报告由 WorkBuddy 定时任务触发，任务配置和 skill 都**随仓库版本管理**，换电脑 / 重装后不用重新想 prompt。
+
+| 时间（工作日） | 任务 | 报告 |
+|---|---|---|
+| 08:10 | 早盘：外盘映射 + 昨日复盘逐条对照 | `A股-<日期>-早盘.html` |
+| 09:30 | 开盘：外盘三线映射 + 昨日结论验证 | `A股-<日期>-开盘.html` |
+| 11:40 | 午盘：半日数据 + 情绪速览三行 | `A股-<日期>-午盘.html` |
+| 16:00 | 盘后复盘：全维复盘 + 情绪/周期定位 + 次日清单 | `A股-<日期>-复盘.html` |
+
+- 任务配置（rrule + prompt 全文）：[`automations/`](./automations/README.md)，prompt 源文件在 `automations/prompts/*.md`
+- skill 真源：[`skills/a-share-daily-review/`](./skills/a-share-daily-review/README.md)，含 `SKILL.md`、`references/`、`examples/`
+- 报告风格基准：[`references/house_style.md`](./skills/a-share-daily-review/references/house_style.md)——
+  **风格 DNA 而非模板**：标题自带结论、首屏说尽、章节带数据副标题、图表配口径注；版式每期由模型重新设计
+
+**重装 / 换机后恢复三步**：
+
+```bash
+git clone https://github.com/ZHXU98/qq-koishi-bot.git && cd qq-koishi-bot
+bash scripts/install-skills.sh                    # 把 skill 装回 ~/.workbuddy/skills/
+cp a-share-report/push_targets.json.example a-share-report/push_targets.json  # 填 QQ 号
+npm install                                       # puppeteer-core（渲染推送用）
+```
+
+然后让 Agent 读 `automations/*.json` 重建四个定时任务（新建后 ID 会变，回写到 json 的 `id` 字段）。
+
+改 skill 的姿势：**改仓库 → 同步运行时**，不要反过来改运行时的副本。
+
+```bash
+vim skills/a-share-daily-review/references/house_style.md
+bash scripts/install-skills.sh                    # 仓库 → 运行时
+bash scripts/install-skills.sh --from-runtime     # 反过来（在运行时改完，拉回仓库）
+```
 
 ---
 
