@@ -61,6 +61,12 @@ services:
       - TZ=Asia/Shanghai
       - NEWS_INTERVAL=300
       - THS_STATE=/app/state/ths_news_state.json
+    # 日志上限：dmesg 驱动不指定，沿用 daemon 默认（macOS=Docker Desktop 的 local，Linux 多为 json-file）；
+    # 两种驱动都支持 max-size / max-file，单个容器最多 20MB × 3 = 60MB，避免日志无限增长。
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "3"
     # DNS：固定公共解析优先，Docker Desktop 内置解析器兜底（说明见 official-bot-gateway 段）
     dns:
       - 223.5.5.5
@@ -104,6 +110,10 @@ services:
       #   ⚠️ 实测 --dns-result-order=ipv4first 无效（地址顺序本就 v4 在前，问题在 autoSelectFamily）。
       #   ⚠️ 改 env 必须 `docker compose up -d qq-reply` 重建容器，`restart` 不生效。
       - NODE_OPTIONS=--no-network-family-autoselection
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "3"
     # DNS：固定公共解析优先，Docker Desktop 内置解析器兜底（说明见 official-bot-gateway 段）
     dns:
       - 223.5.5.5
@@ -179,6 +189,11 @@ services:
     #   ⚠️ 首次部署、或改过 package.json 后，需先手动装一次依赖：
     #     docker run --rm -v "$PWD/official-bot-gateway:/app" -w /app node:22-alpine \
     #       npm install --no-audit --no-fund --registry=https://registry.npmmirror.com
+    # 日志上限（同 ths-news 段说明）：单个容器最多 20MB × 3
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "3"
     command: ["node", "/app/index.js"]
 
   # koishi:
