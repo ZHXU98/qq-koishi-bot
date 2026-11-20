@@ -3,142 +3,162 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>A股 2026-11-20 开盘快报</title>
+<title>A股 2026-11-20 开盘竞价</title>
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; background: #e9e8e4; font-family: "PingFang SC","Noto Sans SC","Hiragino Sans GB","Microsoft YaHei",sans-serif; color: #14130f; -webkit-font-smoothing: antialiased; }
-  .page { width: 600px; margin: 0 auto; background: #ffffff; }
-  /* 刊头：浅底，只留一道粗黑线 + 一枚小黑标签做界定 */
-  .board { background: #fbfaf5; padding: 18px 22px 16px; border-top: 5px solid #14130f; }
-  .board .top { display: flex; justify-content: space-between; align-items: center; font-size: 10px; letter-spacing: .12em; color: #9a917f; }
-  .board .top .tag { background: #14130f; color: #f7f4ec; padding: 2px 7px 3px; border-radius: 2px; letter-spacing: .12em; }
-  .board h1 { margin: 12px 0 0; font-size: 25px; line-height: 1.36; font-weight: 700; letter-spacing: -.01em; color: #14130f; }
-  .board h1 em { font-style: normal; color: #c0392b; }
-  .board .lead { margin-top: 9px; font-size: 11.5px; line-height: 1.8; color: #55504a; }
-  .board .lead b { color: #14130f; font-weight: 700; }
-  .wrap { padding: 0 22px 20px; }
-  /* 数字墙：浅底细网格，不再用深底 */
-  .wall { background: #f7f5ef; padding: 13px 22px 15px; border-bottom: 1px solid #e4dfd2; }
-  .wall .hd { font-size: 9.5px; letter-spacing: .14em; color: #8a8377; margin-bottom: 9px; }
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: #e2ddd0; border: 1px solid #e2ddd0; }
-  .cell { background: #fffefb; padding: 9px 10px 10px; }
-  .cell .nm { font-size: 9.5px; color: #8a8377; letter-spacing: .04em; }
-  .cell .gap { font-size: 19px; font-weight: 700; margin-top: 3px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-  .cell .after { font-size: 9.5px; color: #8a8377; margin-top: 3px; font-variant-numeric: tabular-nums; }
-  .g-dn { color: #2d6a4f; } .g-up { color: #c0392b; } .g-neu { color: #5f594f; }
-  /* 正文 */
-  h2 { margin: 22px 0 0; font-size: 13.5px; font-weight: 700; padding-bottom: 6px; border-bottom: 2px solid #14130f; display: flex; align-items: baseline; }
-  h2 span { margin-left: auto; font-size: 9.5px; color: #8a8377; font-weight: 500; letter-spacing: .04em; }
-  table { width: 100%; border-collapse: collapse; margin-top: 9px; font-size: 10.5px; }
-  th { text-align: right; font-weight: 600; font-size: 9px; color: #837b6d; padding: 5px 4px; background: #f4f2ec; border-bottom: 1px solid #ddd8cc; letter-spacing: .02em; }
-  th:first-child, td:first-child { text-align: left; }
-  td { padding: 5px 4px; text-align: right; border-bottom: 1px solid #f0ede6; font-variant-numeric: tabular-nums; }
-  td.n { font-weight: 600; }
-  .dn { color: #2d6a4f; } .up { color: #c0392b; } .neu { color: #5f594f; }
-  .split { margin-top: 12px; display: flex; gap: 10px; }
-  .split > div { flex: 1; padding: 10px 11px; border-left: 3px solid #14130f; background: #f6f4ee; }
-  .split .h { font-size: 10px; letter-spacing: .1em; color: #8a8377; }
-  .split .v { font-size: 20px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
-  .split .p { font-size: 10px; line-height: 1.6; color: #55504a; margin-top: 4px; }
-  .read { margin-top: 10px; font-size: 11.5px; line-height: 1.8; color: #3d3830; }
-  .read b { color: #c0392b; } .read i { font-style: normal; color: #2d6a4f; }
-  .block { margin-top: 12px; border: 1px solid #e0dbcf; border-radius: 3px; }
-  .block .bh { padding: 7px 11px; background: #f4f2ec; font-size: 10px; letter-spacing: .1em; color: #6d675c; border-bottom: 1px solid #e0dbcf; }
-  .block ul { margin: 0; padding: 4px 12px 8px; list-style: none; }
-  .block li { padding: 6px 0 6px 14px; position: relative; font-size: 11px; line-height: 1.7; border-bottom: 1px dotted #eae5d9; color: #3d3830; }
-  .block li:last-child { border-bottom: 0; }
-  .block li::before { content: "·"; position: absolute; left: 3px; color: #b0a795; font-weight: 700; }
-  .block li b { color: #14130f; }
-  footer { padding: 12px 22px 18px; border-top: 1px solid #e2ddd1; font-size: 9.5px; line-height: 1.7; color: #9a917f; }
+  body { margin: 0; background: #eceae5; font-family: "PingFang SC","Noto Sans SC","Hiragino Sans GB","Microsoft YaHei",sans-serif; color: #171613; -webkit-font-smoothing: antialiased; }
+  .page { width: 600px; margin: 0 auto; background: #fffefb; padding: 0 0 1px; }
+
+  /* 刊头：只靠一条细线与一枚小标签，不用整块深色 */
+  .head { padding: 18px 24px 14px; border-bottom: 1px solid #e4dece; }
+  .head .kick { display: flex; align-items: center; gap: 8px; font-size: 9.5px; letter-spacing: .16em; color: #9d9584; }
+  .head .kick b { background: #171613; color: #fffefb; padding: 2px 6px; letter-spacing: .1em; font-weight: 600; font-size: 9px; }
+  .head h1 { margin: 12px 0 0; font-size: 24px; line-height: 1.36; font-weight: 700; letter-spacing: -.02em; }
+  .head h1 i { font-style: normal; color: #2d6a4f; font-variant-numeric: tabular-nums; }
+  .head .lead { margin-top: 11px; font-size: 11.5px; line-height: 1.85; color: #4c473f; }
+
+  /* 缺口阶梯 */
+  .sec { padding: 0 24px; }
+  .st { margin: 20px 0 0; display: flex; align-items: baseline; gap: 7px; }
+  .st b { font-size: 10px; color: #b0a894; letter-spacing: .06em; font-weight: 700; }
+  .st h2 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+  .st span { margin-left: auto; font-size: 9.5px; color: #a69e8b; letter-spacing: .02em; }
+
+  .ladder { margin-top: 11px; }
+  .row { display: flex; align-items: center; gap: 9px; padding: 5.5px 0; border-bottom: 1px solid #f2eddf; }
+  .row:last-child { border-bottom: 0; }
+  .row .nm { width: 66px; flex: 0 0 66px; font-size: 10.5px; color: #33302a; }
+  .row .track { flex: 1; height: 13px; background: #f6f2e7; position: relative; }
+  .row .track i { position: absolute; left: 0; top: 0; bottom: 0; background: #2d6a4f; display: block; }
+  .row .v { width: 52px; flex: 0 0 52px; text-align: right; font-size: 11.5px; font-weight: 700; color: #2d6a4f; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .row.deep .track i { background: #1e4d39; }
+  .row.deep .v { color: #1e4d39; }
+  .row.deep .nm { font-weight: 700; color: #1e4d39; }
+
+  .strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: #e4dece; margin-top: 13px; border: 1px solid #e4dece; }
+  .strip div { background: #fbf9f3; padding: 8px 9px 9px; }
+  .strip .n { font-size: 9px; color: #9d9584; letter-spacing: .04em; }
+  .strip .v { font-size: 13.5px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .strip .s { font-size: 8.5px; color: #a69e8b; margin-top: 2px; }
+
+  /* 外盘三线 */
+  .out { display: grid; grid-template-columns: 1.25fr 1.15fr 1.2fr; gap: 0; margin-top: 10px; border-top: 1px solid #171613; }
+  .out > div { padding: 9px 10px 10px 0; border-right: 1px dashed #e4dece; }
+  .out > div:last-child { border-right: 0; padding-right: 0; }
+  .out > div + div { padding-left: 10px; }
+  .out h3 { margin: 0; font-size: 9.5px; letter-spacing: .1em; color: #9d9584; font-weight: 600; }
+  .out .ln { margin-top: 5px; font-size: 10.5px; line-height: 1.6; color: #33302a; }
+  .out .ln em { font-style: normal; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .u { color: #c0392b; } .d { color: #2d6a4f; }
+  .out .tag2 { display: inline-block; font-size: 8.5px; padding: 1px 4px; border: 1px solid #ded7c6; color: #8d8574; margin-top: 6px; }
+  .note { font-size: 9px; line-height: 1.65; color: #a69e8b; margin-top: 7px; }
+
+  /* 对账 */
+  .recon { margin-top: 11px; }
+  .item { display: flex; gap: 9px; padding: 9px 0; border-bottom: 1px solid #f2eddf; }
+  .item:last-child { border-bottom: 0; padding-bottom: 2px; }
+  .item .k { flex: 0 0 42px; font-size: 9px; font-weight: 700; letter-spacing: .04em; padding-top: 2px; }
+  .k.ok { color: #2d6a4f; }
+  .k.dev { color: #c0392b; }
+  .k.part { color: #8a6d1f; }
+  .item .t { font-size: 11px; line-height: 1.78; color: #33302a; }
+  .item .t b { color: #171613; }
+  .item .t .num { font-variant-numeric: tabular-nums; font-weight: 700; }
+
+  /* 盯一句 */
+  .watch { margin: 14px 24px 0; padding: 11px 13px 12px; background: #171613; color: #f7f4ec; }
+  .watch .h { font-size: 9px; letter-spacing: .14em; color: #a09889; }
+  .watch p { margin: 6px 0 0; font-size: 11.5px; line-height: 1.8; }
+  .watch p b { color: #ffd9c9; }
+
+  footer { margin-top: 13px; padding: 10px 24px 16px; border-top: 1px solid #e4dece; font-size: 9px; line-height: 1.7; color: #a69e8b; }
 </style>
 </head>
 <body>
 <div class="page">
-  <div class="board">
-    <div class="top"><span class="tag">开盘快报 · 09:30</span><span>2026-11-20 星期五</span></div>
-    <h1>全线低开，科创50 一个人低了 <em>3.21%</em></h1>
-    <div class="lead">隔夜外盘三条线全部指向科技，A 股照单执行；<b>唯一不服从的是上证 50</b>——它低开 1.56%，最后收 +0.45%，把指数从坑里拽回了一半。</div>
+
+  <div class="head">
+    <div class="kick"><b>开盘 09:30</b><span>竞价已出结果 · 2026-11-20 星期五</span></div>
+    <h1>八个指数全低开，缺口从 <i>−3.21%</i> 一路排到 <i>−1.41%</i></h1>
+    <div class="lead">竞价一次性把隔夜信息定了价：科创 50 最深、上证最浅，中间是一条从科技到价值的整齐阶梯。三条外盘线——美股价值强、亚太半导体崩、商品全线跌——A 股基本照抄，只在黄金那一项上给出了相反的答案。</div>
   </div>
 
-  <div class="wall">
-    <div class="hd">开盘缺口 vs 当日实际（相对昨日收盘）</div>
-    <div class="grid">
-      <div class="cell"><div class="nm">上证指数</div><div class="gap g-dn">-1.41%</div><div class="after">收 -1.23% · 开盘后 +0.18%</div></div>
-      <div class="cell"><div class="nm">深证成指</div><div class="gap g-dn">-1.71%</div><div class="after">收 -3.09% · 开盘后 -1.40%</div></div>
-      <div class="cell"><div class="nm">创业板指</div><div class="gap g-dn">-2.15%</div><div class="after">收 -3.54% · 开盘后 -1.42%</div></div>
-      <div class="cell"><div class="nm">科创 50</div><div class="gap g-dn">-3.21%</div><div class="after">收 -3.12% · 开盘后 +0.09%</div></div>
-      <div class="cell"><div class="nm">上证 50</div><div class="gap g-dn">-1.56%</div><div class="after">收 +0.45% · 开盘后 <span class="g-up">+2.04%</span></div></div>
-      <div class="cell"><div class="nm">沪深 300</div><div class="gap g-dn">-1.48%</div><div class="after">收 -0.76% · 开盘后 <span class="g-up">+0.73%</span></div></div>
-      <div class="cell"><div class="nm">中证 1000</div><div class="gap g-dn">-1.89%</div><div class="after">收 -4.89% · 开盘后 -3.05%</div></div>
-      <div class="cell"><div class="nm">国证 2000</div><div class="gap g-dn">-2.06%</div><div class="after">收 -5.15% · 开盘后 -3.15%</div></div>
-      <div class="cell"><div class="nm">北证 50</div><div class="gap g-dn">-1.86%</div><div class="after">收 -4.85% · 开盘后 -3.05%</div></div>
+  <div class="sec">
+    <div class="st"><b>01</b><h2>竞价把今天开在哪：缺口阶梯</h2><span>开盘价 vs 昨收</span></div>
+    <div class="ladder">
+      <div class="row deep"><div class="nm">科创 50</div><div class="track"><i style="width:100%"></i></div><div class="v">−3.21%</div></div>
+      <div class="row deep"><div class="nm">创业板指</div><div class="track"><i style="width:67%"></i></div><div class="v">−2.15%</div></div>
+      <div class="row"><div class="nm">国证 2000</div><div class="track"><i style="width:64%"></i></div><div class="v">−2.06%</div></div>
+      <div class="row"><div class="nm">中证 1000</div><div class="track"><i style="width:59%"></i></div><div class="v">−1.89%</div></div>
+      <div class="row"><div class="nm">深证成指</div><div class="track"><i style="width:53%"></i></div><div class="v">−1.71%</div></div>
+      <div class="row"><div class="nm">上证 50</div><div class="track"><i style="width:49%"></i></div><div class="v">−1.56%</div></div>
+      <div class="row"><div class="nm">沪深 300</div><div class="track"><i style="width:46%"></i></div><div class="v">−1.48%</div></div>
+      <div class="row"><div class="nm">上证指数</div><div class="track"><i style="width:44%"></i></div><div class="v">−1.41%</div></div>
+    </div>
+
+    <div class="strip">
+      <div><div class="n">竞价+首分钟成交</div><div class="v">134.3 亿</div><div class="s">沪 57.8 / 深 76.6</div></div>
+      <div><div class="n">最深缺口</div><div class="v d">科创 50 −3.21%</div><div class="s">1230.04 / 昨收 1270.78</div></div>
+      <div><div class="n">最浅缺口</div><div class="v d">上证 −1.41%</div><div class="s">3527.30 / 昨收 3577.62</div></div>
+    </div>
+    <div class="note">阶梯本身就是结论：最深的四档全是成长与小盘，最浅的三档全是大盘价值。开盘那一刻，市场已经选完边了。</div>
+  </div>
+
+  <div class="sec">
+    <div class="st"><b>02</b><h2>外盘给了什么信号</h2><span>隔夜美股 · 亚太当日 · 商品（延时）</span></div>
+    <div class="out">
+      <div>
+        <h3>美股（11-19 收盘）</h3>
+        <div class="ln">纳指 <em class="d">−1.45%</em>　道指 <em class="u">+0.21%</em><br>标普 <em class="d">−0.46%</em></div>
+        <div class="ln" style="color:#6f6859">成长独跌、价值独红，差 <em>1.66</em> 个点</div>
+      </div>
+      <div>
+        <h3>亚太当日</h3>
+        <div class="ln">KOSPI200 <em class="d">−5.53%</em><br>三星电子 <em class="d">−7.01%</em><br>恒生 <em class="d">−1.89%</em></div>
+        <div class="tag2">日经 未覆盖</div>
+      </div>
+      <div>
+        <h3>商品（延时）</h3>
+        <div class="ln">白银 <em class="d">−5.33%</em>　黄金 <em class="d">−2.94%</em><br>铜 <em class="d">−1.30%</em>　原油 <em class="d">−0.51%</em><br>天然气 <em class="d">−0.24%</em></div>
+        <div class="ln" style="color:#6f6859">五项全跌，金银跌得比股指狠</div>
+      </div>
     </div>
   </div>
 
-  <div class="wrap">
-    <h2>一、开盘定价了什么 <span>缺口 = 隔夜信息的定价程度</span></h2>
-    <table>
-      <thead><tr><th>指数</th><th>昨收</th><th>今开</th><th>缺口</th><th>今收</th><th>开盘后</th></tr></thead>
-      <tbody>
-        <tr><td class="n">上证指数</td><td>3577.62</td><td>3527.30</td><td class="dn">-1.41%</td><td>3533.79</td><td class="up">+0.18%</td></tr>
-        <tr><td class="n">深证成指</td><td>10583.20</td><td>10402.29</td><td class="dn">-1.71%</td><td>10256.39</td><td class="dn">-1.40%</td></tr>
-        <tr><td class="n">创业板指</td><td>2293.34</td><td>2244.06</td><td class="dn">-2.15%</td><td>2212.13</td><td class="dn">-1.42%</td></tr>
-        <tr><td class="n">科创 50</td><td>1270.78</td><td>1230.04</td><td class="dn">-3.21%</td><td>1231.09</td><td class="up">+0.09%</td></tr>
-        <tr><td class="n">上证 50</td><td>2773.46</td><td>2730.24</td><td class="dn">-1.56%</td><td>2785.92</td><td class="up">+2.04%</td></tr>
-        <tr><td class="n">沪深 300</td><td>3984.84</td><td>3925.74</td><td class="dn">-1.48%</td><td>3954.57</td><td class="up">+0.73%</td></tr>
-        <tr><td class="n">中证 1000</td><td>5938.90</td><td>5826.37</td><td class="dn">-1.89%</td><td>5648.63</td><td class="dn">-3.05%</td></tr>
-        <tr><td class="n">国证 2000</td><td>7834.50</td><td>7672.74</td><td class="dn">-2.06%</td><td>7431.20</td><td class="dn">-3.15%</td></tr>
-        <tr><td class="n">北证 50</td><td>798.64</td><td>783.79</td><td class="dn">-1.86%</td><td>759.90</td><td class="dn">-3.05%</td></tr>
-      </tbody>
-    </table>
-    <p class="read">看最后一列就够了：<b>权重低开后往上修，小盘低开后继续往下砸</b>。上证 50 从 −1.56% 拉到 +0.45%（+2.04 个点），
-    国证 2000 从 −2.06% 砸到 −5.15%（−3.15 个点）——同一个开盘，两个方向，这是<i>换仓</i>而不是普跌。</p>
-
-    <div class="split">
-      <div><div class="h">开盘后最强</div><div class="v up">+2.04%</div><div class="p">上证 50 · 大行 2.52%、保险 1.23% 抬轿</div></div>
-      <div><div class="h">开盘后最弱</div><div class="v dn">-3.15%</div><div class="p">国证 2000 · 小盘无承接，一路压到收盘</div></div>
-      <div><div class="h">缺口最深</div><div class="v dn">-3.21%</div><div class="p">科创 50 · 外盘映射最直接，开盘即到底</div></div>
+  <div class="sec">
+    <div class="st"><b>03</b><h2>对账：三处兑现，一处背离</h2><span>外盘信号 → 竞价实际</span></div>
+    <div class="recon">
+      <div class="item">
+        <div class="k ok">兑现</div>
+        <div class="t"><b>半导体链，一分没省。</b>KOSPI200 <span class="num d">−5.53%</span>、三星 <span class="num d">−7.01%</span>、纳指 <span class="num d">−1.45%</span>，A 股把最深的一档缺口给了科创 50（<span class="num d">−3.21%</span>）。外盘砸哪条链，竞价就在哪条链上认账。</div>
+      </div>
+      <div class="item">
+        <div class="k ok">兑现</div>
+        <div class="t"><b>价值防线，竞价就立住了。</b>道指是三大指数里唯一收红的（<span class="num u">+0.21%</span>），A 股这边上证 50 缺口 <span class="num d">−1.56%</span>、沪深 300 <span class="num d">−1.48%</span>，都明显浅于成长。「成长杀、价值托」在 09:30 已经定价。</div>
+      </div>
+      <div class="item">
+        <div class="k part">部分兑现</div>
+        <div class="t"><b>小盘没有额外恐慌。</b>国证 2000 <span class="num d">−2.06%</span> 只比创业板浅 0.09 个点，也没比中证 1000 更差。小盘跟着跌，但竞价阶段没有出现比成长更极端的抛压。</div>
+      </div>
+      <div class="item">
+        <div class="k dev">背离</div>
+        <div class="t"><b>避险资产和风险资产一起被卖。</b>白银 <span class="num d">−5.33%</span>、黄金 <span class="num d">−2.94%</span>，跌幅比纳指还大。这不是「避险切换」，是流动性在收缩——今天不能把黄金股当避风港，这是竞价发出的最反直觉的一条。</div>
+      </div>
     </div>
+  </div>
 
-    <h2>二、映射兑现情况 <span>盘前判断 vs 开盘实际</span></h2>
-    <table>
-      <thead><tr><th>盘前信号</th><th>预判方向</th><th>开盘结果</th><th>兑现</th></tr></thead>
-      <tbody>
-        <tr><td class="n">纳指 −2.25% 收最低</td><td>半导体、光模块承压</td><td>科创 50 低开 −3.21%</td><td class="up">兑现</td></tr>
-        <tr><td class="n">三星电子高位回落</td><td>存储链跌幅大于外盘</td><td>半导体收 −4.91%</td><td class="up">兑现</td></tr>
-        <tr><td class="n">原油持平</td><td>炼化、油服抗跌</td><td>炼化 +0.93%，逆势红盘</td><td class="up">兑现</td></tr>
-        <tr><td class="n">美股无风格分化</td><td>红利、银行避险属性抬升</td><td>国有大行 +2.52%</td><td class="up">兑现</td></tr>
-        <tr><td class="n">金银双杀</td><td>黄金股情绪受挫</td><td>贵金属未独立走强</td><td class="neu">部分</td></tr>
-        <tr><td class="n">铜 −1.30%</td><td>有色、铜箔偏弱</td><td>工业金属 −2.07%</td><td class="up">兑现</td></tr>
-      </tbody>
-    </table>
-    <p class="read">盘前六条映射，五条兑现、一条部分兑现——<b>外盘映射在"方向"上几乎全对，错的是幅度</b>。
-    科创 50 开盘 −3.21% 已经贴到全天最低（当日最低 1219.37 只是瞬间），说明<b>开盘一次性定价完毕，之后没有二次杀跌</b>。</p>
-
-    <div class="block">
-      <div class="bh">三、分歧点 —— 谁在托，能不能持续</div>
-      <ul>
-        <li><b>权重与外盘背离</b>：外盘无风格偏好，A 股却把 2 个点砸给了小盘、给了权重 2 个点。<b>托的是内资的避险配置</b>，不是外资（人民币当日还升值 0.28%）。</li>
-        <li><b>科创 50 开盘即底</b>：低开 3.21%、收盘 −3.12%，全天在开盘价附近磨。<b>说明卖压在竞价一次性释放</b>，盘中没有新增抛压，但也没有承接。</li>
-        <li><b>大金融逆势</b>：银行、保险、白酒三块红盘，成交占全市场不足两成。<b>它们能护指数，但护不住个股</b>——这是今天 5236 只下跌却只跌 1.23% 的原因。</li>
-      </ul>
-    </div>
-
-    <div class="block">
-      <div class="bh">四、映射失效的条件</div>
-      <ul>
-        <li>若明日<b>银行转为补跌</b> → 说明避险资金也在撤，映射从"结构"变成"全面"。</li>
-        <li>若<b>科创 50 再度低开 3% 以上且盘中有新增抛压</b> → 开盘一次性定价的规律被打破。</li>
-        <li>若<b>原油转跌超 2%</b> → 炼化这条唯一的逆向逻辑失效，红盘板块会归零。</li>
-        <li>若<b>人民币转为快速贬值</b> → 抛压性质从内资降杠杆变为资本外流，修复时间会显著拉长。</li>
-      </ul>
-    </div>
+  <div class="watch">
+    <div class="h">盯一句</div>
+    <p>盯 <b>上证 50 能不能在缺口上方翻红</b>。若 50 也往下补缺口、回补后不反弹，那今天就不是「换仓」而是「全面撤退」——价值承接这条线作废，映射失效，剩下的都是跌幅排序问题。</p>
   </div>
 
   <footer>
-    以上分析基于公开数据，不构成投资建议。缺口与"开盘后"均以昨日收盘价为基准计算；板块数据为收盘口径。<br>
-    A股开盘快报 · 2026-11-20
+    以上分析基于公开数据，不构成投资建议。<br>
+    口径：缺口与竞价成交为 09:30 真实快照（分时首根）；外盘期货为延时报价；日经 225 未覆盖，不以近似指数顶替。<br>
+    本份为 11-20 收盘后按 09:30 快照回放，未使用当日盘中后续数据。<br>
+    A股开盘 · 竞价与外盘 · 2026-11-20
   </footer>
+
 </div>
 </body>
 </html>

@@ -5,7 +5,7 @@
 
 ## 1 环境
 - 工作目录 = 本项目根（`qq-koishi-bot`）。下文所有路径都相对项目根，不写死绝对路径。
-- 技能文档**以项目内为准**：先读 `skills/a-share-daily-review/SKILL.md` 的「路径六：开盘外盘映射分析」（含步骤 0 昨日复盘对照）；风格基准读 `skills/a-share-daily-review/references/house_style.md`（风格 DNA，不是模板）；需要看成品手法可翻 `skills/a-share-daily-review/examples/`。
+- 技能文档**以项目内为准**：先读 `skills/a-share-daily-review/SKILL.md` 的「路径六 · **盘前版**」（含昨日复盘逐条检验，这是本份的主线；不要用竞价版）；风格基准读 `skills/a-share-daily-review/references/house_style.md`（风格 DNA，不是模板）；需要看成品手法可翻 `skills/a-share-daily-review/examples/`。
   `~/.workbuddy/skills/a-share-daily-review/` 只是副本，两者不一致时以项目内为准。
 - 先 `export PATH="$HOME/.local/bin:$PATH"`（westock CLI 不在默认 PATH）。
 - 数据只走 westock / neodata，禁止 web_search / curl / 第三方接口。
