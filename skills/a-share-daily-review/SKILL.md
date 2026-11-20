@@ -504,6 +504,9 @@ westock market-overview --type trade          # 成交额
 ## 报告交付方式（重要）
 
 1. **默认 HTML**：六条路径正式交付物均为自包含 `.html` 文件
+   - **按量分档**：早盘 / 开盘 / 午盘 1-2 屏（手机一屏读完）；**盘后复盘可 3-5 屏、6～9 个编号章节**，
+     表格为主、图表为辅，每节末尾一句解读——见 `references/house_style.md`「盘后专属：可以把密度拉满」。
+     放宽的是篇幅，不是结构：盘后同样不许套固定骨架，要素齐了怎么排由当期决定
 2. **Agent 直接写**：读取对应模板/规范后，用文件写入工具生成完整 HTML；数据采集直接调用上述可信 skill 命令，不要写本地抓数脚本
 3. **模板对照**：
    - 路径一～四、路径六、涨停深度等 → `references/html_report_style.md` + `wb-finance-skill/references/html-report-style.md`
