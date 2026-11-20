@@ -1,0 +1,17 @@
+{
+  "_note": "本文件是 WorkBuddy 自动化任务的完整配置备份。重装后用 automation 工具（create）按此重建：cwd 填 clone 下来的仓库根目录，prompt 原样传入。",
+  "id": "012b69df-d586-450f-9ae9-346d8ca0d52a",
+  "name": "A股盘后复盘 16:00（含情绪分析）",
+  "status": "ACTIVE",
+  "scheduleType": "recurring",
+  "rrule": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=16;BYMINUTE=0",
+  "time_local": "每周一至周五 16:00（北京时间）",
+  "cwd": "<repo root, 例如 /Users/zhangxu/Desktop/qq-koishi-bot>",
+  "skill": "skills/a-share-daily-review/SKILL.md",
+  "skill_anchor": "默认路径（技术面三维分析）+ 情绪速览",
+  "style": "skills/a-share-daily-review/references/house_style.md",
+  "output": "a-share-report/reports/A股-<YYYY-MM-DD>-复盘.html",
+  "push": "a-share-report/push_report.js",
+  "prompt_file": "automations/prompts/close.md",
+  "prompt": "生成 A股「盘后复盘」报告并推送到 QQ。\n\n1. 先判断今天是否为 A 股交易日；休市则**不要推送**，直接结束并说明「今日休市」。\n2. 工作目录 = 本项目根（`qq-koishi-bot`）。技能文档**以项目内为准**：读 `skills/a-share-daily-review/SKILL.md`，按默认路径（技术面三维分析）执行；风格基准读 `skills/a-share-daily-review/references/house_style.md`，成品手法可翻 `skills/a-share-daily-review/examples/`（只看手法，不抄结构）。`~/.workbuddy/skills/` 下的是副本，冲突时以项目内为准。取数前先 `export PATH=\"$HOME/.local/bin:$PATH\"`（westock CLI 不在默认 PATH）。所有路径相对项目根。\n3. 视角是**收盘全维复盘**：六大指数收盘与成交额、涨跌分布、板块与题材强弱、资金流向、市场状态定位，末尾给「次日开盘关注清单」。只写取到的数据，不编造。\n4. **情绪分析**（四行，简约）：\n   ```\n   westock changedist\n   westock market-overview --type trade\n   ```\n   - 情绪：冰点 / 低迷 / 中性 / 修复 / 活跃 / 亢奋（六档选一）+ 涨 x / 跌 y，涨停 a / 跌停 b，成交额 d 亿（标注放量或缩量多少）\n   - 连板梯队：最高几板、几进几（能从涨停梯队数据顺手拿到才写，拿不到就整行省略；westock 无连板天梯命令，不要调用 westock-tool）\n   - 赚钱效应：一句话（昨日涨停今日溢价、高位股是否补跌）\n   - 周期定位：低位震荡 / 主升 / 高位震荡 / 主跌（四选一）\n   不写方法论、不解释指标定义。\n5. 写 HTML（**版式自己设计，不要套模板**）：\n   - 必讲要素：一句话定性 → 量能与涨跌分布 → 指数全表 → 情绪与周期定位 → 技术面（均线与关键位）→ 板块与资金 → 次日关注清单 → 风险提示\n   - 主标题自带结论与数字（如「涨的只有 313 家，跌停 68 家：这是一次清算」），不要写「A股每日复盘报告」\n   - **禁止复用历史 HTML 的骨架或 class 结构**，每期可以不同；章节顺序、分栏、图表组合随你按当期内容安排\n   - 只守三条硬约束：浅底深字（不要整页暗色背景）、上涨红 `#c0392b` / 下跌绿 `#2d6a4f`、第一屏能读到结论\n   - 图表按这一节要讲的东西选型（分布柱 / 走势折线 / 强弱条形都行），别为凑图而画；横轴标签要短，避免在 600px 宽下重叠；每张图配一句口径注\n   - 情绪做成一个独立小块，别挤占技术面篇幅\n   - 章节标题建议\"编号 + 带数据的副标题\"（如「01 量能与涨跌分布 · 成交 14222 亿，放大 1171 亿」）\n   写入 `a-share-report/reports/A股-<YYYY-MM-DD>-复盘.html`（目录不存在先 mkdir -p）。含 ECharts 时先 `node --check` 内联 JS。离线渲染用相对路径 `../vendor/echarts.min.js`。\n6. 推送（目标：私聊 1547450303）：\n   ```\n   PATH=\"$HOME/.local/bin:$PATH\" NODE_PATH=\"$PWD/node_modules\" REPORT_CAPTION=\"A股盘后复盘 <YYYY-MM-DD>\" node a-share-report/push_report.js \"$PWD/a-share-report/reports/A股-<YYYY-MM-DD>-复盘.html\"\n   ```\n   脚本 exit 非 0 时把报错原文写进结果。\n7. 结果只回报：报告路径、是否发送成功、情绪定性与周期定位各一句、收盘关键数字 3-5 行。不要贴整篇正文。\n"
+}
