@@ -566,7 +566,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 | `privateWhitelist` | `["1547450303"]` | 私聊白名单（不在此列表一律拒绝；空数组 = 不限制） |
 | `groupWhitelist` | `[]` | 群白名单（非空 = 仅响应列表内群；空数组 = 不限制） |
 | `groupAdminOnly` | `false` | 群聊仅管理员可触发 |
-| `groupRestrictedCmds` | `["ping","status","t","an","stock","stocks"]` | 群聊非管理员可用指令名白名单（空数组 = 不限制）。`stock` / `stocks` 放行只代表「能调这条指令」——K线、组合查询与 `-list` 所有人开放，`-add` / `-update` / `-del` 由 `owners` 独立把关 |
+| `groupRestrictedCmds` | `["ping","status","t","an","stock","stocks","ss","zj"]` | 群聊非管理员可用指令名白名单（空数组 = 不限制）。`stock` / `stocks` 放行只代表「能调这条指令」——K线、组合查询与 `-list` 所有人开放，`-add` / `-update` / `-del` 由 `owners` 独立把关。`ss`（申万）/ `zj`（资金）为纯只读查询，无写门槛 |
 | `groupImages` | `false` | 群聊是否带图。腾讯对群聊批量图片有安全审核，默认只发文本、图片私聊补发 |
 | `restrictedMsg` / `deniedMsg` / `unknownMsg` / `welcome` | 见文件 | 各类提示文案；置 `""` 则完全忽略不回复 |
 
