@@ -46,6 +46,9 @@ reply/data
 # /stocks 组合数据（运行态产物，含个人持仓组合，勿提交；用 portfolios.json.example 模板）
 reply/data/portfolios.json
 reply/data/portfolios.json.tmp
+# 群友个人看板（-my）：按 uid 存的自选，同样属于运行态隐私数据
+reply/data/myboards.json
+reply/data/myboards.json.tmp
 
 # ===== 2026-08-19 新增 =====
 # 备份文件（如 docker-compose.yml.bak-qrflow）

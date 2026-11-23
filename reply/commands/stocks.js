@@ -16,6 +16,9 @@ const {
 //       涨红跌绿，字号按列数收缩以保证手机端可读。
 const PORTFOLIO_DIR = process.env.PORTFOLIO_DIR || path.join(__dirname, '..', 'data');
 const PORTFOLIO_PATH = path.join(PORTFOLIO_DIR, 'portfolios.json');
+// 群友个人看板：一人一份，按 uid（群内=openid / 私聊=openid）隔离；
+// 与共享组合分开存，避免污染 /stocks -list 的组合清单
+const MYBOARD_PATH = path.join(PORTFOLIO_DIR, 'myboards.json');
 const PORTFOLIO_MAX = 20;      // 单个组合最多保存的股票数
 const STOCKS_RENDER_MAX = 16;  // 单张拼图最多渲染的股票数
 // 组合名：中英文/数字/下划线打头，后接中英文/数字/下划线/点/短横线，总长 1-12；首字符不得是 -（避免与参数混淆）
@@ -31,13 +34,19 @@ const STOCKS_USAGE = [
   '　　例：/stocks -d 我的持仓　/stocks -t 600519 000858　/stocks -w 贵州茅台 宁德时代',
   '组合：/stocks -list　组合清单（只列名称+只数）',
   '　　　/stocks -list <组合名>　查看某个组合的成分',
+  '我的看板（每人一份，自己改，别人改不了）：',
+  '　/stocks -my　　　　　　　看我的看板（不写周期默认分时 -t）',
+  '　/stocks -d -my　　　　　 指定周期：-t / -pre / -d / -w / -m',
+  '　/stocks -my -add <股票...>　　新建 / 整组覆盖',
+  '　/stocks -my -update <股票...> 用新名单整组替换',
+  '　/stocks -my -list　　　　看成分　　/stocks -my -del 删除',
   '编辑（仅机器人主人）：',
   '　/stocks -add <股票...> -name <组合名>　新建 / 整组覆盖',
   '　/stocks -update <组合名> <股票...>　　 用新名单整组替换（组合须已存在）',
   '　/stocks -del <组合名>　　　　　　　　　删除组合',
   '　　例：/stocks -add 600519 300750 -name 我的持仓',
   '　　　　/stocks -update 我的持仓 600519 300750 002594',
-  `单张图最多 ${STOCKS_RENDER_MAX} 只，单个组合最多保存 ${PORTFOLIO_MAX} 只`,
+  `单张图最多 ${STOCKS_RENDER_MAX} 只，单个组合 / 看板最多保存 ${PORTFOLIO_MAX} 只`,
 ].join('\n');
 const STOCKS_EDIT_MODES = ['add', 'update', 'del'];
 
@@ -65,6 +74,33 @@ function findPortfolioKey(pf, target) {
   if (pf[t]) return t;
   const tl = t.toLowerCase();
   return Object.keys(pf).find(k => k.toLowerCase() === tl) || '';
+}
+
+// ---------- 个人看板（-my）存储 ----------
+// 结构：{ "<uid>": { updated: "2026-11-23 10:50", stocks: [{code,name}] } }
+const MYBOARD_UID_RE = /^[A-Za-z0-9_-]{4,64}$/; // openid（32 位 hex）/ QQ 号
+function loadMyBoards() {
+  try {
+    if (!fs.existsSync(MYBOARD_PATH)) return {};
+    const j = JSON.parse(fs.readFileSync(MYBOARD_PATH, 'utf8'));
+    return (j && typeof j === 'object' && !Array.isArray(j)) ? j : {};
+  } catch (e) { console.error('[stocks] myboards 读取失败:', e.message); return {}; }
+}
+function saveMyBoards(obj) {
+  try {
+    if (!fs.existsSync(PORTFOLIO_DIR)) fs.mkdirSync(PORTFOLIO_DIR, { recursive: true });
+    const tmp = MYBOARD_PATH + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf8');
+    fs.renameSync(tmp, MYBOARD_PATH);
+    return true;
+  } catch (e) { console.error('[stocks] myboards 写入失败:', e.message); return false; }
+}
+// 读-改-写串行化：多人同时 -add 时后写者会基于旧快照覆盖，这里排个队避免丢更新
+let __myBoardChain = Promise.resolve();
+function withMyBoardLock(fn) {
+  const p = __myBoardChain.then(fn, fn);
+  __myBoardChain = p.catch(() => {});
+  return p;
 }
 
 // 列数自适应（2026-09-11 用户调整阈值）：1 只→1 列；≤4 只→2 列；5-9 只→3 列；≥10 只→4 列
@@ -363,7 +399,7 @@ async function cmdStocks(args, ctx = {}) {
   const raw = (args || []).map(a => String(a).trim()).filter(Boolean);
   if (!raw.length) return { ok: false, text: STOCKS_USAGE };
 
-  let mode = 'query', nameFromFlag = false, name = '';
+  let mode = 'query', nameFromFlag = false, name = '', myMode = false;
   const periods = [], operands = [], modes = new Set();
   for (let i = 0; i < raw.length; i++) {
     const p = raw[i], pl = p.toLowerCase();
@@ -376,6 +412,8 @@ async function cmdStocks(args, ctx = {}) {
       // （曾导致 `/stocks -update -name 我的持仓 300750` 被误判为「没给股票」）
       name = (i + 1 < raw.length ? raw[++i] : '').trim(); nameFromFlag = true; continue;
     }
+    // -my：切到「我的看板」作用域（不影响 add/update/del/list 语义）
+    if (pl === '-my' || pl === 'my' || pl === '-mine' || pl === 'mine' || pl === '-我的' || pl === '我的') { myMode = true; continue; }
     if (STOCKS_PERIODS[pl]) { periods.push(STOCKS_PERIODS[pl]); continue; }
     // 手机端敲 - 不方便：首/尾 token 允许省略减号（t/d/w/m）。组合名与股票名不会是单字母，风险可控
     if ((i === 0 || i === raw.length - 1) && !pl.startsWith('-') && raw.length > 1 && BARE_PERIOD[pl]) {
@@ -399,11 +437,89 @@ async function cmdStocks(args, ctx = {}) {
   if (nameFromFlag && !name && isEdit) {
     return { ok: false, text: `⚠️ -name 后面缺少组合名（组合名不能含空格）\n\n${STOCKS_USAGE}` };
   }
+  // -my 身份：群聊普通成员是 openid、私聊是 openid、主人是 QQ 号——都稳定可用
+  const myUid = myMode ? String(ctx.uid || '').trim() : '';
+  if (myMode) {
+    if (!MYBOARD_UID_RE.test(myUid)) return { ok: false, text: '⚠️ 无法识别你的身份（缺少用户标识），看板暂时不可用，请稍后重试' };
+    if (nameFromFlag) return { ok: false, text: '⚠️ 个人看板不需要 -name（一人一份，按你自己区分）' };
+  }
   // —— 写操作闸门：仅主人 ——（与 groupRestrictedCmds 无关，群内普通成员即使能调 /stocks 也会被这里拦下）
-  if (isEdit && !(await isOwnerCtx(ctx))) return { ok: false, text: ownerDeniedMsg() };
+  //   -my 例外：写的是自己那一份看板，谁都能改自己的
+  if (isEdit && !myMode && !(await isOwnerCtx(ctx))) return { ok: false, text: ownerDeniedMsg() };
   // 编辑指令不接受周期参数（否则用户会以为顺带出了图）
   if (isEdit && periods.length) {
-    return { ok: false, text: `⚠️ -${mode} 是编辑指令，不接受周期参数\n想看行情请单独发：/stocks <周期> <组合名>` };
+    return { ok: false, text: `⚠️ -${mode} 是编辑指令，不接受周期参数\n想看行情请单独发：/stocks <周期> ${myMode ? '-my' : '<组合名>'}` };
+  }
+
+  // —— 个人看板（-my，一人一份）——
+  if (myMode) {
+    const BOARD_TITLE = '我的看板';
+    if (mode === 'list') {
+      const b = loadMyBoards()[myUid];
+      const st = (b && Array.isArray(b.stocks)) ? b.stocks : [];
+      if (!st.length) {
+        return { ok: false, text: `📋 你还没有看板\n新建：/stocks -my -add 600519 300750\n看板默认分时，也可 -d/-w/-m/-pre` };
+      }
+      return { ok: true, text: [
+        `📋 【${BOARD_TITLE}】${st.length} 只　更新 ${(b && b.updated) || '-'}`,
+        st.map(s => s.name || s.code).join('、'),
+        '',
+        '出图：/stocks -my　指定周期：/stocks -d -my',
+        '改名单：/stocks -my -add <股票...>',
+      ].join('\n') };
+    }
+    if (mode === 'del') {
+      const res = await withMyBoardLock(() => {
+        const mb = loadMyBoards();
+        if (!mb[myUid]) return { none: true };
+        const n = (Array.isArray(mb[myUid].stocks) ? mb[myUid].stocks : []).length;
+        delete mb[myUid];
+        return { ok: saveMyBoards(mb), n };
+      });
+      if (res.none) return { ok: false, text: '⚠️ 你还没有看板，无需删除' };
+      if (!res.ok) return { ok: false, text: '⚠️ 删除失败（服务端写盘异常），请查看容器日志' };
+      return { ok: true, text: `🗑️ 已删除你的看板（${res.n} 只）` };
+    }
+    // add / update：都是整组覆盖；update 额外要求看板已存在。
+    // 注意只在这两种模式下处理——query（/stocks -my 出图）要往下走到出图分支
+    if (mode === 'add' || mode === 'update') {
+      if (!operands.length) {
+        return { ok: false, text: `⚠️ 未指定股票，例：/stocks -my -add 600519 300750` };
+      }
+      if (operands.length > PORTFOLIO_MAX) {
+        return { ok: false, text: `⚠️ 单个看板最多 ${PORTFOLIO_MAX} 只（当前 ${operands.length} 只），看板未改动` };
+      }
+      const prev = loadMyBoards()[myUid];
+      const prevList = (prev && Array.isArray(prev.stocks)) ? prev.stocks : [];
+      if (mode === 'update' && !prevList.length) {
+        return { ok: false, text: '⚠️ 你还没有看板，-update 只能改已有的\n新建请用：/stocks -my -add <股票...>' };
+      }
+      const { okList, bad } = await resolveStockArgs(operands);
+      if (!okList.length) return { ok: false, text: `⚠️ 没有解析出有效股票，看板未改动${bad.length ? `\n${bad.join('、')}` : ''}` };
+      const saved = await withMyBoardLock(() => {
+        const mb = loadMyBoards();
+        mb[myUid] = { updated: nowText(), stocks: okList };
+        return saveMyBoards(mb);
+      });
+      if (!saved) return { ok: false, text: '⚠️ 看板保存失败（服务端写盘异常），请查看容器日志' };
+      const L = [];
+      if (mode === 'update' && prevList.length) {
+        const before = prevList.map(s => s.name || s.code);
+        const after = okList.map(s => s.name);
+        const added = after.filter(x => !before.includes(x));
+        const removed = before.filter(x => !after.includes(x));
+        L.push(`✏️ 已更新你的看板：${prevList.length} 只 → ${okList.length} 只`);
+        if (added.length) L.push(`　＋ 新增：${added.join('、')}`);
+        if (removed.length) L.push(`　－ 移除：${removed.join('、')}`);
+        L.push(`　当前：${after.join('、')}`);
+      } else {
+        L.push(`✅ 已保存你的看板（${okList.length} 只）`);
+        L.push(`　${okList.map(s => s.name).join('、')}`);
+      }
+      if (bad.length) L.push(`⚠️ 已跳过：${bad.join('、')}`);
+      L.push('→ /stocks -my　（看板只属于你，别人改不了）');
+      return { ok: true, text: L.join('\n') };
+    }
   }
 
   // —— 列出组合（所有人）——
@@ -536,14 +652,27 @@ async function cmdStocks(args, ctx = {}) {
   // —— 出图 ——
   const uniq = [...new Set(periods)];
   if (uniq.length > 1) return { ok: false, text: '⚠️ 周期只能指定一个（-t 分时 / -pre 美股盘前 / -d 日线 / -w 周线 / -m 月线）' };
-  const period = uniq[0] || 'day';
-  if (!operands.length) return { ok: false, text: STOCKS_USAGE };
+  // -my 默认分时（做T看板就是看当日走势）；普通组合出图仍默认日线
+  const period = uniq[0] || (myMode ? 'time' : 'day');
+  if (!myMode && !operands.length) return { ok: false, text: STOCKS_USAGE };
 
   const pf = loadPortfolios();
   const notes = [];
   let title = '自选股', targets = [];
-  const comboKey = (operands.length === 1) ? findPortfolioKey(pf, operands[0]) : ''; // 组合名忽略大小写
-  if (comboKey) {
+  const comboKey = (!myMode && operands.length === 1) ? findPortfolioKey(pf, operands[0]) : ''; // 组合名忽略大小写
+  if (myMode) {
+    if (operands.length) {
+      return { ok: false, text: `⚠️ -my 后面不用跟股票（看板由你自己维护）\n改名单：/stocks -my -add <股票...>` };
+    }
+    const b = loadMyBoards()[myUid];
+    const st = (b && Array.isArray(b.stocks)) ? b.stocks : [];
+    if (!st.length) {
+      return { ok: false, text: `📋 你还没有看板\n新建：/stocks -my -add 600519 300750\n看板默认分时，也可 -d/-w/-m/-pre` };
+    }
+    targets = st.slice(0, STOCKS_RENDER_MAX).map(s => ({ code: s.code, hint: s.name }));
+    title = '我的看板';
+    if (st.length > targets.length) notes.push(`看板共 ${st.length} 只，仅显示前 ${targets.length} 只`);
+  } else if (comboKey) {
     const st = Array.isArray(pf[comboKey].stocks) ? pf[comboKey].stocks : [];
     if (!st.length) return { ok: false, text: `⚠️ 组合【${comboKey}】是空的，请重新用 -add 保存` };
     targets = st.slice(0, STOCKS_RENDER_MAX).map(s => ({ code: s.code, hint: s.name }));
@@ -676,4 +805,4 @@ async function cmdStocks(args, ctx = {}) {
   return { ok: true, img }; // 失败/截断提示已在图内（灰底格 + 页脚），不再额外发文本消息
 }
 
-module.exports = { cmdStocks, loadPortfolios, savePortfolios, resolveStockArgs };
+module.exports = { cmdStocks, loadPortfolios, savePortfolios, loadMyBoards, saveMyBoards, resolveStockArgs };

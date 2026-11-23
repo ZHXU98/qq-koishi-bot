@@ -80,7 +80,7 @@ qq-koishi-bot/
 │   ├── package.json                    # Canvas / Resvg 渲染依赖
 │   ├── config.json                     # 权限配置（官方通道用）
 │   ├── config.napcat.json              # 权限配置（NapCat 备用通道）
-│   ├── data/                           # /stocks 组合数据（可写挂载；portfolios.json 已 gitignore）
+│   ├── data/                           # /stocks 组合与个人看板数据（可写挂载；portfolios.json / myboards.json 已 gitignore）
 │   └── README.md
 ├── ths-news/                         # ★ 同花顺重要资讯转发
 │   ├── fetch_ths_news.js               # 主脚本（过滤/去重/渲染/推送）
@@ -233,11 +233,12 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 | 群聊 · 不在 `groupWhitelist` 的群 | 完全忽略 |
 | 私聊 · 在 `privateWhitelist` | 仅响应指令 / 磁链，闲聊忽略 |
 | 私聊 · 不在 `privateWhitelist` | 回 `deniedMsg` 拒绝提示 |
-| **写操作**（`/stocks -add` / `-update` / `-del`）· 任何场景 | **只认 `owners`（主人 QQ 号）**，与 `admins` 无关；其他人一律回「🛡️ 组合的增删改仅限机器人主人」。`owners` 为空 = 谁都不能写（fail-closed） |
+| **写操作**（`/stocks -add` / `-update` / `-del`）· 任何场景 | **只认 `owners`（主人 QQ 号）**，与 `admins` 无关；其他人一律回「🛡️ 组合的增删改仅限机器人主人」。`owners` 为空 = 谁都不能写（fail-closed）。**例外**：带 `-my` 的写操作写的是自己那份个人看板，任何人都可以改自己的 |
+| **个人看板**（`/stocks -my ...`）· 任何场景 | 按发送者身份（群内 / 私聊 openid）隔离，只能读改**自己那份**；不影响共享组合与 `-list` 清单 |
 
 > **两层权限不要混淆**：`groupRestrictedCmds` / `admins` 只管「这条指令名能不能调」；`owners` 只管「组合能不能被写」。两者独立叠加——非管理员可以查询 `/stocks` 与 `-list`；而管理员即使能调 `stocks`，不在 `owners` 里照样写不了。
 
-> **当前生效配置**（`reply/config.json`）：管理员与私聊白名单均为 `1547450303`，`owners` 为 `["1547450303"]`；群聊开放指令集为 `ping / status / ss / stock / stocks / zj / info / echo / news / help`（**`/preview` 磁力预览仅管理员**；**`/stocks -add` `-update` `-del` 仅主人**，查询与 `-list` 所有人可用）；`groupImages: false`。
+> **当前生效配置**（`reply/config.json`）：管理员与私聊白名单均为 `1547450303`，`owners` 为 `["1547450303"]`；群聊开放指令集为 `ping / status / ss / stock / stocks / zj / info / echo / news / help`（**`/preview` 磁力预览仅管理员**；**`/stocks -add` `-update` `-del` 仅主人**，查询与 `-list` 所有人可用，`-my` 个人看板所有人可自建自改）；`groupImages: false`。
 
 ### 指令表
 
@@ -251,7 +252,7 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 | `/fx [周期] <货币对或名称>` | `/外汇` `/汇率` | **外汇行情**：`-t` 最近滚动24小时（默认），支持 `-1m/-5m/-30m/-1h/-2h` 分钟K及 `-d/-w/-m` 长周期；`/fx -list` 查看货币代码和品种解释；大陆直连新浪外汇源（详见下节） |
 | `/an <代码或名称>` | `/分析` `/技术分析` | 多周期技术分析：完整文字分析图 → 日/周/月技术图；全文保留结构、确认/失效、风险及相对沪深300/行业强弱（详见 `reply/AN_GUIDE.md`） |
 | `/t <代码或名称> [-sw 震荡] [-tr 单边]` | `/做T` | 做T参谋：完整文字分析图 → 分时技术图；全文保留当前动作、卖出/买回区、分时确认与执行纪律（详见 `reply/T_GUIDE.md`） |
-| `/stocks <周期> <组合名 或 股票...>` | `/组合` `/自选` | **股票组合拼图**：一张卡片式长图并列多看；单个组合最多保存 20 只，单张图最多展示前 16 只；支持 `-t/-pre/-d/-w/-m`。查询 / `-list` 所有人可用，`-add` / `-update` / `-del` 仅主人（详见下节） |
+| `/stocks <周期> <组合名 或 股票...>` | `/组合` `/自选` | **股票组合拼图**：一张卡片式长图并列多看；单个组合最多保存 20 只，单张图最多展示前 16 只；支持 `-t/-pre/-d/-w/-m`。查询 / `-list` 所有人可用，`-add` / `-update` / `-del` 仅主人；`-my` 为**每人一份的个人看板**（默认分时，自己维护自己那份，详见下节） |
 | `/zj <1\|2> [3\|5\|10\|15\|20\|30\|60\|120]` | `/资金` | 申万行业资金流：不写周期显示当前排行；数字周期显示近 N 日汇总；`d` 兼容为近 5 日，`t` 分时已停用（详见下节） |
 | `/zjl <股票或ETF>` | `/flow` `/资金流` `/资金流向` | 个股已完成交易日资金流：主力 / 超大单 / 大单 / 中单 / 小单及多周期汇总 |
 
@@ -452,6 +453,25 @@ docker exec ths-news node /app/fetch_ths_news.js --dry-run
 ```
 
 > **权限**：只有 `-add` / `-update` / `-del` 三个写操作限主人（`owners` 名单），**其余全部所有人可用**（含私聊白名单内任意账号、群内任意成员）。写操作**只认主人 QQ 号**（`admins` 不生效），回执里会列出实际解析到的全部标的，便于发现误匹配。
+
+### `/stocks -my` 个人看板（群友自助）
+
+群友各自维护一份自己的自选，互不干扰，也不占用主人维护的共享组合清单：
+
+```
+/stocks -my                        # 看我的看板（不写周期默认分时 -t）
+/stocks -d -my                     # 指定周期：-t / -pre / -d / -w / -m
+/stocks -my -add 600519 300750     # 新建 / 整组覆盖（自己的）
+/stocks -my -update 600519 002594  # 用新名单整组替换（须已有）
+/stocks -my -list                  # 看我自己的成分
+/stocks -my -del                   # 删除我的看板
+```
+
+- **一人一份，按发送者身份隔离**：群聊里普通成员的身份是 openid，私聊也是 openid，主人是 QQ 号；所以同一个人在不同群 / 私聊里可能是**不同的看板**（平台限制，openid 按会话分配，无法跨场景统一）。
+- **不需要主人权限**：`-my` 的增删改写的是自己那一份，谁都能改自己的；共享组合（`-add -name xxx`）仍然只有主人能改。`-my` 不支持 `-name`（按人区分，没有名字）。
+- 默认周期是 `-t` 分时（做T视角），想改默认行为请直接带 `-d/-w/-m/-pre`。
+- 存储：`reply/data/myboards.json`（`{ "<uid>": { updated, stocks } }`，与 `portfolios.json` 分开，已 gitignore）。
+- 上限同组合：单份看板最多 20 只，单张图最多展示前 16 只。
 
 **周期**（**单选**，不写默认日线）：`-t` 分时 / `-pre` 美股盘前 / `-d` 日线 / `-w` 周线 / `-m` 月线。比 `/stock` 少——分钟/小时图对组合视角没意义，已移除。`-pre` 对组合内美股（含普通股票和 ETF）显示美东盘前；混合组合中的非美股标的仍按普通分时展示。
 
