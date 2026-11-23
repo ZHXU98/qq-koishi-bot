@@ -37,9 +37,10 @@ const STOCKS_USAGE = [
   '我的看板（每人一份，自己改，别人改不了）：',
   '　/stocks -my　　　　　　　看我的看板（不写周期默认分时 -t）',
   '　/stocks -d -my　　　　　 指定周期：-t / -pre / -d / -w / -m',
-  '　/stocks -my -add <股票...>　　新建 / 整组覆盖',
+  '　/stocks -my -add <股票...>　　追加（已存在的自动忽略，不会覆盖）',
   '　/stocks -my -update <股票...> 用新名单整组替换',
-  '　/stocks -my -list　　　　看成分　　/stocks -my -del 删除',
+  '　/stocks -my -del <股票...>　　只移除这几只；不带参数 = 删整个看板',
+  '　/stocks -my -list　　　　看成分',
   '编辑（仅机器人主人）：',
   '　/stocks -add <股票...> -name <组合名>　新建 / 整组覆盖',
   '　/stocks -update <组合名> <股票...>　　 用新名单整组替换（组合须已存在）',
@@ -465,10 +466,48 @@ async function cmdStocks(args, ctx = {}) {
         st.map(s => s.name || s.code).join('、'),
         '',
         '出图：/stocks -my　指定周期：/stocks -d -my',
-        '改名单：/stocks -my -add <股票...>',
+        '加：/stocks -my -add <股票...>　减：/stocks -my -del <股票...>',
       ].join('\n') };
     }
     if (mode === 'del') {
+      // 带参数 = 从看板里移除指定标的（可多只）；不带参数 = 删整个看板
+      if (operands.length) {
+        const cur = ((loadMyBoards()[myUid] || {}).stocks) || [];
+        if (!cur.length) return { ok: false, text: '⚠️ 你还没有看板，没有可移除的标的' };
+        const removeCodes = new Set(), notFound = [];
+        for (const q of operands) {
+          const raw = String(q).trim();
+          const norm = normalizeCode(raw);
+          // 匹配顺序：代码精确 → 名称精确 → 名称包含（至少 2 字，避免误删）→ 兜底解析代码再比
+          let hit = norm ? cur.find(s => s.code === norm) : null;
+          if (!hit) hit = cur.find(s => String(s.code).toLowerCase() === raw.toLowerCase());
+          if (!hit) hit = cur.find(s => s.name === raw);
+          if (!hit && raw.length >= 2) hit = cur.find(s => s.name && String(s.name).includes(raw));
+          if (!hit && !norm) {
+            const code = await resolveStockCode(raw);
+            if (code) hit = cur.find(s => s.code === code);
+          }
+          if (hit) removeCodes.add(hit.code); else notFound.push(raw);
+        }
+        if (!removeCodes.size) {
+          return { ok: false, text: `⚠️ 看板里没有找到：${notFound.join('、')}\n当前 ${cur.length} 只：${cur.map(s => s.name || s.code).join('、')}` };
+        }
+        const removed = cur.filter(s => removeCodes.has(s.code));
+        const left = cur.filter(s => !removeCodes.has(s.code));
+        const ok = await withMyBoardLock(() => {
+          const mb = loadMyBoards();
+          if (!left.length) delete mb[myUid]; // 删空 = 整份清掉，避免留下空记录
+          else mb[myUid] = { updated: nowText(), stocks: left };
+          return saveMyBoards(mb);
+        });
+        if (!ok) return { ok: false, text: '⚠️ 删除失败（服务端写盘异常），请查看容器日志' };
+        const L = [`🗑️ 已从看板移除：${removed.map(s => s.name || s.code).join('、')}（还剩 ${left.length} 只）`];
+        if (!left.length) L.push('　看板已清空，重新添加：/stocks -my -add <股票...>');
+        if (notFound.length) L.push(`⚠️ 未找到，跳过：${notFound.join('、')}`);
+        if (left.length) L.push(`　当前：${left.map(s => s.name || s.code).join('、')}`);
+        L.push('→ /stocks -my');
+        return { ok: true, text: L.join('\n') };
+      }
       const res = await withMyBoardLock(() => {
         const mb = loadMyBoards();
         if (!mb[myUid]) return { none: true };
@@ -478,15 +517,15 @@ async function cmdStocks(args, ctx = {}) {
       });
       if (res.none) return { ok: false, text: '⚠️ 你还没有看板，无需删除' };
       if (!res.ok) return { ok: false, text: '⚠️ 删除失败（服务端写盘异常），请查看容器日志' };
-      return { ok: true, text: `🗑️ 已删除你的看板（${res.n} 只）` };
+      return { ok: true, text: `🗑️ 已删除你的整个看板（${res.n} 只）\n只删一只：/stocks -my -del 600519` };
     }
-    // add / update：都是整组覆盖；update 额外要求看板已存在。
+    // add = 尾部追加（已存在的自动忽略、不重复）；update = 整组覆盖。
     // 注意只在这两种模式下处理——query（/stocks -my 出图）要往下走到出图分支
     if (mode === 'add' || mode === 'update') {
       if (!operands.length) {
         return { ok: false, text: `⚠️ 未指定股票，例：/stocks -my -add 600519 300750` };
       }
-      if (operands.length > PORTFOLIO_MAX) {
+      if (mode === 'update' && operands.length > PORTFOLIO_MAX) {
         return { ok: false, text: `⚠️ 单个看板最多 ${PORTFOLIO_MAX} 只（当前 ${operands.length} 只），看板未改动` };
       }
       const prev = loadMyBoards()[myUid];
@@ -496,25 +535,46 @@ async function cmdStocks(args, ctx = {}) {
       }
       const { okList, bad } = await resolveStockArgs(operands);
       if (!okList.length) return { ok: false, text: `⚠️ 没有解析出有效股票，看板未改动${bad.length ? `\n${bad.join('、')}` : ''}` };
+
+      let next = okList, added = [], dup = [];
+      if (mode === 'add') {
+        const have = new Set(prevList.map(s => s.code));
+        for (const s of okList) {
+          if (have.has(s.code)) { dup.push(s.name || s.code); continue; }
+          have.add(s.code); added.push(s);
+        }
+        // 全是重复：不写盘、不改 updated，直接说明（反复 add 同一批不应产生任何变化）
+        if (!added.length) {
+          return { ok: true, text: `ℹ️ 这些已经在你的看板里了，未做改动（${prevList.length} 只）\n　${prevList.map(s => s.name || s.code).join('、')}\n→ /stocks -my` };
+        }
+        if (prevList.length + added.length > PORTFOLIO_MAX) {
+          return {
+            ok: false,
+            text: `⚠️ 单个看板最多 ${PORTFOLIO_MAX} 只：当前 ${prevList.length} 只，还可加 ${PORTFOLIO_MAX - prevList.length} 只（本次新增 ${added.length} 只），看板未改动\n先移除一些：/stocks -my -del <股票>`,
+          };
+        }
+        next = [...prevList, ...added];
+      }
       const saved = await withMyBoardLock(() => {
         const mb = loadMyBoards();
-        mb[myUid] = { updated: nowText(), stocks: okList };
+        mb[myUid] = { updated: nowText(), stocks: next };
         return saveMyBoards(mb);
       });
       if (!saved) return { ok: false, text: '⚠️ 看板保存失败（服务端写盘异常），请查看容器日志' };
       const L = [];
-      if (mode === 'update' && prevList.length) {
+      if (mode === 'update') {
         const before = prevList.map(s => s.name || s.code);
-        const after = okList.map(s => s.name);
-        const added = after.filter(x => !before.includes(x));
-        const removed = before.filter(x => !after.includes(x));
-        L.push(`✏️ 已更新你的看板：${prevList.length} 只 → ${okList.length} 只`);
-        if (added.length) L.push(`　＋ 新增：${added.join('、')}`);
-        if (removed.length) L.push(`　－ 移除：${removed.join('、')}`);
+        const after = next.map(s => s.name);
+        const inc = after.filter(x => !before.includes(x));
+        const dec = before.filter(x => !after.includes(x));
+        L.push(`✏️ 已更新你的看板：${prevList.length} 只 → ${next.length} 只`);
+        if (inc.length) L.push(`　＋ 新增：${inc.join('、')}`);
+        if (dec.length) L.push(`　－ 移除：${dec.join('、')}`);
         L.push(`　当前：${after.join('、')}`);
       } else {
-        L.push(`✅ 已保存你的看板（${okList.length} 只）`);
-        L.push(`　${okList.map(s => s.name).join('、')}`);
+        L.push(`✅ 已加入你的看板（现 ${next.length} 只）`);
+        L.push(`　＋ 新增：${added.map(s => s.name).join('、')}`);
+        if (dup.length) L.push(`　⏭ 已存在，忽略：${dup.join('、')}`);
       }
       if (bad.length) L.push(`⚠️ 已跳过：${bad.join('、')}`);
       L.push('→ /stocks -my　（看板只属于你，别人改不了）');

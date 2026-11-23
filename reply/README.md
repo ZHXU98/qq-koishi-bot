@@ -144,9 +144,10 @@ open data/previews/
 |------|------|------|
 | `/stocks -my` | 本人 | 看我的看板，**不写周期默认 `-t` 分时** |
 | `/stocks -d -my` | 本人 | 指定周期（`-t/-pre/-d/-w/-m`） |
-| `/stocks -my -add <股票...>` | 本人 | 新建 / 整组覆盖自己的看板 |
+| `/stocks -my -add <股票...>` | 本人 | **尾部追加**；已存在的（按代码）自动忽略、不重复、不覆盖 |
 | `/stocks -my -update <股票...>` | 本人 | 整组替换（须已有） |
-| `/stocks -my -list` / `-my -del` | 本人 | 看成分 / 删除 |
+| `/stocks -my -del <股票...>` | 本人 | 只移除这几只（代码 / 名称都行）；不带参数 = 删整份 |
+| `/stocks -my -list` | 本人 | 看自己的成分 |
 
 - 一人一份，按发送者 `uid` 隔离：群内普通成员是 openid、私聊也是 openid、主人是 QQ 号，所以同一个人在不同群 / 私聊里可能是不同看板（平台 openid 按会话分配，无法跨场景统一）。
 - 存 `data/myboards.json`（`{ "<uid>": { updated, stocks } }`），与 `portfolios.json` 分开，不占用共享组合清单、不影响 `-list`。
